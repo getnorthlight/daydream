@@ -193,6 +193,7 @@ public enum AssistantView {
         switch writer.mode {
         case "cloud": return "on since \(since): new activity is sent through OpenRouter to write notes."
         case "local": return "off: notes are written on this Mac (since \(since))."
+        case "starting": return "off (since \(since)): nothing is sent to write notes while DayDream starts summaries."
         default: return "off (since \(since)): nothing is sent to write notes."
         }
     }
@@ -303,15 +304,18 @@ extension MemoryStore {
     }
 
     /// The app's summary writer ("off", "local" or "cloud"), for the status AI apps read. The app
-    /// writes it at launch (always "off": summaries start off) and on every change.
+    /// writes it at launch and on every change, and "off" at quit. claude/recall-1004: "starting" while the person's
+    /// saved choice is on but the writer isn't running yet (the launch check, or one thing to fix in Settings): AI apps
+    /// said "Summaries are off" right after an update, though the choice was kept. Nothing is sent while starting.
+    public static let summaryModes=["off","local","cloud","starting"]
     public func setSummaryWriter(_ mode:String, now:Date=Date()) throws {
-        guard ["off","local","cloud"].contains(mode) else { throw MemError.invalid("Unknown summary writer") }
+        guard Self.summaryModes.contains(mode) else { throw MemError.invalid("Unknown summary writer") }
         try exec("INSERT OR REPLACE INTO metadata VALUES('summary_writer',?)", [json(["mode":mode,"at":iso(now)])])
     }
     /// The last summary writer the app reported, and when; nil if it never did.
     public func summaryWriter() throws -> (mode:String,at:String)? {
         guard let body=try rows("SELECT body FROM metadata WHERE id='summary_writer'").first?.first,
-              let fields=try? decode([String:String].self,body), let mode=fields["mode"], ["off","local","cloud"].contains(mode) else { return nil }
+              let fields=try? decode([String:String].self,body), let mode=fields["mode"], Self.summaryModes.contains(mode) else { return nil }
         return (mode,fields["at"] ?? "")
     }
 

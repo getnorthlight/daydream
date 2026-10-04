@@ -149,6 +149,9 @@ public struct NoteCommitInvalidation: Equatable, Sendable {
         try await read(key, after: cursor)
     }
 
+    /// perf-1005: the browser's one-read member loader (`ActivityBrowser.loadMemberActions`), if it has one.
+    var memberLoader: ((String, [String]) async throws -> [CanonicalAction]?)? { browser?.loadMemberActions }
+
     /// The cached first page, if any, without reading or checking its age.
     public func cachedDay(_ key: String) -> ActionDay? { entries[key]?.day }
 
@@ -468,8 +471,44 @@ public struct NoteCommitInvalidation: Equatable, Sendable {
     public func memberActions(of moment: MomentSlice, limit: Int) async throws -> (actions: [CanonicalAction], complete: Bool) {
         let members = Set(moment.actionIDs)
         let wanted = min(max(limit, 0), members.count)
+        // perf-1005: one read of exactly these actions (off the main thread), never a walk over the day's pages, each a
+        // whole day assembly (a late card on a big day took 13-20 s). nil (a partial day): the walk below.
+        if wanted > 0, let load = cache.memberLoader {
+            let found: [CanonicalAction]?
+            do { found = try await load(moment.dayKey, moment.actionIDs) }
+            catch where DaydreamDayCache.restartable(error) { found = try await load(moment.dayKey, moment.actionIDs) }
+            if let found { return (Array(found.prefix(wanted)), found.count == members.count) }
+        }
         do { return try await walk(moment, members: members, wanted: wanted, restart: false) }
         catch where DaydreamDayCache.restartable(error) { return try await walk(moment, members: members, wanted: wanted, restart: true) }
+    }
+
+    /// perf-1005: every member of a card (one app in one bracket) in ONE read: each member's first `limitEach` actions in
+    /// time order, and whether every member was found whole. A card of 9 moments read the day 9 times, one after another.
+    /// Without the one-read loader (or across days, or a partial day) each member is read as `memberActions(of:limit:)`.
+    public func memberActions(of group: [MomentSlice], limitEach: Int) async throws -> (actions: [CanonicalAction], complete: Bool) {
+        if group.count > 1, let day = group.first?.dayKey, group.allSatisfy({ $0.dayKey == day }), let load = cache.memberLoader {
+            let ids = group.flatMap(\.actionIDs)
+            let found: [CanonicalAction]?
+            do { found = try await load(day, ids) }
+            catch where DaydreamDayCache.restartable(error) { found = try await load(day, ids) }
+            if let found {
+                var actions = [CanonicalAction](), complete = true
+                for m in group {
+                    let members = Set(m.actionIDs)
+                    let mine = found.filter { members.contains($0.id) }
+                    actions += mine.prefix(min(max(limitEach, 0), members.count))
+                    complete = complete && Set(mine.map(\.id)).count == members.count
+                }
+                return (actions, complete)
+            }
+        }
+        var actions = [CanonicalAction](), complete = true
+        for m in group {
+            let found = try await memberActions(of: m, limit: min(m.actionIDs.count, limitEach))
+            actions += found.actions; complete = complete && found.complete
+        }
+        return (actions, complete)
     }
 
     /// `restart`: the day changed after every read so far began, so the first page is a new read, never a joined one.

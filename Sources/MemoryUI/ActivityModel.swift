@@ -74,6 +74,9 @@ public enum ActivityPhase { case loading, ready, failed(String), held(String) }
     @Published private var loadedDayItems: [MemoryItem]?
     public var loadDay: ((Date) async throws -> [MemoryItem])?
     public var loadCanonicalDay: ((String,String?) async throws -> ActionDay)?
+    /// perf-1005: a moment's member actions in one read (`MemoryStore.memberActions`), off the main thread: day key and
+    /// action ids → the actions in time order, or nil to walk the day's pages (`MomentResolver`). nil: always walk.
+    public var loadMemberActions: ((String,[String]) async throws -> [CanonicalAction]?)?
     /// The days with any record in the display time zone (`MemoryStore.recordedDays`), oldest first: Previous/Next Day
     /// step between them (`FocusDay.step`). nil: every calendar day is a step.
     public var loadRecordedDays: ((String) async throws -> [String])?

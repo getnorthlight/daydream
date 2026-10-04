@@ -377,7 +377,9 @@ public enum AssistantMarkdown {
         let blocks = strings(o["blocks"])
         if !blocks.isEmpty { lines.append("Blocks: " + blocks.joined(separator: "; ")) }
         func child(_ ch: [String: Any]) -> String {
-            var line = "- \(c.span(s(ch["when"]) ?? "")) \u{00B7} \(s(ch["level"]) ?? "")"
+            // claude/recall-1004: a folded line says how many moments it stands for.
+            let count = ch["count"] as? Int
+            var line = "- \(c.span(s(ch["when"]) ?? "")) \u{00B7} \(count.map { "\($0) moments" } ?? s(ch["level"]) ?? "")"
             if let title = s(ch["title"]) { line += ": \(one(title, max: 160))" }
             let childLines = strings(ch["lines"])
             if !childLines.isEmpty { line += " \u{2014} " + one(childLines.prefix(3).joined(separator: "; "), max: 300) }
@@ -385,8 +387,12 @@ public enum AssistantMarkdown {
             if let open = s(ch["open"]) { line += " \u{00B7} open \(code(open))" }
             return line
         }
-        let children = list(o["children"])
+        // claude/recall-1004: a block-level recall lists its blocks, or its moments before any block is written; both
+        // were dropped here before (only a week's block titles, plain strings, were shown).
+        let children = list(o["children"]) + list(o["blocks"]) + list(o["moments"])
         if !children.isEmpty { lines.append("Inside:"); lines += children.map(child) }
+        if let folded = s(o["folded"]) { lines.append(folded) }
+        if let left = s(o["left_out"]) { lines.append("(\(left))") }
         if let now = o["now"] as? [String: Any] {
             var line = "Right now (\(s(now["written"]) ?? "not written yet")): \(s(now["about"]) ?? "")"
             if let minutes = now["minutes"] as? Int { line += ", \(minutes) min" }

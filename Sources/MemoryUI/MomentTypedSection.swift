@@ -63,6 +63,9 @@ public struct MomentDetailEntry: Identifiable, Equatable {
     /// page-links-1003: the page's own link (`CanonicalAction.link`) its open action opens; nil for a window, or a page
     /// saved without one (it opens its site).
     public internal(set) var link: String? = nil
+    /// claude/search-1005 (owner 10/04): a search engine's page row: the search words (its title reads
+    /// "Searched “…”", `SearchPage.line`); nil for every other entry.
+    public internal(set) var search: String? = nil
     /// The short link beside a page's title ("youtube.com/watch…"), else its site.
     var place: String { link.flatMap(BrowserSites.shortLink) ?? host }
 }
@@ -123,7 +126,9 @@ extension MomentDetailBody {
             .map { key, o in
                 let name = AppNames.display(app: o.app, bundle: o.bundle)
                 let appName = name.isEmpty ? (KitAppNames.name(for: o.bundle) ?? "") : name
-                let title = !o.title.isEmpty ? o.title : !o.host.isEmpty ? o.host : (appName.isEmpty ? "Window" : appName)
+                // claude/search-1005 (owner 10/04): a search engine's page is one search: "Searched “red boots”".
+                let search = !o.host.isEmpty && o.typed.isEmpty && SearchPage.keepsTitle(host: o.host, title: o.title) ? o.title : nil
+                let title = search.map(SearchPage.line) ?? (!o.title.isEmpty ? o.title : !o.host.isEmpty ? o.host : (appName.isEmpty ? "Window" : appName))
                 // page-links-1003: a page shows its short link beside the title ("youtube.com/watch…"), else its site.
                 let place = o.link.flatMap(BrowserSites.shortLink) ?? o.host
                 let detail = !o.host.isEmpty ? (place == title ? "" : place) : (appName == title ? "" : appName)
@@ -131,6 +136,7 @@ extension MomentDetailBody {
                                               first: o.first, last: o.last, actionIDs: o.ids, openActionID: o.latest?.id,
                                               sends: o.sends, typed: o.typed)
                 entry.link = o.link
+                entry.search = search
                 return entry
             }
     }

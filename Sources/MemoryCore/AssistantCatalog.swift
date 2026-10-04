@@ -132,6 +132,31 @@ Privacy: what you read here goes to your AI provider as part of this chat. Read 
         }
     }
 
+    /// claude/recall-1004: this build's tool names, in order. Every Next line and hint names only these
+    /// (scripts/mcp-tool-hint-checks.py).
+    public static var toolNames: [String] { tools.map(\.name) }
+    /// claude/recall-1004: a short fingerprint of the whole `tools/list` reply (names, titles, descriptions, schemas).
+    /// A server that carried on as an updated copy compares it with the list its AI app was given.
+    public static let toolListFingerprint: String = {
+        let data = (try? JSONSerialization.data(withJSONObject: toolList(), options: [.sortedKeys])) ?? Data()
+        return String(fingerprint(String(decoding: data, as: UTF8.self)).prefix(16))
+    }()
+    /// claude/recall-1004: what an AI app's model reads first in every reply when DayDream was updated while the chat
+    /// was open (`mac-mem mcp` carried on as the new copy) and the AI app hasn't fetched the new tool list since. AI apps
+    /// keep the tool list they were given when the chat started, so the new copy's Next lines can name tools the AI app
+    /// doesn't show (a laptop chat begun on an older build saw `recap` and `moment_details` named but not listed).
+    /// `missing`: this build's tools the AI app wasn't given (nil: not known, the old copy didn't record it).
+    /// `client`: the AI app's Connect id (`--client`).
+    public static func staleToolsNotice(client: String, missing: [String]?) -> String {
+        let app = AIAppConnect.apps.first { $0.id == client }
+        let restart = app?.id == "claude-code" ? "start a new Claude Code session (or reconnect daydream from /mcp)"
+            : app.map { "quit \($0.name) and open it again" } ?? "restart the AI app"
+        if let missing, !missing.isEmpty {
+            return "Note: DayDream was updated while this chat was open, and this AI app still has the older copy's tool list, without \(missing.joined(separator: ", ")). If a Next line names one of those, use the tools you have instead, and tell the person to \(restart) to get them."
+        }
+        return "Note: DayDream was updated while this chat was open, so this AI app's list of DayDream tools may be out of date. This copy's tools are \(toolNames.joined(separator: ", ")). If a Next line names one that isn't in your tool list, use the tools you have instead, and tell the person to \(restart) to get it."
+    }
+
     public static let resources: [[String:String]] = [
         ["uri":"macmem://status","name":"status","title":"DayDream status","description":"Setup check (connected, recording, typing verified, Chrome pages, summaries), last activity time, the Mac's local date and time zone, and example questions. No activity content.","mimeType":"application/json"],
         ["uri":"macmem://context/current","name":"context","title":"What I'm doing right now","description":"Activity from the last 30 seconds while DayDream is recording.","mimeType":"text/plain"],

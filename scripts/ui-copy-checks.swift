@@ -16,6 +16,9 @@
 //   R2-2     every recording notice, for every stop cause and state: plain words, the state the menu bar shows (never
 //            "stopped" beside Paused), and a control the menu bar panel really has, enabled, in that state.
 //   R2-3     a restore preview after a repair that couldn't read back every deletion says why fewer actions are added.
+//   T1       (claude/today-copy-1004, owner 10/04) the Today card's lines have no bold anywhere, and an ask's "about …" never
+//            only says the AI app again ("Asked Claude about Claude" reads "Asked Claude: “…”").
+//   T2       (claude/today-rank-1005, owner 10/05) the Today card leads with work (AI apps, docs, code); texting shows once, last.
 // -D BASE_SHIM leaves out what needs this stream's new symbols, so the behavioural parts also run on a tree without
 // them (the base, a6944d3) and print their FAIL lines there.
 // Run from the tree's root (the source scans read Sources/), or set DD_SRC_ROOT.
@@ -23,6 +26,7 @@ import AppKit
 import Foundation
 import MemoryCore
 import MemoryUI
+import SwiftUI
 
 @MainActor @main enum UICopyChecks {
     static var failures = 0
@@ -52,6 +56,8 @@ import MemoryUI
         issueLines()
         noticeLines()
         restorePreviewLine()
+        todayLines()
+        todayOrder()
         print("\(passes) passed, \(failures) failed")
         exit(failures == 0 ? 0 : 1)
     }
@@ -741,5 +747,66 @@ import MemoryUI
         equal(BackupSettingsModel.heldBackLine(nil), nil, "R2-3 every other preview says nothing more")
         if let line { check(engineeringWords(line).isEmpty && line.count <= 60, "R2-3 one short plain line", line) }
         #endif
+    }
+
+    // MARK: T1 (claude/today-copy-1004, owner 10/04): "I don't like the bold" / "it shouldn't say asked claude about claude"
+
+    static func todayLines() {
+        // No bold in the line renderer: not in its code, and not in any run it draws.
+        let card = code("Sources/MemoryUI/DayReviewCard.swift").joined(separator: "\n")
+        for heavy in [".semibold", ".bold", ".heavy", ".medium", ".black", "fontWeight", "stronglyEmphasized", ".bold()"] {
+            check(!card.contains(heavy), "T1 the Today card's line renderer never sets \(heavy)")
+        }
+        let heavy: [Font] = [.system(size: 13, weight: .semibold), .system(size: 13, weight: .bold), .system(size: 13).bold()]
+        let lines = [DayReviewBullet(id: "a", thread: "t", lead: "Texted Avery Fixture:", link: nil, rest: nil, quote: "fixture words", moments: []),
+                     DayReviewBullet(id: "b", thread: "t", lead: "Asked Claude:", link: nil, rest: nil, quote: "fixture question", moments: []),
+                     DayReviewBullet(id: "c", thread: "t", lead: "Read", link: nil, rest: "posts on X", quote: nil, moments: [])]
+        for b in lines {
+            let a = DayReviewList.attributed(b)
+            let lead = a.runs.first
+            check(lead.map { String(a[$0.range].characters) } == b.lead && lead?.font == .system(size: 13) && lead?.foregroundColor == .primary,
+                  "T1 \"\(b.lead)\" is regular weight in the system ink (light and dark)")
+            check(!a.runs.contains { r in r.font.map { heavy.contains($0) } ?? false }, "T1 \"\(b.text)\" has no bold run")
+        }
+        // "about <same as the app>" is left out; a real topic stays.
+        let ask = ["Claude"] + DayReview.askPlaces
+        for (raw, echo) in [("Claude", ask), ("claude ", ["Claude"]), ("ChatGPT", ["ChatGPT"] + DayReview.askPlaces), (" CHATGPT", ["ChatGPT"]), ("", ask), ("New chat", ask)] {
+            equal(DayReview.topic(raw, echoing: echo), nil, "T1 no \"about \(raw)\" after Asked \(echo[0])")
+        }
+        equal(DayReview.topic("DayDream", echoing: ask), "DayDream", "T1 an ask in a project keeps \"about DayDream\"")
+        let item = DayReviewItem(id: "ask", lead: "Asked ChatGPT", tail: DayReview.topic("ChatGPT", echoing: ["ChatGPT"] + DayReview.askPlaces).map { "about " + $0 },
+                                 clauseKey: "app:chatgpt", quote: "q", score: 1, moments: ["m"])
+        let thread = DayReviewThread(key: "app:chatgpt", name: "ChatGPT", kind: "ai", seconds: 60, words: 0, personSends: 0, asks: 1, sendHours: 0, stakes: [],
+                                     score: 1, items: [item], moments: ["m"])
+        let facts = DayReviewFacts(day: "2026-10-04", threads: [thread], clauses: [:], activeSeconds: 60, personSends: 0)
+        equal(DayReview.assemble(facts, quotes: ["q": "fixture question"]).flatMap(\.bullets).map(\.text), ["Asked ChatGPT: \u{201C}fixture question\u{201D}"],
+              "T1 the line reads \"Asked ChatGPT: “…”\"")
+        // At the source: the ask's tail goes through DayReview.topic, never the thread's name as it is.
+        let store = code("Sources/MemoryCore/DayReviewStore.swift").joined(separator: "\n")
+        check(!store.contains("tail: \"about \" + about") && store.contains("DayReview.topic(about, echoing:"),
+              "T1 the day review's ask line drops an \"about …\" that only names the app (DayReviewStore)")
+    }
+
+    // MARK: T2 (claude/today-rank-1005): "have like productivity stuff more in front"
+
+    static func todayOrder() {
+        func t(_ key: String, _ kind: String, _ score: Double, _ leads: [String], category: String? = nil) -> DayReviewThread {
+            DayReviewThread(key: key, name: key, kind: kind, seconds: 600, words: 0, personSends: 0, asks: 0, sendHours: 0, stakes: [], score: score,
+                            items: leads.enumerated().map { DayReviewItem(id: key + "#\($0.offset)", lead: $0.element, score: 1, moments: ["m"]) }, moments: ["m"],
+                            category: category)
+        }
+        let facts = DayReviewFacts(day: "2026-10-05", threads: [
+            t("person:avery", "person", 400, ["Texted Avery Fixture", "Told Avery Fixture"], category: "personal"),
+            t("social:x", "social", 30, ["Read posts on X"]), t("ai:claude", "ai", 20, ["Asked Claude"]),
+            t("web:docs", "doc", 35, ["Wrote Launch plan"]), t("code:tallybird", "code", 45, ["Worked on Tallybird", "Ran a command"])],
+            clauses: [:], activeSeconds: 7200, personSends: 20)
+        let shown = DayReview.assemble(facts, quotes: [:]).flatMap(\.bullets)
+        equal(shown.map(\.thread), ["code:tallybird", "code:tallybird", "web:docs", "ai:claude", "person:avery"],
+              "T2 work leads (code, docs, Claude), the texting once and last")
+        check(DayReview.categoryWeight[.work]! > DayReview.categoryWeight[.browsing]! && DayReview.categoryWeight[.browsing]! > DayReview.categoryWeight[.personal]!,
+              "T2 the weights order work, then browsing, then conversations")
+        let little = DayReviewFacts(day: "2026-10-05", threads: [facts.threads[0], t("ai:claude", "ai", 3, ["Asked Claude"])], clauses: [:], activeSeconds: 600, personSends: 20)
+        equal(DayReview.assemble(little, quotes: [:]).flatMap(\.bullets).map(\.thread), ["person:avery", "person:avery", "ai:claude"],
+              "T2 a day with little else keeps its score order, nothing capped")
     }
 }

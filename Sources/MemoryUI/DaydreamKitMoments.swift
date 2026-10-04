@@ -767,10 +767,11 @@ public struct MomentDetailBody: View {
                 }
             }
             .frame(width: 16, height: 16)
-            Text(name).font(.system(size: 12.5, weight: .medium)).lineLimit(1)
+            // claude/searchui-1005 (owner 10/04: no bold in note lines): a What happened line is regular weight.
+            Text(name).font(.system(size: 12.5)).lineLimit(1)
             if let send {
                 // fix/show-all: a send says who (never words), where the site or app would be.
-                Text(send).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary).lineLimit(1)
+                Text(send).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
             } else if !detail.isEmpty && detail != name {
                 Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
             }

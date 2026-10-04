@@ -15,7 +15,9 @@ import PrivacyPolicy
 /// - while search-box typing is on (consent v2 and the Search boxes and AI
 ///   prompts category), pages of Search & AI sites keep only the site: the
 ///   address loses its query and fragment and the title is dropped. Those
-///   words are the typed words, which are sealed and expire.
+///   words are the typed words, which are sealed and expire. Except
+///   (claude/search-1005, owner decision 2026-10-04) a Chrome page row of a
+///   search engine's results page, which keeps its search words.
 /// Pure; the store decides `searchTypingOn`.
 public enum TypedHistoryScrub {
     public static let omittedTitle = "[sensitive title omitted]"
@@ -27,7 +29,13 @@ public enum TypedHistoryScrub {
         if TypingCategories.app(e.bundle)?.category == .code || e.kind == "keyboard.text_input", !out.title.isEmpty, out.title != omittedTitle {
             out.title = TypedSecretScrubber.scrub(out.title).kept ?? omittedTitle
         }
-        if searchTypingOn, let parts = URLComponents(string: e.url), let host = parts.host,
+        // claude/search-1005 (owner decision 2026-10-04): a Chrome page row of a search engine's results page keeps its
+        // search words (the page read's `SearchPage`; the store's `BrowserSafety` check refuses any other title there),
+        // whether or not search-box typing is on. Its address is already the bare origin.
+        let searchRow = e.bundle == BrowserSafety.supportedBundle && e.browserVerification?.provider == BrowserSafety.pageProvider
+            && BrowserSites.host(of: e.url).map { SearchPage.keepsTitle(host: $0, title: out.title) } == true
+            && BrowserSites.origin(e.url) == e.url
+        if searchTypingOn, !searchRow, let parts = URLComponents(string: e.url), let host = parts.host,
            case .category(.searchAndAI) = TypingCategories.site(host: host, path: parts.path.isEmpty ? "/" : parts.path) {
             // fix/chrome-root (live matrix 10-02, row 8b): an address that is already just the site (a Chrome page row
             // is "https://chatgpt.com", its origin, nothing else) stays exactly that. Adding "/" made it

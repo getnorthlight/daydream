@@ -197,6 +197,7 @@ final class EventCapture {
         stopped = false
         pages.reset()
         guard installEventTap() else { coordinator.pause("Input event tap unavailable. No recording started."); return false }
+        keyWatch.start()
         installWorkspaceObserver()
         if let app = NSWorkspace.shared.frontmostApplication {
             currentPID = app.processIdentifier
@@ -226,6 +227,14 @@ final class EventCapture {
     var onStopped: (() -> Void)?
     /// A key down reached the input tap (main thread). Nothing about the key is passed.
     var onKeyInput: (() -> Void)?
+    /// claude/typing-1004: keys the Mac counted while recording never reached this tap (`KeyArrivalWatch`), once per
+    /// recording (main thread). The app restarts itself or says so.
+    var onKeysNotArriving: (() -> Void)?
+    private var keyWatch = KeyArrivalWatch()
+    /// The session's key-down count and secure input, read by the heartbeat. The checks replace it.
+    static var keyCounter: () -> (count: UInt32, secureInput: Bool) = {
+        (CGEventSource.counterForEventType(.combinedSessionState, eventType: .keyDown), IsSecureEventInputEnabled())
+    }
     var isStopped: Bool { stopped }
 
     func stop(reason: String) {
@@ -260,7 +269,7 @@ final class EventCapture {
         guard !stopped, coordinator.isRunning else { discardPending(); return }
         // gold r3: a key reaching the tap proves Input Monitoring works in this run (`MemoryViewModel.keysArrived`). Key
         // downs only: they reach a listen-only tap only with Input Monitoring.
-        if type == .keyDown { onKeyInput?() }
+        if type == .keyDown { keyWatch.keyArrived(); onKeyInput?() }
         // fix/chrome-capture: opt-in counts only (`CaptureDiagnostics`); never a key code or character.
         if type == .keyDown { CaptureDiagnostics.shared.count("tap.key") }
         switch type {
@@ -300,7 +309,29 @@ final class EventCapture {
             handleTap(type: type, event: event)
             return TypingKeyHandoff.take()
         }
-        work? { NSEvent(cgEvent: event)?.characters ?? "" }
+        // Never AppKit here: this runs on the tap thread and the route's executor (`keyCharacters`).
+        work? { Self.keyCharacters(event) }
+    }
+
+    /// The characters a key down typed. On the main thread, AppKit's (`NSEvent.characters`, as always). Anywhere else
+    /// (the tap thread and the website typing route's executor, claude/chrome-offmain-1003) the characters the event
+    /// itself carries (`CGEventKeyboardGetUnicodeString`), never AppKit, HIToolbox or Text Input Sources: `NSEvent.characters`
+    /// translates the key through TSM, which asserts the main queue, and macOS 15 traps there (owner laptop 10/04,
+    /// public 0.1.4 on 15.7.2: EXC_BREAKPOINT in `_dispatch_assert_queue_fail` under `TSMTranslateKeyEvent` on the
+    /// "DayDream input tap" thread, queue daydream.web-typing.route, whenever a Chrome typing burst read its key).
+    /// The test is the main QUEUE, as TSM's assertion is, not the main thread: the route's executor may run its work on
+    /// the main thread inside `queue.sync`, where `Thread.isMainThread` is true and TSM still traps.
+    static func keyCharacters(_ event: CGEvent, onMain: Bool = MainQueue.isCurrent) -> String {
+        onMain ? appKitCharacters(event) : eventCharacters(event)
+    }
+    /// AppKit's reading, main thread only. The checks replace it to prove it is never called anywhere else.
+    static var appKitCharacters: (CGEvent) -> String = { NSEvent(cgEvent: $0)?.characters ?? "" }
+    /// The event's own Unicode string (a CoreGraphics read of the event; no input source, no AppKit), any thread.
+    static func eventCharacters(_ event: CGEvent) -> String {
+        var units = [UniChar](repeating: 0, count: 64)
+        var count = 0
+        event.keyboardGetUnicodeString(maxStringLength: units.count, actualStringLength: &count, unicodeString: &units)
+        return String(utf16CodeUnits: units, count: max(0, min(count, units.count)))
     }
 
     private func handleKeyDown(_ event: CGEvent) {
@@ -315,8 +346,9 @@ final class EventCapture {
         let stroke=KeyStroke(keyCode:event.getIntegerValueField(.keyboardEventKeycode),command:flags.contains(.maskCommand),control:flags.contains(.maskControl),
                              option:flags.contains(.maskAlternate),shift:flags.contains(.maskShift),autorepeat:event.getIntegerValueField(.keyboardEventAutorepeat) != 0,
                              fn:flags.contains(.maskSecondaryFn))
+        // The route may read it on its executor (`WebTypingRoute.intake` with no tap thread waiting): never AppKit there.
         handleNativeKey(eventAt:Self.eventNanoseconds(event.timestamp),stroke:stroke) {
-            NSEvent(cgEvent:event)?.characters ?? ""
+            Self.keyCharacters(event)
         }
     }
 
@@ -1333,8 +1365,21 @@ final class EventCapture {
         guard !finishingTyping else { return }
         guard !stopped, coordinator.isRunning else { return }
         if !Self.tapIsOn(eventTap) { tapDisabled() }
+        watchKeyArrival()
         CaptureDiagnosticsLog.flush(coordinator)
     }
+    /// claude/typing-1004: one sample of the session's key count against the keys this tap got (`KeyArrivalWatch`).
+    private func watchKeyArrival() {
+        guard !keyWatch.proved, !keyWatch.reported else { return }
+        let read = Self.keyCounter()
+        guard keyWatch.sample(counter: read.count, secureInput: read.secureInput) else { return }
+        WebTypingRefusals.shared.note("tap.noKeys")
+        WebTypingRefusals.shared.flush()
+        RecordingLog.note("Keys typed while recording haven't reached DayDream's input tap (Input Monitoring works only after DayDream reopens).")
+        onKeysNotArriving?()
+    }
+    /// The checks' state of the watch.
+    var keyWatchForChecks: KeyArrivalWatch { keyWatch }
     /// The checks' way in to `installAXObserver` (with `registerAX` replaced: they never observe a real app).
     func observeAppForChecks(pid: pid_t, chrome: Bool) { installAXObserver(pid: pid, chrome: chrome) }
     /// The checks' way in to `handleTap`, as the tap's callback delivers an event (they build the event; no tap is made).

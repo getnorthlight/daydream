@@ -44,6 +44,10 @@ protocol AIAppControlling: Sendable {
     /// launches). One started earlier runs a copy from before then, which can't: once DayDream is updated it answers
     /// every request with an error until its AI app starts it again.
     func renewingServersSince() -> Date?
+    /// claude/recall-1004: since when this Mac's DayDream has offered the tool list it offers now (kept across launches).
+    /// An AI app keeps the tool list its DayDream server gave it when it started, also after the server carries on as the
+    /// updated copy; one started earlier has an older list, which can lack tools the replies name, until it restarts.
+    func toolsChangedSince() -> Date?
     /// Calls `changed` when an app launches or quits, or DayDream becomes the active app, until `stopObserving`.
     @MainActor func observe(_ changed: @escaping @MainActor () -> Void) -> [NSObjectProtocol]
     @MainActor func stopObserving(_ tokens: [NSObjectProtocol])
@@ -52,6 +56,7 @@ protocol AIAppControlling: Sendable {
 extension AIAppControlling {
     func connectionServers() -> [ConnectionServer] { [] }
     func renewingServersSince() -> Date? { nil }
+    func toolsChangedSince() -> Date? { nil }
 }
 
 /// The real Mac: LaunchServices, NSRunningApplication, NSWorkspace and the general pasteboard. Quitting is the
@@ -162,6 +167,23 @@ struct LiveAIAppControl: AIAppControlling {
         }
         guard let cli = ConnectionSettingsModel.bundledCLI(), let placed = Self.placed(cli) else { return nil }
         UserDefaults.standard.set(placed.timeIntervalSince1970, forKey: Self.renewingKey)
+        return placed
+    }
+
+    static let toolsKey = "DaydreamMCPToolsSince"
+
+    /// Kept with the tool names it is for: the first DayDream that runs with these names keeps when its `mac-mem` was put
+    /// in place, and every later DayDream with the same names keeps that date. New names (an update that adds, renames
+    /// or removes a tool) start a new date. With no kept date yet (the first DayDream with this code), the older list
+    /// isn't known, so it counts as changed: an AI app that started its server before this copy restarts once.
+    func toolsChangedSince() -> Date? {
+        let names = AssistantCatalog.toolNames.joined(separator: ",")
+        if let kept = UserDefaults.standard.dictionary(forKey: Self.toolsKey), kept["tools"] as? String == names,
+           let seconds = (kept["since"] as? NSNumber)?.doubleValue {
+            return Date(timeIntervalSince1970: seconds)
+        }
+        guard let cli = ConnectionSettingsModel.bundledCLI(), let placed = Self.placed(cli) else { return nil }
+        UserDefaults.standard.set(["tools": names, "since": placed.timeIntervalSince1970] as [String: Any], forKey: Self.toolsKey)
         return placed
     }
 

@@ -1,4 +1,5 @@
 import Foundation
+import HistoryCore
 
 // Site rules shared by Chrome page history (public) and Chrome typing (private).
 // All matching is ASCII and lowercase. Suffix matching: a domain blocks itself
@@ -449,4 +450,91 @@ public enum BrowserSites {
             return searchParameters.contains(name) && !(item.value ?? "").isEmpty && !(x && ["s", "t"].contains(name))
         }
     }
+}
+
+/// claude/search-1005 (owner decision 2026-10-04: "I went to different google sites so it is retarded that that was not
+/// saved"): a search engine's results page keeps its search words as the Chrome page row's title, one row per distinct
+/// search ("Searched “red boots”" on the card). Only the engines below, only their results path, and only the words: from
+/// the engine's query parameter (`q`, Yahoo's `p`, Startpage's `query`, Yandex's `text`, Baidu's `wd`), else from the
+/// tab title ("<words> - Google Search") when the address has none. No other part of the address is kept (the row stays
+/// the origin, with no link). Email and chat pages stay site-only. The page read's order is unchanged: every window's
+/// mode (Incognito and Guest save nothing), then the blocklist and blocked paths (`BrowserSites.pageDecision`), then the
+/// words. Words that look secret, a code of digits only, an email address, more than one line, or over `maxCharacters`
+/// are never kept (the row is the site only, as before).
+public enum SearchPage {
+    /// The longest search kept (a page title's limit, `ChromePageTitle.limit`).
+    public static let maxCharacters = 160
+    public static let maxBytes = 256
+    /// (domain, results path or nil for any path, parameter, name, title suffixes)
+    public static let engines: [(domain: String, path: String?, parameter: String, name: String, suffixes: [String])] = [
+        ("bing.com", "/search", "q", "Bing", [" - Search", " - Bing"]),
+        ("duckduckgo.com", nil, "q", "DuckDuckGo", [" at DuckDuckGo"]),
+        ("search.brave.com", "/search", "q", "Brave Search", [" - Brave Search"]),
+        ("search.yahoo.com", "/search", "p", "Yahoo", [" - Yahoo Search Results", " - Yahoo Search"]),
+        ("ecosia.org", "/search", "q", "Ecosia", [" - Ecosia"]),
+        ("kagi.com", "/search", "q", "Kagi", [" - Kagi Search"]),
+        ("startpage.com", nil, "query", "Startpage", [" - Startpage Search Results", " - Startpage"]),
+        ("yandex.com", "/search/", "text", "Yandex", [" — Yandex: found", " - Yandex"]),
+        ("yandex.ru", "/search/", "text", "Yandex", [" — Яндекс: нашлось", " - Yandex"]),
+        ("baidu.com", "/s", "wd", "Baidu", ["_百度搜索"]),
+        ("search.aol.com", "/aol/search", "q", "AOL", [" - AOL Search Results"])]
+    static let googleSuffixes = [" - Google Search", " - Google-Suche", " - Recherche Google", " - Buscar con Google", " - Pesquisa Google",
+                                 " - Cerca con Google", " - Google Zoeken", " - Google 検索"]
+    /// The engine's name for a search host, or nil.
+    public static func engine(host: String) -> String? {
+        let h = host.lowercased()
+        if h.range(of: "^(www\\.)?google(\\.[a-z]{2,3}){1,2}$", options: .regularExpression) != nil { return "Google" }
+        return engines.first(where: { BrowserSites.matches(host: h, domain: $0.domain) })?.name
+    }
+    static func rule(host: String) -> (path: String?, parameter: String, suffixes: [String])? {
+        let h = host.lowercased()
+        if engine(host: h) == "Google" { return ("/search", "q", googleSuffixes) }
+        return engines.first(where: { BrowserSites.matches(host: h, domain: $0.domain) }).map { ($0.path, $0.parameter, $0.suffixes) }
+    }
+    /// Whether the address is an engine's results page (its search words may be kept). The address is not kept.
+    public static func resultsPage(_ url: String) -> Bool {
+        guard let c = URLComponents(string: url), ["https", "http"].contains(c.scheme?.lowercased() ?? ""), c.user == nil, c.password == nil,
+              let host = c.host?.lowercased(), let rule = rule(host: host) else { return false }
+        return rule.path.map { c.path == $0 || (($0.hasSuffix("/")) && c.path + "/" == $0) } ?? true
+    }
+    /// The engine and words of a results page, from its address only; nil when it is not one or has no keepable words.
+    public static func query(_ url: String) -> (engine: String, query: String)? {
+        guard resultsPage(url), let c = URLComponents(string: url), let host = c.host?.lowercased(), let name = engine(host: host),
+              let rule = rule(host: host),
+              // A form's "+" is a space; then the percent escapes.
+              let encoded = c.percentEncodedQueryItems?.first(where: { $0.name == rule.parameter })?.value,
+              let raw = encoded.replacingOccurrences(of: "+", with: "%20").removingPercentEncoding,
+              let q = keepable(raw) else { return nil }
+        return (name, q)
+    }
+    /// The words from a results page's tab title ("<words> - Google Search"), when its address had none.
+    public static func titleQuery(_ title: String, url: String) -> (engine: String, query: String)? {
+        guard resultsPage(url), let host = URLComponents(string: url)?.host?.lowercased(), let name = engine(host: host),
+              let rule = rule(host: host) else { return nil }
+        let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let suffix = rule.suffixes.first(where: { t.hasSuffix($0) && t.count > $0.count }) else { return nil }
+        return keepable(String(t.dropLast(suffix.count))).map { (name, $0) }
+    }
+    /// The words cleaned (whitespace, one line), or nil when they must not be kept: empty, over `maxCharacters` or
+    /// `maxBytes`, secret-looking (`Privacy.secret`, `TypedSecretScrubber`), a code of digits only, an email address, or
+    /// a private-window marker.
+    public static func keepable(_ raw: String) -> String? {
+        guard !raw.contains(where: { $0.isNewline }) else { return nil }
+        let q = raw.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        guard !q.isEmpty, q.count <= maxCharacters, q.utf8.count <= maxBytes, !Privacy.secret(q),
+              q.range(of: #"^[0-9 \-]{4,12}$"#, options: .regularExpression) == nil,
+              q.range(of: #"[^\s@]+@[^\s@]+\.[a-z]{2,}"#, options: [.regularExpression, .caseInsensitive]) == nil,
+              !ObservationPolicy.titleLooksPrivate(q),
+              case .keep(_, let redactions) = TypedSecretScrubber.scrub(q), redactions.isEmpty else { return nil }
+        return q
+    }
+    /// Read time (`BrowserSafety`): a Chrome page row on a search engine's site may carry its search words as its title.
+    /// The row holds the words alone: a title still carrying the engine's own suffix ("… - Google Search") is not a row
+    /// the page read writes, and is refused.
+    public static func keepsTitle(host: String, title: String) -> Bool {
+        guard let rule = rule(host: host), keepable(title) == title else { return false }
+        return !rule.suffixes.contains(where: { title.hasSuffix($0) })
+    }
+    /// The card's line for one search (owner 10/04): "Searched “red boots”".
+    public static func line(_ words: String) -> String { "Searched \u{201C}" + words + "\u{201D}" }
 }

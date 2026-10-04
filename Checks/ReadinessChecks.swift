@@ -119,10 +119,11 @@ func runReadinessChecks(home: URL) throws {
         (access, status) = try connected()
         try check(status["chrome_pages"]?.hasPrefix("on:") == true && status["examples"]?.contains("Chrome") == true, "readiness: Chrome pages on, with a Chrome example")
     }
-    for (mode, prefix) in [("local", "on this Mac:"), ("cloud", "cloud:"), ("off", "off:")] {
+    // claude/recall-1004: "starting" (the person's choice is on and kept; the writer isn't running yet) never reads as off.
+    for (mode, prefix) in [("local", "on this Mac:"), ("cloud", "cloud:"), ("starting", "turned on, starting:"), ("off", "off:")] {
         try store.setSummaryWriter(mode, now: now)
         (access, status) = try connected()
-        try check(status["summaries"]?.hasPrefix(prefix) == true && (status["examples"]?.contains("this week") == true) == (mode != "off"),
+        try check(status["summaries"]?.hasPrefix(prefix) == true && (status["examples"]?.contains("this week") == true) == (mode == "local" || mode == "cloud"),
                   "readiness: summaries \(mode) read as \"\(prefix)\", with note examples only when notes are written")
     }
     try clean(status, "summaries")

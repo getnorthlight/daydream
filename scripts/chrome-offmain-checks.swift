@@ -155,6 +155,8 @@ struct OffRun {
     var dump = ""
     var words: [String] = []
     var reads = 0, joins = 0, lights = 0
+    /// claude/typing-1004: key reads made off the main queue (the tap thread, the route's executor).
+    var offMainReads = 0
     var benchKeys = 0, benchJoins = 0, benchLights = 0
     var benchMainModelNs: UInt64 = 0, benchMainWallNs: UInt64 = 0, benchKeyWallNs: UInt64 = 0
     var sleptMainWallNs: UInt64 = 0, sleptKeyWallNs: UInt64 = 0, sleptKeys = 0, fastKeys = 0
@@ -168,9 +170,22 @@ struct OffRun {
     static var checks = 0
     static func check(_ condition: Bool, _ name: String) { precondition(condition, name); checks += 1; print("PASS " + name) }
 
+    /// claude/typing-1004: AppKit's key reading called off the main queue (it traps on macOS 15).
+    static var appKitOffMain = 0
+    static func keyEvent(_ text: String) -> CGEvent {
+        let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true)!
+        let units = Array(text.utf16)
+        event.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
+        return event
+    }
+
     static func main() throws {
         setbuf(stdout, nil)
         check(OwnerTyping.enabled, "chrome-offmain: the owner build")
+        EventCapture.appKitCharacters = { event in
+            if !MainQueue.isCurrent { appKitOffMain += 1 }
+            return EventCapture.eventCharacters(event)
+        }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("chrome-offmain-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         // One wall clock origin for both replays (the store refuses rows dated before its consent and recording).
@@ -219,6 +234,10 @@ struct OffRun {
         check(before.dump == after.dump,
               "replay: every saved row is byte-identical with the route on main and off main (\(before.dump.utf8.count) bytes, \(before.words.count) typed rows)")
         check(before.reads == after.reads, "replay: the same keys' characters are read (\(before.reads) / \(after.reads))")
+        // claude/typing-1004 (owner laptop 10/04, macOS 15.7.2: SIGTRAP under TSMTranslateKeyEvent on the route's queue).
+        check(before.offMainReads == 0 && after.offMainReads > 0,
+              "replay: off main, the keys' characters are read off the main queue (\(after.offMainReads) of \(after.reads))")
+        check(appKitOffMain == 0, "replay: AppKit's key reading (TSM) never runs off the main queue (\(appKitOffMain))")
         check(before.joins == after.joins && before.lights == after.lights,
               "replay: the same joins and light checks are made (\(before.joins)/\(after.joins) joins, \(before.lights)/\(after.lights) light)")
 
@@ -345,15 +364,23 @@ struct OffRun {
             let at = clock.mono, model = clock.mainNs
             let start = DispatchTime.now().uptimeNanoseconds
             var mainEnd = start
+            // claude/typing-1004: the key's characters come from a real key event through EventCapture's own reader
+            // (`keyCharacters`), whose AppKit half counts any call off the main queue (macOS 15 traps there).
+            let event = keyEvent(text)
+            func read() -> String {
+                run.reads += 1
+                if !MainQueue.isCurrent { run.offMainReads += 1 }
+                return EventCapture.keyCharacters(event)
+            }
             if let _ = executor {
                 TypingKeyHandoff.arm()
-                capture.handleNativeKey(eventAt: at, stroke: stroke) { run.reads += 1; return text }
+                capture.handleNativeKey(eventAt: at, stroke: stroke) { read() }
                 let work = TypingKeyHandoff.take()
                 mainEnd = DispatchTime.now().uptimeNanoseconds
-                if let work { tap.run { work { run.reads += 1; return text } } }
+                if let work { tap.run { work { read() } } }
                 drain()
             } else {
-                capture.handleNativeKey(eventAt: at, stroke: stroke) { run.reads += 1; return text }
+                capture.handleNativeKey(eventAt: at, stroke: stroke) { read() }
                 mainEnd = DispatchTime.now().uptimeNanoseconds
             }
             let end = DispatchTime.now().uptimeNanoseconds

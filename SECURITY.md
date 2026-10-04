@@ -25,7 +25,7 @@ DayDream is in beta. Only the latest release, and the `main` branch, get securit
 
 ## Threat model
 
-This section says what DayDream protects against today and what it doesn't. The [README](README.md#what-daydream-records) lists exactly what is recorded.
+This section says what DayDream protects against today and what it doesn't. The [guide](docs/guide.md#what-daydream-records) lists exactly what is recorded.
 
 ### What is stored, and where
 
@@ -46,7 +46,7 @@ This section says what DayDream protects against today and what it doesn't. The 
 
 ### Typed text
 
-- On by default: setup shows it switched on, and one click turns it off, then or any time in Settings. Nothing is recorded before Start Recording. When on, DayDream records what you type in a fixed list of apps, each checked by its code signature, and, only while Web pages in Chrome is on too, on websites in Google Chrome. The README's [Typed text](README.md#typed-text) section lists the apps, the websites and what is always skipped.
+- On by default: setup shows it switched on, and one click turns it off, then or any time in Settings. Nothing is recorded before Start Recording. When on, DayDream records what you type in a fixed list of apps, each checked by its code signature, and, only while Web pages in Chrome is on too, on websites in Google Chrome. The guide's [Typed text](docs/guide.md#typed-text) section lists the apps, the websites and what is always skipped.
 - The words are encrypted with AES-GCM, one key per day, and the keys are kept in your macOS Keychain. Where and when you typed, and how much, are not encrypted. DayDream deletes the exact words after 7 days unless you choose another time. Time Machine backups of your Mac can keep older encrypted copies.
 - `mac-mem`, which AI apps start as the MCP server, has no typing key. While **Let AI apps read what you typed** is on, the DayDream app (which holds the key) hands it the words of the moments an AI app asks for, over a socket only this Mac account can open (mode 0600, same user checked), after checking that AI app's key; secrets, private windows, excluded apps, blocked sites and expired words are never handed over. While it is off, or DayDream isn't open, AI apps get where and about how much you typed, never the words DayDream saves. Cloud summaries, when you turn them on, get the words you type, who a message went to, and Chrome page titles and sites (never web addresses). Window titles, which can include words you typed, are read and sent like any other window title.
 - Anyone typing on your macOS account while typed text is on is recorded as you.

@@ -301,7 +301,9 @@ struct BundledConnectionCommand: ConnectionCommandRunning {
         let environment = environment, cli = cli, pinnedHome = pinnedHome, verifier = verifier, control = control
         let running = Dictionary(uniqueKeysWithValues: AIAppConnect.apps.map { ($0.id, control.running($0)) })
         Task.detached(priority: .utility) {
-            let servers = control.connectionServers(), since = control.renewingServersSince()
+            // claude/recall-1004: a server started before the tool list changed restarts too (its AI app's list is older).
+            let servers = control.connectionServers()
+            let since = [control.renewingServersSince(), control.toolsChangedSince()].compactMap { $0 }.max()
             let rows = AIAppConnect.apps.map { Self.read($0, running: running[$0.id] ?? nil, environment: environment, cli: cli, pinnedHome: pinnedHome,
                                                          verifier: verifier, control: control, servers: servers, renewingSince: since) }
             await MainActor.run { [weak self] in
@@ -343,7 +345,9 @@ struct BundledConnectionCommand: ConnectionCommandRunning {
         }
         // A DayDream server this app started before DayDream could carry its servers across an update (test 4 and
         // earlier) stays the old copy for good: after the update every request it gets fails. The app loads the
-        // current one only when it starts the server again, so it is a restart, never "Connected".
+        // current one only when it starts the server again, so it is a restart, never "Connected". claude/recall-1004:
+        // `renewingSince` is also when DayDream's tool list last changed: a server started before then carries on as the
+        // update, but its AI app keeps the older tool list (without the newer tools its replies name) until it restarts.
         var oldSession = false
         if state == .connected, let renewingSince,
            servers.contains(where: { $0.client == app.id && $0.started < renewingSince }) {

@@ -811,6 +811,16 @@ import WriterBackend
                         }
                     }
                 }
+                // perf-1005: a card's What happened and its details page read the moment's actions in one read, off the main
+                // thread (they walked the day's pages, a whole day assembly each: 13-20 s for a late card on a big day).
+                activity.loadMemberActions = { [weak activity] day, ids in
+                    let zone=(activity?.calendar ?? Calendar.current).timeZone.identifier
+                    return try await withCheckedThrowingContinuation { continuation in
+                        DispatchQueue.global(qos:.userInitiated).async {
+                            continuation.resume(with:Result { try MemoryStore(home:memoryHome).memberActions(day:day,timezone:zone,ids:ids) })
+                        }
+                    }
+                }
                 // claude/day-review-1003 perf pass: the hero card's review after a clause is saved: the store's cached facts
                 // with the new clause (no day read), and the quotes opened again in this process only, as for a day read.
                 activity.loadDayReview = { [weak activity] day in
@@ -1264,6 +1274,32 @@ import WriterBackend
         launchReadUnconfirmedSince=nil
         permissionsAtLaunch?.inputMonitoring=true
     }
+    /// claude/typing-1004 (owner laptop, public 0.1.4): recording, yet keys the Mac counted never reached the input tap
+    /// (`KeyArrivalWatch`): macOS feeds the tap only after DayDream reopens (Input Monitoring turned on, or its row
+    /// changed, after launch), whatever the permission reads say. DayDream restarts itself once, as perm-1004 does for
+    /// Input Monitoring turned on after launch (recording was on, so it starts again after the restart: the quit keeps the
+    /// launch intent). A restart within `PermissionRelaunch.autoCooldown`, or one DayDream can't make, isn't tried: the
+    /// recording stops with the tap's reason, so Start goes to the Permissions page and its Quit & Reopen
+    /// (`inputNeedsReopen`) instead of showing Recording while no key is saved.
+    private func keysNotArriving() {
+        guard development == nil,!recordingTrial,!functionalTrial,recording else {return}
+        let now=Date()
+        let last=Self.autoRelaunchDefaults.object(forKey:Self.autoRelaunchKey) as? Date
+        let cooled=last.map { now < $0 || now.timeIntervalSince($0) >= PermissionRelaunch.autoCooldown } ?? true
+        if cooled,Self.canReopen(),!permissionAutoRelaunch {
+            RecordingLog.note("No key reached the input tap; DayDream restarts itself to use Input Monitoring.")
+            permissionAutoRelaunch=true
+            Self.autoRelaunchDefaults.set(now,forKey:Self.autoRelaunchKey)
+            if Self.performAutoRelaunch(self) {return}
+            permissionAutoRelaunch=false
+        }
+        RecordingLog.note("No key reached the input tap; recording stopped until DayDream reopens.")
+        // EventCapture's own reason for a tap that can't reach the keyboard: "Keyboard and mouse aren't reaching
+        // DayDream." in the app, and its "Input event tap" prefix sends Start to Quit & Reopen (`inputNeedsReopen`).
+        capture?.stop(reason:"Input event tap unavailable. No recording started.")
+        capture=nil
+        refreshCaptureStatus()
+    }
     /// A sleep, lock or user switch began or ended: an Input Monitoring off read before it confirms nothing after it, and
     /// reads in the first `InputMonitoringWatch.afterWake` after it ends don't count.
     private func inputWatchInterrupted() {
@@ -1448,6 +1484,7 @@ import WriterBackend
             let next = EventCapture(coordinator:coordinator)
             next.pages.onAccess = { [weak self] access in MainActor.assumeIsolated { self?.chromeAccessFromPages(access) } }
             next.onKeyInput = { [weak self] in MainActor.assumeIsolated { self?.keysArrived() } }
+            next.onKeysNotArriving = { [weak self] in MainActor.assumeIsolated { self?.keysNotArriving() } }
             // A recorder that stops itself is dropped at once: it is no longer live. It stops on the main thread (its
             // timer, the tap, a pause); refreshCaptureStatus drops a stopped one too.
             next.onStopped = { [weak self, weak next] in

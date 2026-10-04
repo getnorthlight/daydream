@@ -513,53 +513,23 @@ final class RecallKeyWindow: NSWindow {
         let top = listOffset
         check(listScroll != nil, "harness: the results list's scroll view is found")
         check((top ?? 0) > 40, "harness: walking to the end and back leaves the list scrolled", "\(String(describing: top))")
-        returnKey()
-        check(model.detailRowID == seven?.id, "Return opens row 7's detail")
-        check(fieldFocused, "the field keeps first responder in the detail")
-        pump(0.3)
-        equal(model.positionText, "Result 7 of 16", "the detail bar's VoiceOver value reads Result 7 of 16")
-        escape()
-        pump(0.3)
-        check(model.detailRowID == nil && model.selectedRowID == seven?.id, "Esc returns to the results with row 7 still selected")
-        let back = listOffset
-        print("EVIDENCE list scroll before detail \(String(describing: top)), after Esc \(String(describing: back))")
-        if let top, let back { check(abs(top - back) <= 2, "the results keep their scroll within 2 pt", "\(top) → \(back)") }
-        else { check(false, "the results keep their scroll within 2 pt", "\(String(describing: top)) → \(String(describing: back))") }
-        check(browser.recallVisible, "the first Esc only pops the detail")
+        // claude/searchui-1005 (owner 10/04): no pushed detail. The selection stays put; Return is Show in Context.
+        equal(model.selectedRowID, seven?.id, "row 7 stays selected")
+        check(browser.recallVisible, "walking the results keeps the panel")
     }
 
+    /// claude/searchui-1005 (owner 10/04: the full-page result repeated the preview): Return shows the selected result
+    /// in context (its own day, the moment selected and open) and closes search; nothing is pushed.
     static func detailStepping() {
         let rows = model.displayRows
         model.select(rows[6].id)
+        let m = rows[6].moment
+        equal(model.menuItems.first { $0.id == .openMoment }?.title, nil, "no Open Moment item (Show in <Day> is the one)")
         returnKey()
-        check(model.detailRowID == rows[6].id, "detail open on row 7")
-        down()
-        check(model.detailRowID == rows[7].id && model.selectedRowID == rows[7].id, "↓ in the detail steps to the next result")
-        up()
-        check(model.detailRowID == rows[6].id, "↑ in the detail steps back")
-        down([.control])
-        check(model.detailRowID == rows[7].id, "⌃↓ aliases ↓")
-        up([.control])
-        check(model.detailRowID == rows[6].id, "⌃↑ aliases ↑")
-        // The breadcrumb's ^ v buttons: 28 pt squares, 6 apart, 16 from the panel's right edge, centred in the 60 pt bar.
-        let p = panelInHost
-        let nextButton = CGPoint(x: p.maxX - 16 - 14, y: p.minY + 30), prevButton = CGPoint(x: p.maxX - 16 - 28 - 6 - 14, y: p.minY + 30)
-        click(nextButton)
-        check(model.detailRowID == rows[7].id, "the v button steps to the next result")
-        click(prevButton)
-        check(model.detailRowID == rows[6].id, "the ^ button steps back")
-        wait(1) { fieldFocused }
-        check(fieldFocused, "after the buttons the field has first responder again")
-        model.select(rows[0].id)
-        check(model.detailRowID == rows[0].id, "at the first result")
-        up()
-        check(model.detailRowID == rows[0].id, "↑ at the first result stays")
-        click(prevButton)
-        check(model.detailRowID == rows[0].id, "the ^ button does nothing at the first result")
-        escape()
-        check(model.detailRowID == nil, "Esc pops the detail")
-        escape()
-        check(!browser.recallVisible && browser.query.isEmpty && !browser.recallPresented, "Esc again closes the panel (recallPresented false, query cleared)")
+        pump(0.3)
+        check(!browser.recallVisible && browser.query.isEmpty && !browser.recallPresented, "Return shows the result in context and closes search")
+        if let m { check(browser.selectedMomentID == m.id && browser.expandedMomentID == m.id, "Return opens row 7's moment in its day") }
+        browser.focusedDay = nil; browser.selectedMomentID = nil; browser.expandedMomentID = nil; browser.reference = nil
         check(wait { field == nil }, "the panel is gone")
         equal(browser.commandContext, DaydreamCommandContext(), "closing Recall resets commandContext")
     }
@@ -620,14 +590,14 @@ final class RecallKeyWindow: NSWindow {
         equal(model.menuFilter, "sh", "Backspace edits what was typed")
         equal(browser.query, "permission", "Backspace with the menu open leaves the query alone")
         escape()
-        check(!model.menuOpen && browser.recallVisible && model.detailRowID == nil, "Esc closes the menu first; the panel stays")
+        check(!model.menuOpen && browser.recallVisible, "Esc closes the menu first; the panel stays")
         equal(model.selectedRowID, selected, "closing the menu keeps the selection")
         let shown = model.selectedRow
         browser.send(.toggleActions)
         type("sho")
         returnKey()
         pump(0.2)
-        check(!model.menuOpen && model.detailRowID == nil && !browser.recallVisible,
+        check(!model.menuOpen && !browser.recallVisible,
               "Return runs the highlighted item (Show in <Day> closes search), and does not open the moment")
         if let m = shown?.moment {
             check(browser.selectedMomentID == m.id && browser.expandedMomentID == m.id, "Show in <Day> keeps the moment selected and open")
@@ -899,7 +869,7 @@ final class RecallKeyWindow: NSWindow {
         up()
         let asked = recorder.queries.count
         returnKey()
-        check(!model.rangeMenuOpen && model.period == .week && model.detailRowID == nil, "Return picks the highlighted range (and opens no moment)")
+        check(!model.rangeMenuOpen && model.period == .week && browser.recallVisible, "Return picks the highlighted range (and opens no moment)")
         settled("past 7 days")
         check(recorder.queries.count > asked, "picking a range searches again")
         if let start = recorder.queries.last?.start { equal(Int(clock.timeIntervalSince(start) / 86_400), 7, "Past 7 Days reaches MemorySearchQuery.start") }

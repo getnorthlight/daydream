@@ -97,7 +97,7 @@ final class Coordinator {
     static func cloudLabel(_ mode: String?) -> String {
         switch mode {
         case "cloud": return "Cloud summaries ON (OpenRouter)"
-        case "off", "local": return "Cloud OFF"
+        case "off", "local", "starting": return "Cloud OFF"
         default: return "Cloud summaries unknown"
         }
     }

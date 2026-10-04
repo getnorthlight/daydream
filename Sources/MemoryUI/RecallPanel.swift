@@ -45,22 +45,13 @@ struct RecallPanel: View {
     @ObservedObject var today: TodayDigest
     let size: CGSize
 
-    private var detail: RecallRow? { model.detailRow }
-
     var body: some View {
         VStack(spacing: 0) {
             header
             rule
-            ZStack(alignment: .topLeading) {
-                results
-                    .opacity(detail == nil ? 1 : 0)
-                    .allowsHitTesting(detail == nil)
-                    .accessibilityHidden(detail != nil)
-                if let row = detail {
-                    RecallDetailView(model: model, row: row)
-                        .background(DaydreamStyle.panelFill)
-                }
-            }
+            // claude/searchui-1005 (owner 10/04): no pushed detail. The preview beside the list is where a result is read;
+            // opening one (Return, double-click) shows it in context, in its day.
+            results
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipped()
             banners
@@ -116,15 +107,9 @@ struct RecallPanel: View {
                 trailing
             }
             .padding(.leading, 20).padding(.trailing, 10)
-            // The field stays mounted (and focused) under the breadcrumb, so ↑/↓ step results in the detail.
-            .opacity(detail == nil ? 1 : 0)
-            .allowsHitTesting(detail == nil)
-            .accessibilityHidden(detail != nil)
-            if detail != nil { RecallDetailBar(model: model, query: model.searchedText) }
         }
         .frame(maxWidth: .infinity)
-            // On the results only: the detail has Back (and its ^ v buttons keep their place at the bar's end).
-            if detail == nil { closeButton.padding(.trailing, 12) }
+            closeButton.padding(.trailing, 12)
         }
         .frame(height: RecallLayout.headerHeight)
     }
@@ -290,35 +275,25 @@ struct RecallPanel: View {
         let items = model.menuItems
         // ⌘↩ is named for where it goes (L15): `Open Original` or `Open <App>`; hidden when neither exists.
         let open = items.first { $0.id == .openOriginal || $0.id == .openApp }
-        let copy = items.first { $0.id == .copySummary }
         // The Open button says where it goes, so the left side is only the privacy line. Only what works now is
         // shown (declutter): no greyed Open Moment or Actions without a selected row, and no Open or Copy Summary
         // that can't run for this moment. The keys still do nothing then, as before.
+        // claude/searchui-1005 (owner 10/04): Return shows the result in context (its day, the moment open); there is no
+        // pushed detail to open.
         let openShown = open.flatMap { $0.enabled ? $0 : nil }
-        let copyShown = copy.flatMap { $0.enabled ? $0 : nil }
-        let openMoment = detail == nil && row != nil
+        let context = row != nil
         return HStack(spacing: 14) {
             footerStatus
             Spacer(minLength: 8)
-            if detail == nil {
-                if openMoment {
-                    hint("Open Moment", "↩", strong: true, enabled: true) { model.openMoment(); model.requestFocus() }
-                }
-                if let open = openShown {
-                    if openMoment { divider }
-                    hint(open.title, "⌘↩", enabled: true) { model.handle(.openOriginal) }
-                }
-            } else {
-                if let open = openShown {
-                    hint(open.title, "⌘↩", strong: true, enabled: true) { model.handle(.openOriginal) }
-                }
-                if let copy = copyShown {
-                    if openShown != nil { divider }
-                    hint(copy.title, copy.keys ?? "", enabled: true) { model.run(copy.id) }
-                }
+            if context {
+                hint(RecallModel.openTitle, "↩", strong: true, enabled: true) { model.openMoment() }
+            }
+            if let open = openShown {
+                if context { divider }
+                hint(open.title, "⌘↩", enabled: true) { model.handle(.openOriginal) }
             }
             if row != nil {
-                if openMoment || openShown != nil || (detail != nil && copyShown != nil) { divider }
+                if context || openShown != nil { divider }
                 hint("Actions", "⌘K", enabled: true, active: model.menuOpen) { model.toggleMenu(); model.requestFocus() }
             }
         }
@@ -346,7 +321,7 @@ struct RecallPanel: View {
                       action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                Text(label).font(.system(size: 12, weight: strong ? .semibold : .regular))
+                Text(label).font(.system(size: 12)) // claude/searchui-1005: no bold; the primary hint is the primary colour
                     .foregroundStyle(strong ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)).lineLimit(1).fixedSize()
                 if !keys.isEmpty { Keycap(keys) }
             }

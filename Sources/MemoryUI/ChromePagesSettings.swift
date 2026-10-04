@@ -138,12 +138,12 @@ public struct ChromePagesCard: View {
         WebTypingText.chromeCard] + sharedExplanation(siteOnly: siteOnlyLine)
     /// fix/sx-all round 2: typing in webmail keeps the open email's subject (`BrowserTypingSites`), so the site-only line
     /// says so where website typing exists.
-    public static let siteOnlyLine = "Common search and chat sites save the site only. Email sites save the folder or the open email's subject while Save email subjects is on (never codes, passwords, sign-ins or bank mail), and typing in webmail keeps the open email's subject."
+    public static let siteOnlyLine = "Search engines save what you searched for, never the rest of the address. Common chat sites save the site only. Email sites save the folder or the open email's subject while Save email subjects is on (never codes, passwords, sign-ins or bank mail), and typing in webmail keeps the open email's subject."
     #else
     public static let explanation = [
         "When on, DayDream saves the title, site and link of the page in front in Google Chrome, and when. Links keep no search terms and stay on this Mac. It never saves what's on the page, what you type, or your clicks.",
     ] + sharedExplanation(siteOnly: siteOnlyLine)
-    public static let siteOnlyLine = "Common search and chat sites save the site only. Email sites save the folder or the open email's subject while Save email subjects is on (never codes, passwords, sign-ins or bank mail)."
+    public static let siteOnlyLine = "Search engines save what you searched for, never the rest of the address. Common chat sites save the site only. Email sites save the folder or the open email's subject while Save email subjects is on (never codes, passwords, sign-ins or bank mail)."
     #endif
     static func sharedExplanation(siteOnly: String) -> [String] { [
         "While any Incognito or Guest window is open, DayDream saves nothing from Chrome.",

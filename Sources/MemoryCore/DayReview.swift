@@ -3,8 +3,8 @@ import PrivacyPolicy
 
 // claude/day-review-1003 (owner-approved design, realmock/day-review.html): the Today card's day review. A flat list of
 // bullets in rank groups (3 for the top thread, 2 for the second, then 1 each for the next two; 7 at most, fewer on a
-// thin day), no titles, no durations, no counts, no times. Each bullet is a bold lead from the records ("Told Jamie
-// Ho", "Asked Claude Code", "Watched", "Replied to"), then the rest in normal weight: a link (a post or video title), a
+// thin day), no titles, no durations, no counts, no times. Each bullet is a lead from the records ("Told Jamie
+// Lin", "Asked Claude Code", "Watched", "Replied to"; full ink, never bold since claude/today-copy-1004), then the rest: a link (a post or video title), a
 // short clause the model wrote for the thread, or the code's own tail ("on YouTube"), and a quote of the person's own
 // words, picked by code.
 //
@@ -87,7 +87,7 @@ public struct DayReviewLink: Codable, Equatable, Sendable {
 public struct DayReviewItem: Codable, Equatable, Sendable {
     /// Stable within the day.
     public var id: String
-    /// The bold lead when the item has its clause ("Told Jamie Lin", "Asked Claude Code", "Replied to").
+    /// The lead when the item has its clause ("Told Jamie Lin", "Asked Claude Code", "Replied to").
     public var lead: String
     /// The lead without a clause ("Texted Jamie Lin"); nil: `lead`.
     public var plainLead: String?
@@ -140,10 +140,18 @@ public struct DayReviewThread: Codable, Equatable, Sendable {
     /// Candidate bullets, best first.
     public var items: [DayReviewItem]
     public var moments: [String]
+    /// claude/today-rank-1005: work | browsing | personal (`DayReview.Category`), as the store read the thread's channel
+    /// and site; nil (an older value): from `kind` and `key` alone.
+    public var category: String?
     public init(key: String, name: String, kind: String, seconds: Int, words: Int, personSends: Int, asks: Int, sendHours: Int,
-                stakes: [DayReview.Stake], score: Double, items: [DayReviewItem], moments: [String]) {
+                stakes: [DayReview.Stake], score: Double, items: [DayReviewItem], moments: [String], category: String? = nil) {
         self.key = key; self.name = name; self.kind = kind; self.seconds = seconds; self.words = words; self.personSends = personSends
         self.asks = asks; self.sendHours = sendHours; self.stakes = stakes; self.score = score; self.items = items; self.moments = moments
+        self.category = category
+    }
+    /// The thread's category for ranking (`DayReview.rankScores`).
+    public var rankCategory: DayReview.Category {
+        category.flatMap(DayReview.Category.init(rawValue:)) ?? DayReview.category(kind: kind, key: key, channel: nil)
     }
 }
 
@@ -180,7 +188,7 @@ public struct DayReviewBullet: Equatable, Sendable, Identifiable {
     public var id: String
     /// The thread it belongs to.
     public var thread: String
-    /// Bold. Ends with ":" when the rest or the quote follows a name ("Worked on DayDream:", "Texted Jamie Lin:").
+    /// Full ink, regular weight (owner 10/04: no bold). Ends with ":" when the rest or the quote follows a name ("Worked on DayDream:", "Texted Jamie Lin:").
     public var lead: String
     public var link: DayReviewLink?
     /// Normal weight, after the link.
@@ -272,6 +280,82 @@ public struct DayReviewStanding: Equatable, Sendable {
 }
 
 extension DayReview {
+    /// claude/today-rank-1005 (owner 10/05): what a thread is, for the order of the Today card. Work (AI apps, code and
+    /// terminals, documents, work email and team chat, calendars, spreadsheets, coursework) leads; browsing and social
+    /// sites (X, YouTube, a page read) come next; personal conversations (Messages, WhatsApp, Discord and Instagram DMs)
+    /// come last. Browsing sits between the two: it is less private than a conversation, and it carries no one else's name.
+    public enum Category: String, Codable, CaseIterable, Sendable { case work, browsing, personal }
+    /// The weight on a thread's importance score for the card's order: far enough apart that a category moves only as a
+    /// whole (an hour of texting stays below ten minutes in Claude), while the score still orders threads inside one.
+    public static let categoryWeight: [Category: Double] = [.work: 1, .browsing: 0.01, .personal: 0.0001]
+    /// Personal conversations show this many bullets in all once the day has other things (`hasOtherThings`).
+    public static let personalBullets = 1
+    /// A day has other things once a thread that isn't a conversation has this score (about ten minutes of focus, or an
+    /// ask and a few minutes); before that the card is in score order with nothing capped.
+    public static let otherThingsScore = 10.0
+    /// Sites whose pages are work: documents, spreadsheets, calendars, email, code, design and coursework.
+    public static let workHosts: Set<String> = ["docs.google.com", "sheets.google.com", "slides.google.com", "drive.google.com", "calendar.google.com",
+        "mail.google.com", "classroom.google.com", "notion.so", "www.notion.so", "figma.com", "github.com", "gitlab.com", "linear.app", "overleaf.com",
+        "canvas.instructure.com", "instructure.com", "gradescope.com", "piazza.com", "coursera.org", "edx.org", "blackboard.com", "office.com",
+        "outlook.office.com", "outlook.live.com", "onedrive.live.com", "airtable.com", "claude.ai", "chatgpt.com", "chat.openai.com", "gemini.google.com",
+        "perplexity.ai", "stackoverflow.com", "developer.apple.com"]
+    /// Sites whose pages are private conversations.
+    public static let personalHosts: Set<String> = ["web.whatsapp.com", "messenger.com", "discord.com", "instagram.com", "web.telegram.org"]
+    /// Apps on their own ("Used …") that are work.
+    public static let workApps: Set<String> = ["calendar", "numbers", "pages", "keynote", "microsoft word", "word", "microsoft excel", "excel",
+        "microsoft powerpoint", "powerpoint", "xcode", "notion", "linear", "figma", "zoom", "microsoft teams", "teams", "fantastical", "obsidian"]
+
+    /// A thread's category from its kind, key and, for a person, the channel ("texts", "chat", "teams", "slack", "email").
+    public static func category(kind: String, key: String, channel: String?, name: String = "") -> Category {
+        switch kind {
+        case "project", "ai", "code", "doc", "meeting", "pr", "email", "slack": return .work
+        case "person", "texts", "chat":
+            let c = channel ?? kind
+            return ["email", "slack", "teams"].contains(c) || key.hasPrefix("chat:teams") ? .work : .personal
+        case "social", "video": return .browsing
+        case "web", "search", "site", "page":
+            var host = ""
+            for p in ["site:", "page:", "video:", "social:", "web:", "search:"] where key.hasPrefix(p) {
+                host = String(key.dropFirst(p.count).split(separator: "|").first ?? "").lowercased()
+            }
+            if host.hasPrefix("www.") { host.removeFirst(4) }
+            func matches(_ set: Set<String>) -> Bool { set.contains { host == $0 || host.hasSuffix("." + $0) } }
+            if matches(personalHosts) { return .personal }
+            return matches(workHosts) ? .work : .browsing
+        case "app": return workApps.contains(name.lowercased()) ? .work : .browsing
+        default: return .browsing
+        }
+    }
+    /// Whether the day has more than conversations: a thread that isn't one with `otherThingsScore`.
+    public static func hasOtherThings(_ facts: DayReviewFacts) -> Bool {
+        facts.threads.contains { $0.rankCategory != .personal && $0.score >= otherThingsScore }
+    }
+    /// The scores the card orders threads by (`DayReviewStanding`): the importance score times its category's weight once
+    /// the day has other things; the score alone before that.
+    public static func rankScores(_ facts: DayReviewFacts) -> [String: Double] {
+        let weighted = hasOtherThings(facts)
+        return Dictionary(facts.threads.map { ($0.key, weighted ? $0.score * (categoryWeight[$0.rankCategory] ?? 1) : $0.score) }, uniquingKeysWith: max)
+    }
+
+    /// claude/today-copy-1004 (owner 10/04, "it shouldn't say asked claude about claude"): an AI tool, or the app or site an
+    /// ask was typed in, names where it was asked, never what it was about.
+    public static let askPlaces = ["Claude", "Claude Code", "ChatGPT", "OpenAI", "Anthropic", "Codex", "Cursor", "Gemini", "Perplexity", "Copilot",
+                                   "AI", "Google Chrome", "Chrome", "Safari", "Arc", "Firefox", "Terminal", "Ghostty", "Code"]
+    /// Words that name no topic on their own (a new chat's title, an email with no subject).
+    static let blankTopicWords: Set<String> = ["new", "untitled", "chat", "chats", "conversation", "conversations", "tab", "window", "home",
+                                               "no", "subject", "re", "fwd", "the", "a", "an", "of", "and"]
+    /// The topic of a code line's "about …" ("Asked Claude about DayDream", "Emailed Sam about Q3 numbers"), trimmed; nil
+    /// when it would only say again who or where (`echoing`: the tool, the app, the person, compared by their words, case
+    /// and spacing aside: "Asked Claude about Claude", "Asked ChatGPT about ChatGPT") or says nothing (empty, punctuation,
+    /// "New chat", "(no subject)"). The line then goes on without its "about …": "Asked Claude: “…”".
+    public static func topic(_ raw: String?, echoing names: [String]) -> String? {
+        guard let t = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
+        let words = ThreadEntities.tokens(t)
+        let echo = Set(names.flatMap(ThreadEntities.tokens))
+        guard !words.isEmpty, !words.allSatisfy({ echo.contains($0) || blankTopicWords.contains($0) }) else { return nil }
+        return t
+    }
+
     /// A quote shows on one line first: about this many characters, cut at a word with "…" (owner 10/03).
     public static let quoteLine = 80
     /// `quote` cut to `limit` characters at a word boundary with "…"; as it is when it fits.
@@ -283,34 +367,55 @@ extension DayReview {
         return head + "…"
     }
 
-    /// The groups the card draws, from the facts, in `order` (nil: by score) with each thread's items in `itemOrder`
+    /// The groups the card draws, from the facts, in `order` (nil: by `rankScores`) with each thread's items in `itemOrder`
     /// (nil: by score), and the quotes' words (`facts.quotes` when nil). Threads whose bullets would say nothing new are
     /// passed over. The last two single bullets share one group.
+    ///
+    /// claude/today-rank-1005 (owner 10/05: "the texting stuff makes people uncomfortable", productivity in front): once the
+    /// day has other things (`hasOtherThings`), personal conversations come after every other thread and show one bullet
+    /// in all, from the best of them; it keeps the last place when the others would fill every group, so a conversation
+    /// is never hidden. On a day with little else the order is the importance score's and nothing is capped.
     public static func assemble(_ facts: DayReviewFacts, order: [String]? = nil, itemOrder: [String: [String]] = [:], quotes: [String: String]? = nil) -> [DayReviewGroup] {
         let words = quotes ?? facts.quotes
         let byKey = Dictionary(facts.threads.map { ($0.key, $0) }, uniquingKeysWith: { a, _ in a })
-        let keys = (order ?? facts.threads.map(\.key)).filter { byKey[$0] != nil }
+        var keys = (order ?? DayReviewStanding.raw(rankScores(facts))).filter { byKey[$0] != nil }
+        let capped = hasOtherThings(facts)
+        var personal = [String]()
+        if capped {
+            personal = keys.filter { byKey[$0]?.rankCategory == .personal }
+            keys = keys.filter { byKey[$0]?.rankCategory != .personal }
+        }
         var groups = [DayReviewGroup](), seen = Set<String>(), rank = 0
-        for key in keys {
-            guard rank < slots.count, let t = byKey[key] else { break }
-            let ids = itemOrder[key] ?? t.items.map(\.id)
+        func place(_ t: DayReviewThread, limit: Int) -> Bool {
+            let ids = itemOrder[t.key] ?? t.items.map(\.id)
             let items = ids.compactMap { id in t.items.first { $0.id == id } } + t.items.filter { !ids.contains($0.id) }
             var bullets = [DayReviewBullet]()
             for item in items {
-                guard bullets.count < slots[rank] else { break }
+                guard bullets.count < limit else { break }
                 let b = bullet(item, thread: t, facts: facts, words: words)
                 if item.needsQuote && b.quote == nil { continue }
                 let line = b.text.lowercased()
                 guard seen.insert(line).inserted else { continue }
                 bullets.append(b)
             }
-            guard !bullets.isEmpty else { continue }
+            guard !bullets.isEmpty else { return false }
             if rank >= 2, let last = groups.last, last.id.hasPrefix("rest") {
                 groups[groups.count - 1].bullets += bullets
             } else {
-                groups.append(DayReviewGroup(id: rank >= 2 ? "rest" : key, bullets: bullets))
+                groups.append(DayReviewGroup(id: rank >= 2 ? "rest" : t.key, bullets: bullets))
             }
             rank += 1
+            return true
+        }
+        // A conversation that can show keeps one place, the last, whatever ranks above it.
+        let conversation = personal.contains { k in byKey[k]!.items.contains { !$0.needsQuote || ($0.quote.flatMap { words[$0] }.map { !$0.isEmpty } ?? false) } }
+        let room = slots.count - (conversation ? 1 : 0)
+        for key in keys {
+            guard rank < room, let t = byKey[key] else { break }
+            _ = place(t, limit: slots[rank])
+        }
+        for key in personal where rank < slots.count {
+            if let t = byKey[key], place(t, limit: min(personalBullets, slots[rank])) { break }
         }
         return groups
     }

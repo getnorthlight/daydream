@@ -1196,11 +1196,18 @@ private func checkMetadataSettle() throws {
                   "Q-4 lean (\(rule)): fresh settled blocked route denies and cannot be skipped by later B")
     }
     ChromeReadShape.current = .full
-    // Real fake-world joins still compare AX title with AE name, even after a fresh title starts.
+    // Real fake-world joins still compare AX title with AE name, even after a fresh title starts. claude/typing-1004: with
+    // one window of those bounds the bounds bind it, so the join admits it site only: the lagging name is never saved.
     let world = FakeChromeWorld()
     world.window.title="Fresh title";world.windows[0].name="Old title"
     let r=world.run(BrowserTypingJoin<FakeAXNode>(design:.synchronous))
-    try check(r.proof == nil && r.denial == .window,
-              "Q-4: fresh AX title with lagging AE name still refuses under the full synchronous match")
+    try check(r.proof != nil && r.proof?.pageTitle == "",
+              "Q-4: fresh AX title with lagging AE name, one window: admitted on its bounds, site only (the lagging name is never saved)")
+    let twin = FakeChromeWorld()
+    twin.window.title="Fresh title";twin.windows[0].name="Old title"
+    twin.addWindow("202", mode: "normal", front: false, bounds: FakeChromeWorld.bounds, name: "Elsewhere", url: "https://other.example.org/", onThisSpace: false)
+    let r2=twin.run(BrowserTypingJoin<FakeAXNode>(design:.synchronous))
+    try check(r2.proof == nil && r2.denial == .window,
+              "Q-4: fresh AX title with lagging AE name and a same-bounds window elsewhere: still refused under the full synchronous match")
 }
 #endif

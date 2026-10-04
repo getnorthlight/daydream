@@ -1319,6 +1319,10 @@ public final class BrowserTypingJoin<Node> {
                       _ target: ChromeTargetFacts, confirming: Bool,
                       field: (String, BrowserTypingFieldLabels) -> Bool, anyFocus: Bool, deadline: UInt64) -> Result<Read, BrowserTypingDenial> {
         func late() -> Bool { e.now() > deadline }
+        // claude/typing-1004: which window or frame step refused, in the always-on tally (`WebTypingRefusals.step`):
+        // a full join's first read only, never a click join's or the confirming read's, never a privacy fact.
+        let tally = !confirming && !anyFocus
+        func step(_ name: StaticString) { if tally { WebTypingRefusals.shared.step(name) } }
         // 0. Still enabled, Chrome frontmost and focused, no secure input.
         guard e.enabled() else { return .failure(.disabled) }
         guard focused(ax, target.pid) else { return .failure(.notFocused) }
@@ -1335,7 +1339,7 @@ public final class BrowserTypingJoin<Node> {
         // 3. Accessibility geometry of the focused window.
         guard let window = ax.focusedWindow(), ax.owner(window) == target.pid, ax.role(window) == "AXWindow",
               ax.subrole(window) == "AXStandardWindow", ax.minimized(window) == false,
-              let frame = ax.frame(window), frame.valid else { return .failure(.window) }
+              let frame = ax.frame(window), frame.valid else { step("window.focused"); return .failure(.window) }
         // 4. Every window Accessibility shows for Chrome, geometry only. The
         //    focused window must be one of them, and no other standard window
         //    (minimized or not) may share its frame: a same-frame twin is
@@ -1355,7 +1359,7 @@ public final class BrowserTypingJoin<Node> {
         // 5. Apple Events bounds of every (normal) window, one event
         //    (fix/chrome-root: QF-17's batched read; was one event per window).
         guard case .boundsList(let bounds)? = ae(.allBounds), bounds.count == ids.count, bounds.allSatisfy(\.valid)
-        else { return .failure(.window) }
+        else { step("window.bounds"); return .failure(.window) }
         // 6. The window list again: nothing opened or closed meanwhile, and
         //    (M6) the bounds pair with the IDs by index only because the list
         //    is identical after them.
@@ -1365,22 +1369,34 @@ public final class BrowserTypingJoin<Node> {
         guard ChromeWindowMatching.coversAll(axFrames, bounds) else { return .failure(.unlistedWindow) }
         // 8. Names only of the listed windows with the focused window's bounds.
         let candidates = ids.indices.filter { bounds[$0].matches(frame) }
-        guard !candidates.isEmpty else { return .failure(.window) }
+        guard !candidates.isEmpty else { step("window.noBounds"); return .failure(.window) }
         var names: [String] = []
         for i in candidates {
-            guard case .text(let n)? = ae(.name(ids[i])), n.utf8.count <= 4096 else { return .failure(.window) }
+            guard case .text(let n)? = ae(.name(ids[i])), n.utf8.count <= 4096 else { step("window.name"); return .failure(.window) }
             names.append(n)
         }
         // 9. AE <-> AX window match: bounds and name, exactly one window.
         let titleObservedAt = e.now()
-        guard let title = ax.title(window) else { return .failure(.window) }
+        guard let title = ax.title(window) else { step("window.axTitle"); return .failure(.window) }
         episodeTitle = (window, title.hashValue)
         let matches = candidates.indices.filter { ChromeWindowMatching.titleMatches(axTitle: title, aeName: names[$0]) }
         // Diagnostics (metadata only): the shape of the match, never a title.
         if !confirming { CaptureDiagnostics.shared.hold("join.title", ChromeWindowMatching.shape(axTitle: title, names: candidates.indices.map { names[$0] })) }
-        guard !matches.isEmpty else { return .failure(.window) }
-        guard matches.count == 1 else { return .failure(.ambiguousWindow) }
-        let windowID = ids[candidates[matches[0]]]
+        // claude/typing-1004 (owner laptop 10/04, public 0.1.4: every website join refused `window` on an X reply, as on
+        // 9/30 (QF-10) and 10/03 (fix/chrome-x), each time a new shape of Chrome's accessible window title). Bounds
+        // already bind the focused window to ONE listed window when exactly one listed window has its frame: step 4
+        // found no same-frame twin among Accessibility's windows, step 7 paired every one of them with a listed window
+        // on bounds, and step 2 found every listed window normal. The title is then a tiebreaker only, as in the
+        // bracketed design's lean read; with several same-bounds candidates (another Space) it still decides, exactly.
+        // The page itself is still proven by step 12 (the tab's address equals the web area's, same origin, path and
+        // query), so a tab switched between the reads is still refused. A window let through on its bounds saves no page
+        // title (site only, as Q-4's too-early title): the name it couldn't match may lag the page.
+        let pick: Int
+        if matches.count == 1 { pick = matches[0] }
+        else if matches.count > 1 { return .failure(.ambiguousWindow) }
+        else if candidates.count == 1 { pick = 0; step("window.titleUnmatched") }
+        else { step("window.title"); return .failure(.window) }
+        let windowID = ids[candidates[pick]]
         // 10. The window's active tab and its URL.
         guard case .text(let tabID)? = ae(.activeTabID(windowID)), ChromeAppleEvents.validID(tabID),
               case .text(let url)? = ae(.tabURL(windowID, tabID)), url.utf8.count <= 8192 else { return .failure(.url) }
@@ -1400,13 +1416,17 @@ public final class BrowserTypingJoin<Node> {
         for _ in 0..<BrowserTypingTiming.maxAncestors {
             guard !late() else { return .failure(.timeout) }
             guard let node = cursor, ax.owner(node) == target.pid, let r = ax.role(node), !r.lowercased().contains("secure"),
-                  !chain.contains(where: { ax.equal($0, node) }) else { return .failure(.frame) }
+                  !chain.contains(where: { ax.equal($0, node) }) else { step("frame.chain"); return .failure(.frame) }
             chain.append(node)
             if r == "AXWebArea" { webAreas.append(node) }
             if ax.equal(node, window) { reached = true; break }
             cursor = ax.parent(node)
         }
-        guard reached, webAreas.count == 1 else { return .failure(.frame) }
+        // claude/typing-1004: no web area above the field is Chrome's own UI (the address bar: its searches are saved
+        // from the results page's address, `WebTypingRoute.recordSearch`); several are a frame inside the page.
+        guard reached, webAreas.count == 1 else {
+            step(!reached ? "frame.chain" : webAreas.isEmpty ? "frame.chromeUI" : "frame.nested"); return .failure(.frame)
+        }
         // 12. Same page on both sides: http(s), same origin, same path and query.
         guard let axURL = ax.url(webAreas[0]), let o1 = BrowserTypingSites.origin(url), let o2 = BrowserTypingSites.origin(axURL),
               o1 == o2, BrowserTypingSites.sameDocument(url, axURL) else { return .failure(.url) }
@@ -1459,7 +1479,7 @@ public final class BrowserTypingJoin<Node> {
             guard e.launchIdentity(target.pid) == target.launchIdentity else { return .failure(.changed) }
         }
         return .success(Read(ids: ids, axFrames: axFrames, bounds: bounds, candidates: candidates, names: names, windowID: windowID,
-                             tabID: tabID, url: url, axURL: axURL, frame: frame, titleObservedAt: titleObservedAt, title: title, pageName: names[matches[0]],
+                             tabID: tabID, url: url, axURL: axURL, frame: frame, titleObservedAt: titleObservedAt, title: title, pageName: matches.isEmpty ? "" : names[pick],
                              window: window, focus: focus,
                              webArea: webAreas[0], chain: chain, role: role, subrole: subrole, windows: all,
                              sendField: sendField, sendPlace: sendPlace, composeRoute: BrowserComposeRoute.path(url: url), replyLabels: replyLabels))
@@ -2719,33 +2739,12 @@ public enum WebTypedRow {
 /// the address. The query is cleaned (whitespace, one line, at most `maxBytes`) and refused when it looks secret
 /// (`Privacy.secret`), is a code of digits only (a one-time code), or holds an email address.
 public enum WebSearchQuery {
-    public static let maxBytes = 256
-    /// (domain, results path or nil for any path, parameter, name)
-    public static let engines: [(domain: String, path: String?, parameter: String, name: String)] = [
-        ("bing.com", "/search", "q", "Bing"), ("duckduckgo.com", nil, "q", "DuckDuckGo"), ("search.brave.com", "/search", "q", "Brave Search"),
-        ("search.yahoo.com", "/search", "p", "Yahoo"), ("ecosia.org", "/search", "q", "Ecosia"), ("kagi.com", "/search", "q", "Kagi"),
-        ("startpage.com", nil, "query", "Startpage")]
+    /// claude/search-1005: one parser for both: page history's search rows (`SearchPage`, every build) and this typed
+    /// search row read the same engines, results paths, parameters and refusals.
+    public static let maxBytes = SearchPage.maxBytes
     /// The engine's name for a search host, or nil.
-    public static func engine(host: String) -> String? {
-        let h = host.lowercased()
-        if h.range(of: "^(www\\.)?google(\\.[a-z]{2,3}){1,2}$", options: .regularExpression) != nil { return "Google" }
-        return engines.first(where: { BrowserSites.matches(host: h, domain: $0.domain) })?.name
-    }
-    public static func query(_ url: String) -> (engine: String, query: String)? {
-        guard let c = URLComponents(string: url), ["https", "http"].contains(c.scheme?.lowercased() ?? ""), c.user == nil, c.password == nil,
-              let host = c.host?.lowercased(), let name = engine(host: host) else { return nil }
-        let rule: (path: String?, parameter: String) = name == "Google" ? ("/search", "q")
-            : engines.first(where: { BrowserSites.matches(host: host, domain: $0.domain) }).map { ($0.path, $0.parameter) } ?? (nil, "q")
-        if let path = rule.path, c.path != path { return nil }
-        // A form's "+" is a space; then the percent escapes.
-        guard let encoded = c.percentEncodedQueryItems?.first(where: { $0.name == rule.parameter })?.value,
-              let raw = encoded.replacingOccurrences(of: "+", with: "%20").removingPercentEncoding else { return nil }
-        let q = raw.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).joined(separator: " ")
-        guard !q.isEmpty, q.utf8.count <= maxBytes, !Privacy.secret(q),
-              q.range(of: #"^[0-9 \-]{4,12}$"#, options: .regularExpression) == nil,
-              q.range(of: #"[^\s@]+@[^\s@]+\.[a-z]{2,}"#, options: [.regularExpression, .caseInsensitive]) == nil else { return nil }
-        return (name, q)
-    }
+    public static func engine(host: String) -> String? { SearchPage.engine(host: host) }
+    public static func query(_ url: String) -> (engine: String, query: String)? { SearchPage.query(url) }
 }
 
 extension TypedTextPolicy {

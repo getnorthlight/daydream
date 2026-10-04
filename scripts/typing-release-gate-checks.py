@@ -67,7 +67,9 @@ OWNER_FLAG_PASSERS = {'scripts/package.sh', 'scripts/developer-id-release.py', '
                       # launch/candidate: the DayDream Preview builder (separate bundle id) passes the release stage's flags.
                       'scripts/preview/build-preview-app.sh',
                       # claude/scrub-1004: README's Build from source shows the release's swift build line with both flags.
-                      'README.md'}
+                      'README.md',
+                      # readme-1005: the README pictures are drawn from a build with the release's two typing flags.
+                      'scripts/readme-pictures/render.sh'}
 
 DECLARED_FALSE = re.compile(r'public\s+static\s+let\s+expandedApproved\s*=\s*false\b')
 ANY_ASSIGN = re.compile(r'expandedApproved\s*(?::\s*Bool\s*)?=(?!=)')

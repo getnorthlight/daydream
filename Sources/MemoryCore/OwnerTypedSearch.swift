@@ -28,7 +28,10 @@ public struct OwnerTypedPlace: Equatable, Sendable {
     public let label: String
     /// The conversation's name, the page's site, or the window's title; "" when none is known.
     public let place: String
-    public init(label: String, place: String) { self.label = label; self.place = place }
+    /// claude/searchui-1005 (owner 10/04: a name typed in Messages' own search field showed as "Texts · Messages"): the
+    /// words went into a search field (the unit's field or surface fact is `search`), so they are a search, never a text.
+    public let search: Bool
+    public init(label: String, place: String, search: Bool = false) { self.label = label; self.place = place; self.search = search }
     /// "Texts · Jamie", or the label alone.
     public var line: String { place.isEmpty || place.caseInsensitiveCompare(label) == .orderedSame ? label : label + " · " + place }
 }
@@ -43,8 +46,15 @@ public struct OwnerTypedSearchResult {
     public var places: [String: OwnerTypedPlace]
     /// false: the pass stopped at its row or time bound before reading every typed row in range.
     public var complete: Bool
-    public init(items: [MemoryItem] = [], snippets: [String: String] = [:], places: [String: OwnerTypedPlace] = [:], complete: Bool = true) {
-        self.items = items; self.snippets = snippets; self.places = places; self.complete = complete
+    /// claude/searchui-1005: action ID -> a longer part of the same words (`OwnerTypedSearchText.lineRadius` each side of
+    /// the match), for the search detail's evidence line. In memory, for the detail only, like the snippet.
+    public var lines: [String: String] = [:]
+    /// claude/searchui-1005: the rows found only by their conversation's name (no query word in the words themselves).
+    /// Their snippet is the start of the message, never the name.
+    public var byName: Set<String> = []
+    public init(items: [MemoryItem] = [], snippets: [String: String] = [:], places: [String: OwnerTypedPlace] = [:], complete: Bool = true,
+                lines: [String: String] = [:], byName: Set<String> = []) {
+        self.items = items; self.snippets = snippets; self.places = places; self.complete = complete; self.lines = lines; self.byName = byName
     }
 }
 
@@ -60,13 +70,19 @@ public final class OwnerTypedSearchStop: @unchecked Sendable {
 public enum OwnerTypedSearchText {
     /// Characters kept on each side of the match in a snippet.
     public static let radius = 48
+    /// claude/searchui-1005: characters kept on each side of the match in the detail's evidence line (a whole text, mostly).
+    public static let lineRadius = 200
+    /// Whether a query word appears literally in `text` (case, accent and width aside).
+    public static func mentions(_ text: String, words: [String]) -> Bool {
+        words.contains { !$0.isEmpty && text.range(of: $0, options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive]) != nil }
+    }
     /// The words as search reads them: one line, the scrubber's marker gone, and every token that looks secret gone.
     public static func searchable(_ raw: String) -> String {
         let text = MomentTypedText.clean(raw).replacingOccurrences(of: TypedSecretScrubber.marker, with: " ")
         return text.split(whereSeparator: { $0.isWhitespace }).map(String.init).filter { !Privacy.secret($0) }.joined(separator: " ")
     }
     /// A short part of `text` around the first literal occurrence of a query word (the start when none: a typo match).
-    public static func snippet(_ text: String, words: [String]) -> String {
+    public static func snippet(_ text: String, words: [String], radius: Int = radius) -> String {
         let hit = words.compactMap { text.range(of: $0, options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive]) }
             .min { $0.lowerBound < $1.lowerBound }
         guard let hit else { return text.count <= radius * 2 ? text : String(text.prefix(radius * 2)) + "…" }
@@ -108,7 +124,7 @@ extension MemoryStore {
         var complete = candidates.count <= limit
         let deadline = Date().addingTimeInterval(Self.ownerTypedSearchBudget)
         let recipients = try typedRecipients(Array(candidates.prefix(limit)))
-        var found: [(item: MemoryItem, score: Int, snippet: String, place: OwnerTypedPlace)] = []
+        var found: [(item: MemoryItem, score: Int, snippet: String, place: OwnerTypedPlace, line: String, byName: Bool)] = []
         for id in candidates.prefix(limit) {
             if stop?.requested == true { return OwnerTypedSearchResult(complete: false) }
             if Date() >= deadline { complete = false; break }
@@ -119,8 +135,13 @@ extension MemoryStore {
             let text = name.isEmpty ? words : words + " " + name
             guard !text.isEmpty, let score = query.lexicalScore(text),
                   let item = try searchActionItem(id, now: now), query.matches(item) else { continue }
+            // claude/searchui-1005 (owner 10/04, a search for a contact's name): a row found only by its conversation's name shows its own words
+            // (the start of the message), never the name again; a row with no words left shows none.
+            let byName = !words.isEmpty && !OwnerTypedSearchText.mentions(words, words: query.words) && !name.isEmpty
+                && OwnerTypedSearchText.mentions(name, words: query.words)
             let shown = OwnerTypedSearchText.snippet(words, words: query.words)
-            found.append((item, score, shown.isEmpty ? name : shown, try ownerTypedPlace(id, conversation: name, now: now)))
+            let line = OwnerTypedSearchText.snippet(words, words: query.words, radius: OwnerTypedSearchText.lineRadius)
+            found.append((item, score, shown, try ownerTypedPlace(id, conversation: name, now: now), line, byName))
         }
         guard try epoch == actionReadEpoch(), try policyBefore == policy().revision, typedVaultState == .ready else { return OwnerTypedSearchResult() }
         found.sort {
@@ -129,9 +150,14 @@ extension MemoryStore {
             return a == b ? $0.item.id > $1.item.id : a > b
         }
         let kept = found.prefix(query.limit)
-        var snippets = [String: String](), places = [String: OwnerTypedPlace]()
-        for f in kept { snippets[f.item.id] = f.snippet; places[f.item.id] = f.place }
-        return OwnerTypedSearchResult(items: kept.map(\.item), snippets: snippets, places: places, complete: complete && found.count <= query.limit)
+        var snippets = [String: String](), places = [String: OwnerTypedPlace](), lines = [String: String](), byName = Set<String>()
+        for f in kept {
+            snippets[f.item.id] = f.snippet; places[f.item.id] = f.place
+            if !f.line.isEmpty { lines[f.item.id] = f.line }
+            if f.byName { byName.insert(f.item.id) }
+        }
+        return OwnerTypedSearchResult(items: kept.map(\.item), snippets: snippets, places: places, complete: complete && found.count <= query.limit,
+                                      lines: lines, byName: byName)
     }
     /// A typed row's context: Messages (or a text surface) is "Texts", an email "Email", else the app's name; the place is
     /// the conversation's name, else the page's site, else (outside Messages, whose window title can't name a typed
@@ -141,8 +167,16 @@ extension MemoryStore {
         let surface = e.captureProvenance?.unit?.surface ?? ""
         let app = AppNames.display(app: e.app, bundle: e.bundle)
         let messages = MessagesMomentIdentity.applies(bundle: e.bundle, app: e.app)
+        // claude/searchui-1005 (owner 10/04): words typed into a search field (Messages' own search, a site's search box)
+        // are a search: "Searched Messages for …", never a text to someone.
+        if surface == "search" || e.captureProvenance?.unit?.field == "search" {
+            return OwnerTypedPlace(label: app.isEmpty ? "Typed" : app, place: "", search: true)
+        }
         let label = messages || surface == "text" ? "Texts" : surface == "email" ? "Email" : (app.isEmpty ? "Typed" : app)
         if !conversation.isEmpty { return OwnerTypedPlace(label: label, place: conversation) }
+        // claude/searchui-1005: a Messages row that names no conversation is not a text to anyone known ("Texts · Messages"
+        // said otherwise): it is what was typed in the app.
+        if messages { return OwnerTypedPlace(label: app.isEmpty ? "Messages" : app, place: "") }
         let host = Self.promptHost(e.url)
         if !host.isEmpty { return OwnerTypedPlace(label: label, place: host) }
         let title = TitleClean.clean(e.title, app: app, site: "").trimmingCharacters(in: .whitespacesAndNewlines)

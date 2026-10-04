@@ -84,17 +84,24 @@ extension MemoryStore {
             let level=LevelKind(rawValue:kind)!
             let note=try levelNote(Self.levelID(level,period:key,timezone:timezone))
             var node=levelNode(note,level:level,period:key,timezone:timezone)
-            node["children"]=try recallChildren(level:level,period:key,timezone:timezone,now:now)
+            if level == .day, try levelNotes(level:.block,periods:[key]).isEmpty {
+                // No blocks yet: the moments themselves, back-to-back ones with no note folded (claude/recall-1004).
+                let rows=foldedMoments(try dayLayers(day:key,timezone:timezone,limit:1,now:now).activities,day:key,timezone:timezone)
+                node["children"]=rows.rows
+                rows.describe(into:&node)
+            } else {
+                node["children"]=try recallChildren(level:level,period:key,timezone:timezone,now:now)
+            }
             if level == .day, key == (try? DayScope.key(now,timezone:timezone)), let open=try recallNow(day:key,timezone:timezone,now:now) { node["now"]=open }
             return node
         case "block":
             guard let note=try levelNote(key), note.level == .block else { throw MemError.invalid("That block is gone (deleted or rebuilt). Recall its day again.") }
             var node=levelNode(note,level:.block,period:note.period,timezone:timezone)
             let layers=try dayLayers(day:note.period,timezone:timezone,limit:1,now:now)
-            node["children"]=note.children.compactMap { ref -> [String:Any]? in
-                guard let m=layers.activities.first(where:{ $0.id == ref.id }) else { return nil }
-                return momentSummary(m,day:note.period,timezone:timezone)
-            }
+            let ids=Set(note.children.map(\.id))
+            let rows=foldedMoments(layers.activities.filter { ids.contains($0.id) },day:note.period,timezone:timezone)
+            node["children"]=rows.rows
+            rows.describe(into:&node)
             return node
         case "moment":
             let bits=key.split(separator:"@").map(String.init)
@@ -110,8 +117,59 @@ extension MemoryStore {
             }
             node["actions"]=ActionResources.activityURI(m.id,day:bits[1],timezone:timezone)
             return node
+        case "moments":
+            // claude/recall-1004: a folded line from a day or block: the back-to-back moments it stands for, one per line.
+            let bits=key.split(separator:"@").map(String.init)
+            let ends=bits.first?.components(separatedBy:"..") ?? []
+            guard bits.count == 2, ends.count == 2 else { throw MemError.invalid("Use an open value from an earlier recall result.") }
+            let moments=try dayLayers(day:bits[1],timezone:timezone,limit:1,now:now).activities
+            guard let first=moments.firstIndex(where:{ $0.id == ends[0] }), let last=moments.firstIndex(where:{ $0.id == ends[1] }), first <= last else {
+                throw MemError.invalid("Those moments are gone (deleted, expired or regrouped). Recall their day again.")
+            }
+            let part=Array(moments[first...last]), zone=TimeZone(identifier:timezone) ?? .current
+            return ["level":"moments","when":AssistantView.when(part[0].start,zone:zone)+" to "+AssistantView.clock(part.map(\.end).max() ?? part[0].end,zone:zone),
+                    "title":part[0].subject,"count":part.count,"children":part.map { momentSummary($0,day:bits[1],timezone:timezone) }]
         default: throw MemError.invalid("Use an open value from an earlier recall result.")
         }
+    }
+    /// claude/recall-1004: a day with no notes yet listed every moment on its own line, so a day of short Messages visits
+    /// read as dozens of bare "Messages (no note yet)" lines at the same minute. Back-to-back moments with no note, from
+    /// the same app(s) and the same title (for Messages, the same conversation: an unknown recipient stays "Messages" and
+    /// never folds into a named one), less than `foldGap` apart, become one line with a time range, a count and one open
+    /// handle (`moments:<first id>..<last id>@<day>`) that lists them. Moments with a note always keep their own line.
+    /// At most `maxMomentRows` lines; the rest are counted, never silently dropped.
+    static let foldGap:TimeInterval=30*60
+    static let maxMomentRows=40
+    struct FoldedMoments {
+        var rows:[[String:Any]]=[], folded=0, foldedInto=0, leftOut=0
+        /// Says how many moments were folded and how many lines were left out, on the node that lists them.
+        func describe(into node:inout [String:Any]) {
+            if folded > 0 { node["folded"]="\(folded) back-to-back moments with no note yet are folded into \(foldedInto) line\(foldedInto == 1 ? "" : "s"); open a line's handle to list them." }
+            if leftOut > 0 { node["left_out"]="\(leftOut) later line\(leftOut == 1 ? "" : "s") not shown; recall level block with when set to the day and a part (morning, afternoon, evening, night) for them." }
+        }
+    }
+    func foldedMoments(_ moments:[ActivityNote],day:String,timezone:String,cap:Int=maxMomentRows) -> FoldedMoments {
+        let zone=TimeZone(identifier:timezone) ?? .current
+        var runs:[[ActivityNote]]=[]
+        for m in moments {
+            if m.generated == nil, let run=runs.last, let prev=run.last, prev.generated == nil, prev.subject == m.subject,
+               prev.apps == m.apps, prev.sites == m.sites,
+               let end=timestamp(run.map(\.end).max() ?? prev.end), let start=timestamp(m.start), start.timeIntervalSince(end) <= Self.foldGap {
+                runs[runs.count-1].append(m)
+            } else {
+                runs.append([m])
+            }
+        }
+        var out=FoldedMoments()
+        for run in runs {
+            if run.count == 1 { out.rows.append(momentSummary(run[0],day:day,timezone:timezone)); continue }
+            out.folded+=run.count; out.foldedInto+=1
+            out.rows.append(["level":"moments","when":AssistantView.when(run[0].start,zone:zone)+" to "+AssistantView.clock(run.map(\.end).max() ?? run[0].end,zone:zone),
+                             "apps":run[0].apps.map { AppNames.display(app:$0,bundle:"") },"title":run[0].subject,"written":"no note yet",
+                             "count":run.count,"open":"moments:\(run[0].id)..\(run[run.count-1].id)@\(day)"])
+        }
+        if out.rows.count > cap { out.leftOut=out.rows.count-cap; out.rows=Array(out.rows.prefix(cap)) }
+        return out
     }
     func levelNode(_ note:LevelNote?,level:LevelKind,period:String,timezone:String) -> [String:Any] {
         var node:[String:Any]=["level":level.rawValue,"open":level.rawValue+":"+(level == .block ? (note?.id ?? "") : period)]
@@ -182,8 +240,8 @@ extension MemoryStore {
         case .day:
             let blocks=try levelNotes(level:.block,periods:[period])
             if !blocks.isEmpty { return blocks.map { levelNode($0,level:.block,period:period,timezone:timezone) } }
-            // No blocks yet: the moments themselves.
-            return try dayLayers(day:period,timezone:timezone,limit:1,now:now).activities.map { momentSummary($0,day:period,timezone:timezone) }
+            // No blocks yet: the moments themselves, folded as a day's recall shows them (claude/recall-1004).
+            return foldedMoments(try dayLayers(day:period,timezone:timezone,limit:1,now:now).activities,day:period,timezone:timezone).rows
         case .block: return []
         }
     }
@@ -202,7 +260,9 @@ extension MemoryStore {
             out["blocks"]=blocks.map { levelNode($0,level:.block,period:day,timezone:timezone) }
         } else {
             out["written"]="no blocks written yet; these are the moments"
-            out["moments"]=try dayLayers(day:day,timezone:timezone,limit:1,now:now).activities.filter { overlaps($0.start,$0.end) }.map { momentSummary($0,day:day,timezone:timezone) }
+            let rows=foldedMoments(try dayLayers(day:day,timezone:timezone,limit:1,now:now).activities.filter { overlaps($0.start,$0.end) },day:day,timezone:timezone)
+            out["moments"]=rows.rows
+            rows.describe(into:&out)
         }
         return out
     }

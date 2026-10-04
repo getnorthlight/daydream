@@ -47,12 +47,13 @@ func runChromePageProbeChecks() throws {
     }
     f=FakeChrome(); f.url="https://www.google.com/search?q=private+medical+question"
     try check(f.read() == .skipped(.blocked) && !f.asksTitle,"page history: a search for a sensitive word is skipped, not saved as a site")
+    // claude/search-1005 (owner decision 2026-10-04): a results page keeps its search words (from the address), no link.
     f=FakeChrome(); f.url="https://www.google.com/search?q=weekend+weather"
-    try check(f.read() == .page(ChromePageRead(windowID:"w1",tabID:"t1",origin:"https://www.google.com",title:"",siteOnly:true)),
-              "page history: a search page is site only (no link)")
+    try check(f.read() == .page(ChromePageRead(windowID:"w1",tabID:"t1",origin:"https://www.google.com",title:"weekend weather",siteOnly:true)),
+              "page history: a search page is its site and search words (no link)")
     try check(f.log == [.windowIDs,.mode("w1"),.mode("w2"),.activeTabID("w1"),.tabURL("w1","t1"),
                         .windowIDs,.mode("w1"),.mode("w2"),.activeTabID("w1"),.tabURL("w1","t1")],
-              "page history: site-only read order never asks for the title")
+              "page history: a search page with its words in the address never asks for the title")
     for url in ["https://mail.google.com/mail/u/0/#inbox/abc","https://example.org/?q=x","https://www.facebook.com/messages/t/123","https://chatgpt.com/c/abc","https://app.slack.com/client/T1/C2"] {
         f=FakeChrome(); f.url=url
         if case .page(let r)=f.read() { try check(r.siteOnly && r.title.isEmpty && !f.asksTitle,"page history: site only, no title asked: "+url) }

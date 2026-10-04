@@ -100,6 +100,14 @@ public struct CanonicalTimeline: View {
         return snapshot(for: dayKey)?.moments.first { $0.id == id }
     }
     private var motion: Animation? { reduceMotion || isStatic ? nil : .easeInOut(duration: 0.16) }
+    /// perf-1005 (owner 10/4, "clicking cards is glitchy" on big days): a card opens and closes at once on a day of more
+    /// than `animatedOpenLimit` moments. Animated, every row below moved each frame of the 0.16 s, each move handed every
+    /// row's frame to the list and re-anchored the scroll (12-15 rounds per click on a 276-moment day, about 3 without),
+    /// on a list too long to draw a frame in time.
+    private var expandMotion: Animation? {
+        (snapshot(for: dayKey)?.moments.count ?? 0) > Self.animatedOpenLimit ? nil : motion
+    }
+    public static let animatedOpenLimit = 60
     /// fix/day-nav: the day's content fade; none with Reduce Motion.
     private var dayFade: Animation? { reduceMotion || isStatic ? nil : .easeOut(duration: DayNavigation.fadeDuration) }
 
@@ -231,6 +239,7 @@ public struct CanonicalTimeline: View {
                     })
                     .coordinateSpace(name: FocusRowFrames.space)
                     .onPreferenceChange(FocusRowFrames.self) { frames in
+                        probe?.rowFrameUpdates += 1
                         box.rowsMoved(frames)
                         probe?.rowFrames = frames.filter { ![FocusRowFrames.contentKey, FocusRowFrames.noticeKey].contains($0.key) }
                         probe?.noticeFrame = frames[FocusRowFrames.noticeKey]
@@ -688,8 +697,8 @@ public struct CanonicalTimeline: View {
         setSelected(m.id)
         let expanding = browser.expandedMomentID != m.id
         // A row opened near the bottom scrolls just enough to show its card (never its header off the top).
-        if expanding { box.reveal(m.id, animated: motion != nil) }
-        withAnimation(motion) { setExpanded(expanding ? m.id : nil) }
+        if expanding { box.reveal(m.id, animated: expandMotion != nil) }
+        withAnimation(expandMotion) { setExpanded(expanding ? m.id : nil) }
     }
 
     private func show(_ id: String) {
@@ -774,7 +783,7 @@ public struct CanonicalTimeline: View {
             return true
         case .escape:
             guard browser.expandedMomentID != nil else { return false }
-            withAnimation(motion) { setExpanded(nil) }
+            withAnimation(expandMotion) { setExpanded(nil) }
             return true
         case .copy:
             guard let m = selectedMoment else { return false }
@@ -1391,6 +1400,8 @@ private final class FocusScrollProbeView: NSView {
     /// Each row's frame (a collapsed row, or an expanded card with its inset) in the list's document
     /// coordinates: y down from the top of `canonical-history`'s content.
     public internal(set) var rowFrames: [String: CGRect] = [:]
+    /// perf-1005: how many times the row frames were handed to the list (a layout loop shows as a count that keeps rising).
+    public internal(set) var rowFrameUpdates = 0
     /// A failed action's notice (above the list, or in the expanded card), in the same coordinates.
     public internal(set) var noticeFrame: CGRect?
     /// What each expanded body's `Windows and pages` lists, by moment id, and whether every member

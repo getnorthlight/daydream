@@ -40,6 +40,8 @@ CHROME_TYPING_FILES = ['Sources/MemoryCore/BrowserTypingJoin.swift', 'Sources/Ma
 FLAG_FILES = set(CHROME_TYPING_FILES) | {'Checks/main.swift', 'Checks/ChromeBracketChecks.swift', 'scripts/check_browser_boundary.py', 'scripts/chrome-typing-checks.py',
                                          # claude/scrub-1004: README's Build from source names the release's two typing flags.
                                          'README.md',
+                                         # readme-1005: the README pictures are drawn from a build with the release's two typing flags.
+                                         'scripts/readme-pictures/render.sh',
                                          'scripts/chrome-apple-event-parse-checks.swift', 'scripts/daydream-core-source-checks.py',
                                          # The owner build (SPEC-LATER section 3) needs Chrome typing too: the
                                          # packager's owner block, the compile guard and its check.
@@ -88,6 +90,8 @@ OWNER_FLAG_FILES = {'PrivacyPolicy/Sources/PrivacyPolicy/OwnerTyping.swift', 'So
                     'scripts/daydream-core-source-checks.py',
                     # claude/scrub-1004: README's Build from source names the release's two typing flags.
                     'README.md',
+                    # readme-1005: the README pictures are drawn from a build with the release's two typing flags.
+                    'scripts/readme-pictures/render.sh',
                     # claude/chrome-offmain-1003: the replay of website typing on and off the main thread (owner build only).
                     'scripts/chrome-offmain-checks.swift',
                     # typing-all apps track: the web-content proof's live reads (owner build only).
@@ -407,28 +411,34 @@ class BrowserBoundary(unittest.TestCase):
     def test_docs_match_build(self):
         # Legal conditions F, G and I: the README and the privacy page describe
         # exactly what this build does with browsers, and never overclaim.
+        # readme-1005: the README is the short front page and docs/guide.md the full reference; they're read as one.
+        def doc(name):
+            if name=='README.md': return (ROOT/'README.md').read_text()+'\n'+(ROOT/'docs/guide.md').read_text()
+            return (ROOT/name).read_text()
         for name in ['README.md','PRIVACY.md']:
-            text=(ROOT/name).read_text()
+            text=doc(name)
             for need in ['Google Chrome','Incognito','page titles and sites from Google Chrome','AI apps you connect']:
                 self.assertIn(need,text,name)
-            lower=text.lower()
+            # The download line may say the first download is coming soon (owner, 10/04), and nothing else may.
+            lower=text.lower().replace('the first download is coming soon at','')
             for banned in ['coming soon','all browsers','full address is saved']:
                 self.assertNotIn(banned,lower,name)
         privacy=(ROOT/'PRIVACY.md').read_text()
         for need in ['Guest','Time Machine','Safari',"Don't record this site",'Exclude Google Chrome','not complete','Use it on your own Mac']:
             self.assertIn(need,privacy)
         self.assertEqual(privacy.split('\n## Browser history questions\n',1)[1].count('\n### '),6,'the FAQ has six entries')
-        readme=(ROOT/'README.md').read_text()
+        readme=doc('README.md')
         self.assertIn('Use it on your own Mac',readme)
         self.assertNotIn('Unsupported browser typing stays OFF',readme)
         # Honesty review: no absolute claim the code can't back.
         for name in ['README.md','PRIVACY.md']:
-            lower=(ROOT/name).read_text().lower()
+            lower=doc(name).lower()
             for banned in ['every other browser',"an ai app you never connected can't",'only apps you connect yourself get access',
                            'records a browser only when','- search, email and chat pages save','while the change is saved','password managers are never recorded']:
                 self.assertNotIn(banned,lower,name)
-            # email-1003 (owner decision 2026-10-03): email sites keep their subjects; search and chat stay site-only.
-            for need in ["doesn't know",'common search and chat sites save the site only','save email subjects','ai provider','not encrypted' if name=='PRIVACY.md' else 'unencrypted']:
+            # email-1003 (owner decision 2026-10-03): email sites keep their subjects; chat stays site-only. claude/search-1005
+            # (owner decision 2026-10-04): search engines keep what was searched for, never the rest of the address.
+            for need in ["doesn't know",'search engines save what you searched for, never the rest of the address','common chat sites save the site only','save email subjects','ai provider','not encrypted' if name=='PRIVACY.md' else 'unencrypted']:
                 self.assertIn(need,lower,name)
         # A save pauses recording and starts it again by itself if it was on (MemoryViewModel.resumeAfterSave).
         self.assertIn('recording pauses for the save and starts again by itself if it was on',privacy.lower())
@@ -446,9 +456,9 @@ class BrowserBoundary(unittest.TestCase):
         # ux/v1 words it as README and PRIVACY.md do (below); honesty-ui-checks pins the same sentence.
         self.assertIn('public static let ownMac = "Use DayDream only to record yourself, on your own Mac account."',screens)
         self.assertIn('notice("person", DaydreamSetupText.ownMac)',screens)
-        for doc in [privacy,(ROOT/'README.md').read_text()]:
-            self.assertIn("Use DayDream only to record yourself, on your own Mac user account.",doc)
-            self.assertIn("isn't a monitoring tool",doc)
+        for text in [privacy,doc('README.md')]:
+            self.assertIn("Use DayDream only to record yourself, on your own Mac user account.",text)
+            self.assertIn("isn't a monitoring tool",text)
     def test_chrome_typing_is_private_build_only_and_unwired(self):
         for f in CHROME_TYPING_FILES:
             lines=[l for l in (ROOT/f).read_text().splitlines() if l.strip()]
@@ -973,8 +983,12 @@ class BrowserBoundary(unittest.TestCase):
         # The title is asked only for pages that keep one; the re-check follows it.
         self.assertEqual(read.count('ask(.tabTitle('),1)
         # email-1003 (owner decision 2026-10-03): an email page asks for its title too, only while Save email subjects is on.
-        self.assertLess(read.index('if !siteOnly || emailTitle {'),read.index('ask(.tabTitle('))
+        # claude/search-1005 (owner decision 2026-10-04): a search engine's results page asks for it only when its address
+        # holds no search words; the words are the row's title, never any other part of the address.
+        self.assertLess(read.index('if !siteOnly || emailTitle || (searchPage && searchWords == nil) {'),read.index('ask(.tabTitle('))
         self.assertIn('let emailTitle = siteOnly && emailSubjects && BrowserSites.emailPage(url)',read)
+        self.assertIn('let searchPage = siteOnly && !emailTitle && SearchPage.resultsPage(url)',read)
+        self.assertIn('let searchWords = searchPage ? SearchPage.query(url)?.query : nil',read)
         self.assertGreater(read.rindex('modes(ids, ask)'),read.index('ask(.tabTitle('))
         self.assertGreater(read.rindex('ask(.tabURL(front, tab))'),read.index('ask(.tabTitle('))
         # Only the origin, the cleaned title and (fix/show-all, on this Mac only) the page link leave the read: never

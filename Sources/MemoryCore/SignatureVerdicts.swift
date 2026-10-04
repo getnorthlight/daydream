@@ -16,11 +16,20 @@ public struct SignatureVerdicts: Sendable {
         guard let at = passes[key] else { return false }
         return now >= at && now - at <= Self.ttl
     }
+    /// perf-1005: a pass past half its `ttl` (and not yet expired): the caller checks again OFF the main thread, so the
+    /// next key finds a fresh pass instead of evaluating the certificate chain on the main thread every 2 s (owner laptop
+    /// 10/4: `SecTrustEvaluateIfNecessary` on the main thread up to 42 times a minute, "should not be called on the main
+    /// thread"). The rule is unchanged: a pass is used at most `ttl` after the check that produced it.
+    public func refreshDue(_ key: String, now: UInt64) -> Bool {
+        guard let at = passes[key], now >= at else { return false }
+        return now - at > Self.ttl / 2 && now - at <= Self.ttl
+    }
     public mutating func record(_ key: String, valid: Bool, now: UInt64) {
         guard valid else { passes[key] = nil; return }
         if passes.count >= Self.capacity { passes = passes.filter { now >= $0.value && now - $0.value <= Self.ttl } }
         if passes.count >= Self.capacity { passes.removeAll() }
-        passes[key] = now
+        // A background check that started before a newer one never makes the pass older.
+        passes[key] = max(passes[key] ?? 0, now)
     }
     public var count: Int { passes.count }
 }

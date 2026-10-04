@@ -27,7 +27,7 @@ struct RecallSectionLabel: View {
     var detail: String? = nil
     var body: some View {
         HStack {
-            Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+            Text(title).font(.system(size: 11)).foregroundStyle(.secondary)
             Spacer(minLength: 8)
             if let detail { Text(detail).font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1) }
         }
@@ -60,7 +60,9 @@ struct RecallRowIcon: View {
 
 // MARK: - Row
 
-/// A 48 pt result row: icon, highlighted title, start time; the matched field (the highlight shows why it matched).
+/// A 48 pt result row (claude/searchui-1005, owner 10/04): icon, the title (a conversation's name with a small "Texts"
+/// label, never a time), ONE time (the matching line's), then the matching line itself with the hit highlighted and,
+/// for several matches, how many. No bold but the highlight.
 struct RecallResultRow: View {
     let row: RecallRow
     let terms: [String]
@@ -68,55 +70,26 @@ struct RecallResultRow: View {
     let best: Bool
     let timeZone: TimeZone
     let voiceOver: String
+    /// The second line, its time and the match count (`RecallModel.rowLine`).
+    let line: RecallRowLine
 
-    /// Every literal match of the row's hits, in hit order.
-    private var matches: [RecallMatch] { row.hits.flatMap { RecallText.matches($0, terms: terms, typed: row.typed[$0.id]) } }
     /// "Recent": no query, no hits (find-A `AHomeRow`).
     private var recent: Bool { row.isRecent }
 
     /// A match as the subtitle shows it (a page reads "title · host"; page-links-1003: its short link in place of the
     /// host when it has one, and never the row's own title again).
-    private func line(_ m: RecallMatch) -> String { Self.line(m, row: row) }
     static func line(_ m: RecallMatch, row: RecallRow) -> String {
         if m.source == .page, let hit = row.hits.first(where: { RecallText.webHost($0.evidence.url) == m.text }) {
             let place = hit.evidence.page.flatMap(BrowserSites.shortLink) ?? m.text
             let title = hit.evidence.title.trimmingCharacters(in: .whitespacesAndNewlines)
             if title.isEmpty || title.caseInsensitiveCompare(row.title.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame { return place }
-            return title + " · " + place
+            return title + " \u{00B7} " + place
         }
         return m.text
     }
 
-    /// The matched field, unless it only repeats the title (a moment titled by its window): then the
-    /// next match that differs, else the moment's row subtitle (its note's first line; never `Summary
-    /// pending`), else its site when the title doesn't already name it, else the action's description.
-    private var subtitle: String { Self.subtitle(row, matches: matches.map(line)) }
-
-    static func subtitle(_ row: RecallRow, matches: [String]) -> String {
-        if let n = row.note { return noteSubtitle(n, row: row) }
-        func repeats(_ text: String) -> Bool {
-            text.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(row.title.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
-        }
-        if let other = matches.first(where: { !repeats($0) }) { return other }
-        if let m = row.moment {
-            let text = MomentSubtitle.rowText(for: m)
-            // "Had Investor update open in Claude." under "Investor update" says the title again: the app (and site) instead.
-            if text.hasPrefix("Had "), row.title.count >= 3, text.localizedCaseInsensitiveContains(row.title) {
-                let site = row.site.flatMap { !$0.isEmpty && !row.title.localizedCaseInsensitiveContains($0) ? $0 : nil }
-                let place = [row.appName, site ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
-                if !place.isEmpty { return place }
-            }
-            if !text.isEmpty { return text }
-            guard let site = row.site, !site.isEmpty, !row.title.localizedCaseInsensitiveContains(site) else { return "" }
-            return site
-        }
-        return row.anchor?.summary ?? ""
-    }
-
-    /// The second line of a moment found by its note: "Line in <moment>" for a line, "Moment · App" for the whole note.
-    static func noteSubtitle(_ n: NoteHit, row: RecallRow) -> String {
-        n.level == "line" ? "Line in " + (n.inTitle ?? n.noteTitle) : (row.appName.isEmpty ? "Moment" : "Moment · " + row.appName)
-    }
+    /// "3 matches" beside the line, for a row that holds several.
+    static func countText(_ n: Int) -> String? { n > 1 ? "\(n) matches" : nil }
 
     var body: some View {
         if recent { recentBody } else { resultBody }
@@ -127,8 +100,8 @@ struct RecallResultRow: View {
         HStack(spacing: 12) {
             RecallRowIcon(row: row, size: 28, ring: selected ? DaydreamStyle.panelSelection : DaydreamStyle.panelFill)
             VStack(alignment: .leading, spacing: 3) {
-                Text(row.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                if !subtitle.isEmpty { subtitleText.font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1) }
+                Text(row.title).font(.system(size: 13)).lineLimit(1)
+                if !line.text.isEmpty { Text(line.text).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1) }
             }
             Spacer(minLength: 8)
             Text(DaydreamFormat.time(row.time, timeZone)).font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
@@ -147,15 +120,25 @@ struct RecallResultRow: View {
         HStack(spacing: 12) {
             RecallRowIcon(row: row, size: 28, ring: selected ? DaydreamStyle.panelSelection : DaydreamStyle.panelFill)
             VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(RecallText.highlighted(row.title, terms: terms)).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(RecallText.highlighted(row.title, terms: RecallText.mentions(line.text, terms: terms) ? [] : terms))
+                        .font(.system(size: 13)).lineLimit(1)
                         .layoutPriority(1)
+                    if let label = row.kindLabel {
+                        Text(label).font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1).fixedSize()
+                    }
                     Spacer(minLength: 8)
-                    Text(DaydreamFormat.time(row.time, timeZone)).font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
+                    Text(DaydreamFormat.time(line.at ?? row.time, timeZone)).font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
                         .lineLimit(1).fixedSize()
                 }
-                if !subtitle.isEmpty {
-                    subtitleText.font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                if !line.text.isEmpty || Self.countText(line.count) != nil {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        subtitleText.font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                        Spacer(minLength: 4)
+                        if let count = Self.countText(line.count) {
+                            Text(count).font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1).fixedSize()
+                        }
+                    }
                 }
             }
         }
@@ -169,18 +152,17 @@ struct RecallResultRow: View {
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 
-    /// One highlight per row (owner, Preview 2: "so much is being highlighted"): the title's match, and the subtitle's
-    /// only when the title doesn't have one.
+    /// One highlight per row (owner, Preview 2: "so much is being highlighted"): the matching line's, and the title's
+    /// only when the line has none (a row found by its title).
     private var subtitleText: Text {
-        Text(RecallText.highlighted(subtitle, terms: RecallText.mentions(row.title, terms: terms) ? [] : terms))
+        Text(RecallText.highlighted(line.text, terms: terms))
     }
 
 }
 
 // MARK: - List
 
-/// The scrolling list. It stays mounted while a detail is pushed, so its scroll position and selection
-/// are exactly where they were when the detail pops.
+/// The scrolling list (claude/searchui-1005: there is no pushed detail over it; opening a result shows it in context).
 struct RecallList: View {
     @ObservedObject var model: RecallModel
     @ObservedObject var today: TodayDigest
@@ -222,10 +204,12 @@ struct RecallList: View {
     }
 
     private func rowView(_ row: RecallRow, terms: [String], selected: Bool, best: Bool, tz: TimeZone) -> some View {
-        RecallResultRow(row: row, terms: terms, selected: selected, best: best, timeZone: tz, voiceOver: model.voiceOverLabel(row))
+        RecallResultRow(row: row, terms: terms, selected: selected, best: best,
+                        timeZone: tz, voiceOver: model.voiceOverLabel(row), line: model.rowLine(row))
             .id(row.id)
             .onTapGesture { model.select(row.id); model.requestFocus() }
-            .simultaneousGesture(TapGesture(count: 2).onEnded { model.select(row.id); model.openMoment(); model.requestFocus() })
+            // claude/searchui-1005: a double-click shows the result in context (no pushed detail).
+            .simultaneousGesture(TapGesture(count: 2).onEnded { model.select(row.id); model.openMoment() })
             .accessibilityAction { model.select(row.id); model.openMoment() }
             // Secondary click: the ⌘K Actions menu's items for this row.
             .contextMenu { MomentContextMenu(items: model.menuItems(for: row)) { model.run($0, onRow: row.id) } }

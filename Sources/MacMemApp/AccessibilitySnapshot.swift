@@ -146,7 +146,22 @@ enum AccessibilityReader {
         // PID, another bundle or requirement, a refusal or an unreadable start time always checks again.
         let launch=ProcessStart.kernelSeconds(pid:pid).map {"\(pid):\($0):\(bundle)|"+text}
         let now=DispatchTime.now().uptimeNanoseconds
-        if let launch,signatureVerdicts.passed(launch,now:now) {return true}
+        if let launch,signatureVerdicts.passed(launch,now:now) {
+            // perf-1005: past half its life the pass is checked again off the main thread (the same check, same flags,
+            // the compiled requirement); a refusal drops it, so the next key checks here again.
+            if signatureVerdicts.refreshDue(launch,now:now),signatureRefreshing.insert(launch).inserted,let requirement=compiledRequirement(text) {
+                signatureQueue.async {
+                    var code:SecCode?
+                    let valid=SecCodeCopyGuestWithAttributes(nil,[kSecGuestAttributePid:pid] as CFDictionary,SecCSFlags(rawValue:0),&code)==errSecSuccess
+                        && code.map { SecCodeCheckValidity($0,SecCSFlags(rawValue:0),requirement)==errSecSuccess } == true
+                    DispatchQueue.main.async {
+                        signatureRefreshing.remove(launch)
+                        signatureVerdicts.record(launch,valid:valid,now:now)
+                    }
+                }
+            }
+            return true
+        }
         var code:SecCode?
         guard SecCodeCopyGuestWithAttributes(nil,[kSecGuestAttributePid:pid] as CFDictionary,SecCSFlags(rawValue:0),&code)==errSecSuccess,
               let code,let requirement=compiledRequirement(text) else {return false}
@@ -156,6 +171,9 @@ enum AccessibilityReader {
     }
     /// Main thread only, like every caller.
     private static var signatureVerdicts=SignatureVerdicts()
+    /// perf-1005: launches whose pass is being checked again off the main thread (main thread only), and where.
+    private static var signatureRefreshing=Set<String>()
+    private static let signatureQueue=DispatchQueue(label:"daydream.native-signature",qos:.userInitiated)
     /// Each requirement string is compiled once (main thread only, like every caller).
     private static var requirements:[String:SecRequirement]=[:]
     private static func compiledRequirement(_ text:String)->SecRequirement? {

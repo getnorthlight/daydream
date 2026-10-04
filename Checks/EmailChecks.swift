@@ -102,10 +102,14 @@ func runEmailChecks(home:URL,now:Date) throws {
     try check(kept(probe("https://mail.google.com/chat/u/0/#chat/dm/fake","Riley Park - Chat",subjects:true).0) == "","email capture: Gmail's chat stays a chat site (site only)")
     try check(kept(probe("https://outlook.office.com/calendar/view/week","Calendar - Riley Park - Outlook",subjects:true).0) == "","email capture: Outlook's calendar is not mail (site only)")
     try check(kept(probe("https://www.icloud.com/notes/","iCloud Notes",subjects:true).0) == "","email capture: iCloud outside /mail is not mail (site only)")
-    for (url,title) in [("https://www.google.com/search?q=weather","weather - Google Search"),("https://chatgpt.com/c/fake","Trip planning"),
-                        ("https://app.slack.com/client/T1/C2","#eng (Channel) - Example - Slack"),("https://www.bing.com/search?q=x","x - Search")] {
+    // claude/search-1005: a search engine's results page keeps its search words (from the address), never its title.
+    for (url,title) in [("https://www.google.com/search?q=weather","weather - Google Search"),("https://www.bing.com/search?q=fixture","fixture - Search")] {
         let (r,asked)=probe(url,title,subjects:true)
-        try check(kept(r) == "" && !asked,"email capture: search and chat sites are unchanged (site only, title never asked): "+url)
+        try check(kept(r) == URLComponents(string:url)?.queryItems?.first?.value && !asked,"email capture: search pages keep their search words, title never asked: "+url)
+    }
+    for (url,title) in [("https://chatgpt.com/c/fake","Trip planning"),("https://app.slack.com/client/T1/C2","#eng (Channel) - Example - Slack")] {
+        let (r,asked)=probe(url,title,subjects:true)
+        try check(kept(r) == "" && !asked,"email capture: chat sites are unchanged (site only, title never asked): "+url)
     }
     try check(probe(thread,"Re: Demo feedback - riley@example.test - Gmail",subjects:true,mode:"incognito").0 == .skipped(.notNormal),
               "email capture: an Incognito window saves nothing")

@@ -67,6 +67,10 @@ final class FakeAIAppControl: AIAppControlling, @unchecked Sendable {
     func setServers(_ servers: [ConnectionServer], since: Date?) { locked { _servers = servers; _since = since } }
     func connectionServers() -> [ConnectionServer] { locked { _servers } }
     func renewingServersSince() -> Date? { locked { _since } }
+    private var _toolsSince: Date?
+    /// claude/recall-1004: since when DayDream's tool list is the one it offers now.
+    func setToolsSince(_ date: Date?) { locked { _toolsSince = date } }
+    func toolsChangedSince() -> Date? { locked { _toolsSince } }
     func runningInfo(_ id: String) -> RunningAIApp? { locked { _running[id] } }
 
     func location(_ app: AIApp, env: AIAppConnectEnvironment) -> URL? { locked { _locations[app.id] } }
@@ -727,6 +731,21 @@ final class FakeConnectionCommand: ConnectionCommandRunning, @unchecked Sendable
         control.setServers([stale("claude-code", since.addingTimeInterval(5))], since: since)
         await reread(model)
         check(shown("claude-code").status == "Connected", "a new Claude Code session: Connected")
+        // claude/recall-1004: a later update changed DayDream's tool list. The session's server carries on as the update,
+        // but Claude Code keeps the older list (without the newer tools the replies name) until a new session.
+        control.setToolsSince(since.addingTimeInterval(60))
+        await reread(model)
+        await until("older tool list") { model.row("claude-code")?.oldSession == true }
+        check(shown("claude-code").status == "Start a new Claude Code session to finish.", "a session from before the tool list changed: a new session", shown("claude-code").status)
+        control.setServers([stale("claude-code", since.addingTimeInterval(65))], since: since)
+        await reread(model)
+        check(shown("claude-code").status == "Connected", "a session started after the tool list changed: Connected")
+        control.launch("claude-desktop", at: since.addingTimeInterval(1))
+        control.setServers([stale("claude-desktop", since.addingTimeInterval(5))], since: since)
+        await reread(model)
+        await until("desktop older tool list") { model.row("claude-desktop")?.needsRestart == true }
+        check(shown("claude-desktop").status == "Quit Claude Desktop and open it again to finish.", "a running app whose server predates the tool list: Restart", shown("claude-desktop").status)
+        control.setToolsSince(nil)
         control.setServers([], since: nil)
         await reread(model)
         log.reset()
@@ -763,6 +782,13 @@ final class FakeConnectionCommand: ConnectionCommandRunning, @unchecked Sendable
         check(LiveAIAppControl().renewingServersSince() == Date(timeIntervalSince1970: 1_790_000_000), "the kept date is used as kept")
         UserDefaults.standard.removeObject(forKey: LiveAIAppControl.renewingKey)
         check(LiveAIAppControl().renewingServersSince() == nil, "no app bundle (a development copy): no date")
+        // claude/recall-1004: the tool-list date is kept with the tool names it is for.
+        let names = AssistantCatalog.toolNames.joined(separator: ",")
+        UserDefaults.standard.set(["tools": names, "since": 1_790_000_100.0] as [String: Any], forKey: LiveAIAppControl.toolsKey)
+        check(LiveAIAppControl().toolsChangedSince() == Date(timeIntervalSince1970: 1_790_000_100), "the tool-list date kept for these tools is used as kept")
+        UserDefaults.standard.set(["tools": "status,context", "since": 1_790_000_100.0] as [String: Any], forKey: LiveAIAppControl.toolsKey)
+        check(LiveAIAppControl().toolsChangedSince() == nil, "a date kept for other tools isn't used (no app bundle here: no new date)")
+        UserDefaults.standard.removeObject(forKey: LiveAIAppControl.toolsKey)
 
         // 11e. A key stopped by an Apps change says so only while it is stopped: after every app is connected again, a
         // key that stops later for another reason is just Disconnected (gold latch).

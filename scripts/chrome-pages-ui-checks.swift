@@ -202,8 +202,8 @@ final class FakeChrome:@unchecked Sendable {
             // fix/public-web-typing: the full-typing (release) build's line names webmail typing's subject (fix/sx-all round 2).
             // email-1003 (owner decision 2026-10-03): email sites keep the folder or subject while Save email subjects is on.
             TypingSettingsText.ownerBuild
-                ? "Common search and chat sites save the site only. Email sites save the folder or the open email's subject while Save email subjects is on (never codes, passwords, sign-ins or bank mail), and typing in webmail keeps the open email's subject."
-                : "Common search and chat sites save the site only. Email sites save the folder or the open email's subject while Save email subjects is on (never codes, passwords, sign-ins or bank mail).",
+                ? "Search engines save what you searched for, never the rest of the address. Common chat sites save the site only. Email sites save the folder or the open email's subject while Save email subjects is on (never codes, passwords, sign-ins or bank mail), and typing in webmail keeps the open email's subject."
+                : "Search engines save what you searched for, never the rest of the address. Common chat sites save the site only. Email sites save the folder or the open email's subject while Save email subjects is on (never codes, passwords, sign-ins or bank mail).",
             "Common banking, password, sign-in, payment, health and government sites are skipped. You can add your own below.",
             "Page titles can include other people's words, like email subjects or chat names.",
             "Work and personal Chrome profiles are both saved. Pages are kept on this Mac, unencrypted. AI apps you connect can read them, and what they read goes to their AI provider. Cloud summaries, when you turn them on, get their titles and sites.",
@@ -227,7 +227,7 @@ final class FakeChrome:@unchecked Sendable {
         // fix/sx-all (owner 9/28): cloud summaries get page titles and sites, and the card says so.
         expect(!never.contains("never sent to cloud summaries") && never.contains("Cloud summaries, when you turn them on, get their titles and sites."),
                "the card says cloud summaries get page titles and sites")
-        for word in ["Incognito",typingNever,"Other browsers","what's on the page","Common search","doesn't know","stays off"] {
+        for word in ["Incognito",typingNever,"Other browsers","what's on the page","never the rest of the address","Common chat","doesn't know","stays off"] {
             expect(never.contains(word),"the explanation keeps the never: \(word)")
         }
         pass("card: title, details, switch label, the \(C.explanation.count) explanation lines (every never kept), site section and error texts")

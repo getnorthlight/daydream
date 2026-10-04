@@ -3,8 +3,9 @@ import MemoryCore
 
 // claude/day-review-1003 (owner-approved design, realmock/day-review.html): the Today card's day review. A flat list
 // of bullets in rank groups (3 / 2 / 1 / 1) with a small gap between groups; no titles, durations, counts, times or
-// "Updated" line. Each bullet: a bold lead, then normal weight, a link in the link color (not bold), and the person's own
-// words in italic quotes. Put together from the day read's facts and cached clauses (`DayReview.assemble`): no model call.
+// "Updated" line. Each bullet: a lead in the full ink color, then the rest a little lighter, a link in the link color, and
+// the person's own words in italic quotes; nothing bold (claude/today-copy-1004, owner 10/04: "I don't like the bold").
+// Put together from the day read's facts and cached clauses (`DayReview.assemble`): no model call.
 
 /// The review's order, kept between reads so it doesn't reshuffle on every record (`DayReviewStanding`): a thread moves
 /// up only after beating the one above it by a quarter for a few minutes, and a thread's bullets the same way. Today
@@ -18,10 +19,12 @@ import MemoryCore
 
     /// The groups to draw for `facts` now. `live`: today's card (hysteresis); otherwise the order by score.
     public func groups(_ facts: DayReviewFacts, live: Bool, now: Date = Date()) -> [DayReviewGroup] {
-        guard live else { return DayReview.assemble(facts, order: DayReviewStanding.raw(Dictionary(facts.threads.map { ($0.key, $0.score) }, uniquingKeysWith: max))) }
+        // claude/today-rank-1005: threads are ordered by their category-weighted score (work first, conversations last).
+        let scores = DayReview.rankScores(facts)
+        guard live else { return DayReview.assemble(facts, order: DayReviewStanding.raw(scores)) }
         // Midnight: a new day starts empty.
         if facts.day != day { day = facts.day; threads = DayReviewStanding(); items = [:] }
-        let order = threads.rank(Dictionary(facts.threads.map { ($0.key, $0.score) }, uniquingKeysWith: max), now: now)
+        let order = threads.rank(scores, now: now)
         var itemOrder = [String: [String]]()
         for t in facts.threads {
             var standing = items[t.key] ?? DayReviewStanding()
@@ -102,12 +105,13 @@ public struct DayReviewList: View {
         }
     }
 
-    /// The bullet's styled text: the lead bold in the ink color, the link in the link color (normal weight), the rest
-    /// in normal weight, the quote italic in curly quotes (one line of it unless `expanded`).
+    /// The bullet's styled text, all in regular weight (owner 10/04: no bold): the lead in the full ink color, the link
+    /// in the link color, the rest a little lighter, the quote italic in curly quotes (one line of it unless `expanded`).
+    /// The colors are the system's own (`.primary`, `.accentColor`), so the light and dark themes keep the same order.
     public static func attributed(_ b: DayReviewBullet, size: CGFloat = 13, expanded: Bool = false) -> AttributedString {
         var out = AttributedString()
         var lead = AttributedString(b.lead)
-        lead.font = .system(size: size, weight: .semibold)
+        lead.font = .system(size: size)
         lead.foregroundColor = .primary
         out += lead
         func plain(_ s: String) -> AttributedString {

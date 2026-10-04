@@ -381,7 +381,11 @@ private struct AdmissionGuardedInference:LocalInference {
     private var intent:Intent? {
         env.defaults.string(forKey:Self.intentKey).flatMap(Intent.init(rawValue:))
     }
-    private func setIntent(_ value:Intent) {env.defaults.set(value.rawValue,forKey:Self.intentKey)}
+    private func setIntent(_ value:Intent) {
+        env.defaults.set(value.rawValue,forKey:Self.intentKey)
+        // claude/recall-1004: a choice turned off while nothing runs ends "starting" for AI apps (provider stays "off").
+        if value == .off && provider == "off" {publishProvider()}
+    }
     /// fix/sx-all round 2: OpenRouter is the person's choice, with its key saved (set when cloud summaries turned on;
     /// cleared by turning summaries off or deleting the key). Setup starts on the OpenRouter row then.
     var cloudIntended:Bool {intent == .cloud}
@@ -399,7 +403,9 @@ private struct AdmissionGuardedInference:LocalInference {
         // Summaries start off after launch until the offline check passes: say so to AI apps (writer/v2).
         statusStore=store
         report=ProviderReport(save:{ [statusStore] provider in try statusStore?.setSummaryWriter(provider) })
-        publishProvider()
+        // claude/recall-1004: a saved choice that is on reads "starting" to AI apps until the writer runs (never "cloud"
+        // early: G52), not "off", which they reported as "Summaries are off" right after an update.
+        if let saved=intent,saved != .off {if report?.set("starting") == false {scheduleReportRetry()}} else {publishProvider()}
         // At quit "off" is the last word, so AI apps never read "cloud" from a DayDream that isn't running (G52).
         terminateObserver=NotificationCenter.default.addObserver(forName:NSApplication.willTerminateNotification,object:nil,queue:.main) { [weak self] _ in
             MainActor.assumeIsolated { self?.report?.close() }
@@ -1064,13 +1070,15 @@ private struct AdmissionGuardedInference:LocalInference {
         guard await stopProvider() else {throw WriterFailure.integrity}
         try await cloud.pasteKey(value);status="Key saved securely. Cloud remains off until you accept the disclosure and enable it."
     }
-    func enableCloud(acceptedDisclosureVersion:Int) async throws {
+    /// `resuming`: turning the saved switch back on at launch (`resumeCloud`). Nothing runs then, and a failure (the key
+    /// unreadable for a moment, a locked Keychain) must not clear the switch for every later launch (claude/recall-1004).
+    func enableCloud(acceptedDisclosureVersion:Int,resuming:Bool=false) async throws {
         _ = await stopping?.value
         guard !switching,let source,let coreBinding,let scheduler else {throw WriterFailure.unavailable}
         switching=true;defer{switching=false;resumeDeferred()}
         // fix/sx-engine-battery: turning cloud back on (relaunch, privacy change) keeps the first activation's cutoff.
         let since=await scheduler.resumeCloudCutoff()
-        guard await stopProvider() else {throw WriterFailure.integrity}
+        guard await stopProvider(persistStop:!resuming) else {throw WriterFailure.integrity}
         let names=await Self.installedAppNames()
         let operationEpoch=modeGeneration
         let revision=try await source.policyRevision()
@@ -1162,7 +1170,7 @@ private struct AdmissionGuardedInference:LocalInference {
     func resumeCloud() async {
         guard let scheduler,provider=="off",!switching,let version=await scheduler.resumeCloudPreference() else {return}
         guard version==Self.cloudDisclosureVersion else {try? await scheduler.setResumeCloud(nil);return}
-        do {try await enableCloud(acceptedDisclosureVersion:version)}
+        do {try await enableCloud(acceptedDisclosureVersion:version,resuming:true)}
         catch {status=Self.cloudNotResumed}
     }
     static let cloudNotResumed="Cloud summaries couldn't turn back on. Turn them on again in Settings."

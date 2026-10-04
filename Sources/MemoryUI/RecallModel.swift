@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import SwiftUI
 import MemoryCore
+import PrivacyPolicy
 
 // Recall (find-A) state: the search, its grouping into moments, selection, the pushed detail, the
 // Actions menu and the privacy confirmations. Views read it; the search field's delegate, the
@@ -175,8 +176,9 @@ public struct RecallRow: Identifiable, Equatable {
     public let dayKey: String
     /// Start of the row's day in the browser calendar.
     public let day: Date
-    /// The time the row shows: the moment's start, or the hit's time.
-    public let time: Date
+    /// The time the row shows: claude/searchui-1005, the time of its first matching line (a hit, else the note line that
+    /// matched), else the moment's start. One time per row: the title never carries another.
+    public internal(set) var time: Date
     /// Newest hit (the within-day sort key).
     public internal(set) var latest: Date
 
@@ -184,9 +186,19 @@ public struct RecallRow: Identifiable, Equatable {
     public internal(set) var note: NoteHit? = nil
     /// fix/search-1003: hit ID -> the typed snippet it matched by (view state only, on this Mac).
     public internal(set) var typed: [String: String] = [:]
-    /// fix/search-1003 (owner): a row found by what was typed reads as where and when ("Texts · Jamie · 2:29 AM"),
-    /// never a bare moment title; its subtitle is the snippet.
-    public internal(set) var typedContext: String? = nil
+    /// claude/searchui-1005: hit ID -> a longer part of the same words, for the detail's evidence line (view state only).
+    public internal(set) var typedLines: [String: String] = [:]
+    /// claude/searchui-1005: the typed hits found only by their conversation's name (their words hold no query word).
+    public internal(set) var byName: Set<String> = []
+    /// claude/searchui-1005 (owner 10/04: a row titled "Texts · <name> · <time>" over the moment's start time): where the row's typed hit was
+    /// typed. The row reads as the conversation ("Jordan Lane", with "Texts" as a small label), never with a second time.
+    public internal(set) var typedPlace: OwnerTypedPlace? = nil
+    /// claude/searchui-1005: the Messages conversation the row is ("Sam Rivera"): its typed hit's place, else its moment's
+    /// own thread name ("Texts with Sam Rivera"); nil for anything else.
+    public internal(set) var conversation: String? = nil
+    /// claude/searchui-1005 (owner 10/04): other moments of the same conversation on the same day that only matched by
+    /// their note or the conversation's name ("Read texts with Sam Rivera."), folded into this row.
+    public internal(set) var folded: [MomentSlice] = []
 
     public var itemIDs: [String] { hits.map(\.id) }
     public var moment: MomentSlice? { if case .moment(let m) = kind { return m }; return nil }
@@ -195,15 +207,46 @@ public struct RecallRow: Identifiable, Equatable {
     public var anchor: MemoryItem? { hits.first }
     public var end: Date { moment?.end ?? time }
 
-    /// Moment title (subject for a generic one), or `Action in <App>` for an ungrouped hit.
+    /// The conversation's name ("Jordan Lane", with `kindLabel` "Texts"), a search typed in an app ("Searched Messages
+    /// for “rivera”"), the app a typed row names no place in, else the moment's title (subject for a generic one), or
+    /// `Action in <App>` for an ungrouped hit. claude/searchui-1005: never a time, and never a note line (the row's
+    /// second line shows what matched).
     public var title: String {
-        if let typedContext { return typedContext }
-        // A moment found by one of its note's lines shows that line.
-        if let n = note, n.level == "line" { return n.text }
+        if let p = typedPlace {
+            if p.search {
+                let words = hits.lazy.compactMap { self.typed[$0.id] }.first { !$0.isEmpty } ?? ""
+                return words.isEmpty ? "Searched " + p.label : "Searched " + p.label + " for \u{201C}" + words + "\u{201D}"
+            }
+            if !p.place.isEmpty { return p.place }
+            return conversation ?? p.label
+        }
+        if let conversation { return conversation }
         if let m = moment { return MomentSubtitle.rowTitle(m) }
         guard let hit = anchor else { return "" }
         let app = RecallText.appName(hit)
         return app.isEmpty ? "Action" : "Action in " + app
+    }
+    /// The small label beside a conversation's name: "Texts" (or "Email"); nil when the title is not a conversation.
+    public var kindLabel: String? {
+        if let p = typedPlace, p.search { return nil }
+        if let p = typedPlace, !p.place.isEmpty { return p.label }
+        return conversation == nil ? nil : "Texts"
+    }
+    /// A search typed in an app: its words are the title, so the row has no second line.
+    public var isTypedSearch: Bool { typedPlace?.search == true }
+
+    /// claude/searchui-1005: takes another row's hits (and, for a folded moment, the moment) into this one.
+    mutating func absorb(_ other: RecallRow) {
+        let have = Set(itemIDs)
+        hits += other.hits.filter { !have.contains($0.id) }
+        latest = max(latest, other.latest)
+        typed.merge(other.typed) { a, _ in a }
+        typedLines.merge(other.typedLines) { a, _ in a }
+        byName.formUnion(other.byName)
+        if typedPlace == nil { typedPlace = other.typedPlace }
+        if note == nil { note = other.note }
+        if let m = other.moment, m.id != moment?.id { folded.append(m) }
+        folded += other.folded
     }
     /// Display app name for VoiceOver and callouts.
     var appName: String {
@@ -320,6 +363,15 @@ struct RecallActionForgetRequest: Identifiable, Equatable {
     @Published public private(set) var typedSnippets: [String: String] = [:]
     /// hit ID -> where it was typed (metadata only), for the row's context line.
     @Published public private(set) var typedPlaces: [String: OwnerTypedPlace] = [:]
+    /// claude/searchui-1005: hit ID -> a longer part of the typed words (the detail's evidence line), and the typed hits
+    /// found only by their conversation's name. View state only, like `typedSnippets`.
+    @Published public private(set) var typedLines: [String: String] = [:]
+    @Published public private(set) var typedByName: Set<String> = []
+    /// claude/searchui-1005 (owner 10/04: "the actual text evidence stuff is not showing"): moment ID -> the texts of that
+    /// moment, read for the selected result's detail only (`browser.loadOwnerSourcePreviews`, the timeline detail's own
+    /// verified owner source). In memory while search is open; dropped with every new search and when search closes.
+    @Published public private(set) var evidence: [String: [OwnerSourcePreview]] = [:]
+    private var loadingEvidence = Set<String>()
     @Published public private(set) var period: Period = .month
     @Published public private(set) var filter: RecallFilter?
     /// The clock when the shown results were asked for (Best match skips the core's last-ten-seconds rows).
@@ -351,10 +403,9 @@ struct RecallActionForgetRequest: Identifiable, Equatable {
     @Published var members: [String: Members] = [:]
     private var loadingMembers = Set<String>()
 
-    // Selection, detail, menu
+    // Selection, menu (claude/searchui-1005: no pushed detail; opening a result shows it in context)
     @Published public private(set) var selectedRowID: String?
     private var selectedAnchor: String?
-    @Published public private(set) var detailRowID: String?
     @Published public private(set) var menuOpen = false
     /// What was typed while the Actions menu is open: it moves the highlight (type-select) and is never drawn.
     @Published public private(set) var menuFilter = ""
@@ -444,12 +495,8 @@ struct RecallActionForgetRequest: Identifiable, Equatable {
         guard let row = selectedRow else { return nil }
         return displayRows.firstIndex { $0.id == row.id }
     }
-    public var detailRow: RecallRow? {
-        guard let id = detailRowID else { return nil }
-        return displayRows.first { $0.id == id }
-    }
-    /// The row the Actions menu and commands act on: the pushed detail, else the selection.
-    var actionRow: RecallRow? { detailRow ?? selectedRow }
+    /// The row the Actions menu and commands act on: the selection.
+    var actionRow: RecallRow? { selectedRow }
     /// A finished search with nothing in it.
     public var showsNoResults: Bool { !showsRecents && error == nil && result != nil && !busy && displayRows.isEmpty && !placingNotes }
     /// A note line found by the search is still being placed in its moment (its row shows once it is).
@@ -511,10 +558,12 @@ struct RecallActionForgetRequest: Identifiable, Equatable {
         }
         return out
     }
-    /// VoiceOver label of a result row: "{title}, {app}, {day} {time}".
+    /// VoiceOver label of a result row: "{title}, {Texts or app}, {matching line}, {day} {time}".
     public func voiceOverLabel(_ row: RecallRow) -> String {
         let day = DaydreamFormat.dayTitle(row.day, now: now, calendar: calendar).title
-        return [row.title, row.appName, day + " " + DaydreamFormat.time(row.time, timeZone)].filter { !$0.isEmpty }.joined(separator: ", ")
+        let line = showsRecents ? RecallRowLine(text: "", at: nil, count: 0) : rowLine(row)
+        return [row.title, row.kindLabel ?? row.appName, line.text, day + " " + DaydreamFormat.time(line.at ?? row.time, timeZone)]
+            .filter { !$0.isEmpty }.joined(separator: ", ")
     }
     /// The index is behind the store or fell back: results may be incomplete.
     public var indexCatchingUp: Bool {
@@ -538,9 +587,10 @@ struct RecallActionForgetRequest: Identifiable, Equatable {
         keepsDirectPreviewSections = false
         searchTask?.cancel(); resolveTask?.cancel()
         items = []; result = nil; busy = false; error = nil; searchedText = ""; pageQuery = nil; typedSnippets = [:]; typedPlaces = [:]
+        typedLines = [:]; typedByName = []; evidence = [:]; loadingEvidence = []
         sections = []; resultRows = []; resolved = [:]; attempted = []; members = [:]; loadingMembers = []
         noteHits = []; noteMoments = [:]; noteAttempted = []
-        selectedRowID = nil; selectedAnchor = nil; detailRowID = nil
+        selectedRowID = nil; selectedAnchor = nil
         menuOpen = false; menuFilter = ""; menuSelection = nil; rangeMenuOpen = false; rangeHighlight = nil
         originalFailedQuery = nil; unavailableActions = []; notice = nil; filter = nil
         forgetRequest = nil; actionForgetRequest = nil; excludeRequest = nil
@@ -550,7 +600,6 @@ struct RecallActionForgetRequest: Identifiable, Equatable {
 
     /// The live query changed (typing, or set by the toolbar).
     func queryChanged() {
-        if detailRowID != nil { detailRowID = nil }
         // A failed Open Original stays disabled until the query changes.
         if let failed = originalFailedQuery, failed != browser?.query { originalFailedQuery = nil }
         if menuOpen { closeMenu() }
@@ -558,6 +607,7 @@ struct RecallActionForgetRequest: Identifiable, Equatable {
         if showsRecents {
             generation += 1; searchTask?.cancel(); resolveTask?.cancel()
             items = []; result = nil; busy = false; error = nil; searchedText = ""; typedSnippets = [:]; typedPlaces = [:]
+            typedLines = [:]; typedByName = []; evidence = [:]; loadingEvidence = []
             sections = []; resultRows = []; noteHits = []
             selectedRowID = nil; selectedAnchor = nil
             if browser?.loadCanonicalDay != nil { browser?.today.refreshIfStale() }
@@ -615,7 +665,8 @@ struct RecallActionForgetRequest: Identifiable, Equatable {
                     var seen = Set<String>()
                     let direct = preview.items.filter { seen.insert($0.id).inserted }
                     previewIDs = direct.map(\.id)
-                    typedSnippets = typed.snippets; typedPlaces = typed.places
+                    typedSnippets = typed.snippets; typedPlaces = typed.places; typedLines = typed.lines; typedByName = typed.byName
+                    evidence = [:]; loadingEvidence = []
                     items = direct + typed.items.filter { seen.insert($0.id).inserted }; result = preview
                     keepsDirectPreviewSections = true; publishedEarly = true
                     rebuild(); _ = resolveMoments(announcing: false)
@@ -662,7 +713,8 @@ struct RecallActionForgetRequest: Identifiable, Equatable {
                 resolved = [:]; attempted = []; members = [:]; loadingMembers = []
                 noteHits = notes; noteMoments = [:]; noteAttempted = []
                 pageQuery = request; searchedText = text; searchedAt = askedAt
-                typedSnippets = typed.snippets; typedPlaces = typed.places
+                typedSnippets = typed.snippets; typedPlaces = typed.places; typedLines = typed.lines; typedByName = typed.byName
+                evidence = [:]; loadingEvidence = []
                 if !publishedEarly { selectedRowID = nil; selectedAnchor = nil }
             }
             items = more ? items + fresh : fresh; result = page
@@ -707,14 +759,12 @@ struct RecallActionForgetRequest: Identifiable, Equatable {
         rangeMenuOpen = false; rangeHighlight = nil
         guard value != period else { return }
         period = value
-        if detailRowID != nil { detailRowID = nil }
         if !showsRecents { load(immediate: true) }
     }
 
     /// The timeline's Find Related Moments: scope the search to one app or site. The query text stays.
     public func applyFilter(_ value: RecallFilter?) {
         filter = value
-        if detailRowID != nil { detailRowID = nil }
         if menuOpen { closeMenu() }
         if showsRecents {
             generation += 1; searchTask?.cancel()
@@ -833,11 +883,18 @@ struct RecallActionForgetRequest: Identifiable, Equatable {
                 rows.append(row)
             }
         }
+        // claude/searchui-1005: each row knows its typed words, its conversation and the time of its first matching
+        // line; hits of one conversation (or one window) close together become one row; a conversation's quiet moments
+        // ("Read texts with Sam Rivera.") fold into that day's row of the same conversation.
+        rows = Self.fold(rows.map(withTyped), window: Self.mergeWindow)
+        let terms = self.terms
+        for i in rows.indices { rows[i].time = Self.rowLine(rows[i], terms: terms).at ?? rows[i].time }
         var out: [RecallSection] = []
         var rest = rows
         // Best match: a moment whose whole note matched, else one found by a line, else Typesense's most relevant hit.
         let rank = ["moment": 0, "line": 1]
-        let noteBest = rows.indices.filter { rows[$0].note != nil }
+        // claude/searchui-1005: code's reading line ("Read texts with Sam Rivera.") says nothing a best match needs.
+        let noteBest = rows.indices.filter { rows[$0].note.map { !$0.text.hasPrefix(Self.readingLine) } ?? false }
             .min { (rank[rows[$0].note!.level] ?? 9, $0) < (rank[rows[$1].note!.level] ?? 9, $1) }
         if !keepsDirectPreviewSections, let i = noteBest {
             out.append(RecallSection(id: "best", title: "Best match", detail: nil, rows: [rows[i]]))
@@ -855,8 +912,8 @@ struct RecallActionForgetRequest: Identifiable, Equatable {
         let now = self.now
         let sortedDays = days.sorted { (byDay[$0]?.first?.1.day ?? .distantPast) > (byDay[$1]?.first?.1.day ?? .distantPast) }
         for key in sortedDays {
-            // Time-descending by the time each row shows (a moment's start, a hit's time), so the
-            // section reads in order; ties keep result order.
+            // Time-descending by the time each row shows (its first matching line), so the section reads in order; ties
+            // keep result order.
             let group = (byDay[key] ?? []).sorted {
                 $0.1.time != $1.1.time ? $0.1.time > $1.1.time : $0.0 < $1.0
             }.map(\.1)
@@ -865,32 +922,108 @@ struct RecallActionForgetRequest: Identifiable, Equatable {
             out.append(RecallSection(id: "day:" + key, title: title.title, detail: Self.sectionDetail(day, now: now, calendar: cal), rows: group))
         }
         resultRows = rows
-        sections = out.map { section in
-            RecallSection(id: section.id, title: section.title, detail: section.detail, rows: section.rows.map(withTyped))
-        }
+        sections = out
         // Keep the selection on the same hit when its row merged into a moment.
         let display = out.flatMap(\.rows)
         if let id = selectedRowID, !display.contains(where: { $0.id == id }) {
             selectedRowID = selectedAnchor.flatMap { anchor in display.first { $0.itemIDs.contains(anchor) }?.id }
         }
-        if let id = detailRowID, !display.contains(where: { $0.id == id }) {
-            detailRowID = selectedAnchor.flatMap { anchor in display.first { $0.itemIDs.contains(anchor) }?.id }
-        }
         loadMembersForSelection()
     }
 
-    /// The row with the typed snippets of its hits.
+    /// The row with the typed words of its hits, where they were typed, and the conversation it is.
     private func withTyped(_ row: RecallRow) -> RecallRow {
-        guard !typedSnippets.isEmpty else { return row }
         var copy = row
-        for hit in row.hits { if let t = typedSnippets[hit.id] { copy.typed[hit.id] = t } }
-        // The context of the row's first typed hit (hits are in result order: exact matches first, newest first).
-        if let hit = row.hits.first(where: { copy.typed[$0.id] != nil }) {
-            let place = typedPlaces[hit.id]?.line ?? "Typed"
-            let at = timestamp(hit.evidence.at).map { DaydreamFormat.time($0, timeZone) }
-            copy.typedContext = [place, at ?? ""].filter { !$0.isEmpty }.joined(separator: " \u{00B7} ")
+        for hit in row.hits {
+            if let t = typedSnippets[hit.id] { copy.typed[hit.id] = t }
+            if let t = typedLines[hit.id] { copy.typedLines[hit.id] = t }
+            if typedByName.contains(hit.id) { copy.byName.insert(hit.id) }
         }
+        // The place of the row's typed hits: a conversation first, then any other place, a search last (hits are in result
+        // order: exact matches first, newest first).
+        let places = row.hits.compactMap { typedPlaces[$0.id] }
+        copy.typedPlace = places.first { !$0.search && !$0.place.isEmpty } ?? places.first { !$0.search } ?? places.first
+        if let p = copy.typedPlace, p.label == "Texts", !p.place.isEmpty { copy.conversation = p.place }
+        else if let m = row.moment { copy.conversation = Self.conversationName(m, noteTitle: row.note?.inTitle) }
         return copy
+    }
+
+    /// claude/searchui-1005: the Messages conversation a moment is, by its own thread name ("Texts with Sam Rivera" is
+    /// "Sam Rivera"); nil for any other moment. The name is the one Messages showed, read by code, never a guess.
+    /// `noteTitle`: the title of the note a matching line is in ("Texts with Sam Rivera"). A Messages moment still titled by
+    /// its window (no note, no thread name) is the conversation its window names (`SendRules.messagesConversation`: never
+    /// New Message or the app's own windows).
+    public static func conversationName(_ m: MomentSlice, noteTitle: String? = nil) -> String? {
+        let messages = m.bundles.contains(messagesBundle) || m.primaryBundle == messagesBundle
+        var names: [String] = []
+        if let live = m.live, live.kind == "texts" { names.append(live.label) }
+        if messages { names += [m.title, noteTitle ?? ""] }
+        for label in names where label.hasPrefix(textsWith) {
+            let name = String(label.dropFirst(textsWith.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !name.isEmpty { return name }
+        }
+        if messages, m.bundles.allSatisfy({ $0 == messagesBundle }), m.live == nil, !m.summary.isReady, !m.stale {
+            return SendRules.messagesConversation(m.title)
+        }
+        return nil
+    }
+    static let messagesBundle = "com.apple.MobileSMS"
+    static let textsWith = "Texts with "
+    /// How close two hits of one conversation (or one window) must be to share a row (owner 10/04: "within a few minutes").
+    public static let mergeWindow: TimeInterval = 5 * 60
+
+    /// A row's own words: typed words that hold a query word (or, found by the conversation's name, a message's words).
+    static func hasWords(_ row: RecallRow) -> Bool { row.hits.contains { !(row.typed[$0.id] ?? "").isEmpty } }
+
+    /// claude/searchui-1005 (owner 10/04): one row per conversation stretch.
+    /// - Ungrouped hits (not yet placed in a moment) of one conversation, or one app window, within `window` of each other
+    ///   on one day are one row: its hits in result order, its count their number.
+    /// - A moment of a conversation that holds none of the person's matching words (found by its note, "Read texts with
+    ///   Sam Rivera.", or by the conversation's name in a title) folds into that day's row of the same conversation:
+    ///   the row with words, else the first such row. Two moments that each hold matching words stay two rows (search
+    ///   is flat moments), and nothing folds across days.
+    public static func fold(_ rows: [RecallRow], window: TimeInterval) -> [RecallRow] {
+        func times(_ r: RecallRow) -> [Date] { r.hits.compactMap { timestamp($0.evidence.at) } }
+        func near(_ a: RecallRow, _ b: RecallRow) -> Bool {
+            let x = times(a), y = times(b)
+            return x.contains { p in y.contains { abs($0.timeIntervalSince(p)) <= window } }
+        }
+        func key(_ r: RecallRow) -> String? {
+            if r.isTypedSearch { return nil }
+            if let c = r.conversation { return "texts|" + c.lowercased() }
+            if let p = r.typedPlace { return "typed|" + p.label.lowercased() + "|" + p.place.lowercased() }
+            guard let hit = r.anchor else { return nil }
+            return "app|" + hit.evidence.bundle + "|" + hit.evidence.app + "|" + hit.evidence.title
+        }
+        var merged: [RecallRow] = []
+        for row in rows {
+            if row.moment == nil, let k = key(row),
+               let i = merged.lastIndex(where: { $0.moment == nil && key($0) == k && $0.dayKey == row.dayKey && near($0, row) }) {
+                merged[i].absorb(row)
+            } else {
+                merged.append(row)
+            }
+        }
+        var out: [RecallRow] = []
+        var target: [String: Int] = [:]
+        // The fold target of each day's conversation: its first row with words, else its first row.
+        for row in merged {
+            guard row.moment != nil, let c = row.conversation else { continue }
+            let k = row.dayKey + "|" + c.lowercased()
+            if target[k] == nil || (!hasWords(merged[target[k]!]) && hasWords(row)) { target[k] = merged.firstIndex { $0.id == row.id } }
+        }
+        var moved: [Int: [RecallRow]] = [:]
+        for (i, row) in merged.enumerated() {
+            if row.moment != nil, let c = row.conversation, !hasWords(row), let t = target[row.dayKey + "|" + c.lowercased()], t != i {
+                moved[t, default: []].append(row)
+            }
+        }
+        let gone = Set(moved.values.flatMap { $0.map(\.id) })
+        for (i, var row) in merged.enumerated() where !gone.contains(row.id) {
+            for quiet in moved[i] ?? [] { row.absorb(quiet) }
+            out.append(row)
+        }
+        return out
     }
 
     /// A day section's trailing text: none, since the title names the day ("Today", "Monday", "Sep 14"),
@@ -911,7 +1044,7 @@ struct RecallActionForgetRequest: Identifiable, Equatable {
         }?.id
     }
 
-    // MARK: Members (preview ticks, detail "What happened")
+    // MARK: Members (preview ticks, the Open Original target)
 
     func loadMembers(_ m: MomentSlice, limit: Int) {
         guard let resolver, !loadingMembers.contains(m.id), (members[m.id]?.limit ?? 0) < limit, members[m.id]?.complete != true else { return }
@@ -928,23 +1061,42 @@ struct RecallActionForgetRequest: Identifiable, Equatable {
     }
 
     private func loadMembersForSelection() {
-        if let m = detailRow?.moment { loadMembers(m, limit: 40) }
-        else if let m = selectedRow?.moment { loadMembers(m, limit: 40) }
+        if let m = selectedRow?.moment { loadMembers(m, limit: 40) }
+        loadEvidence(selectedRow)
     }
 
-    // MARK: Selection and detail
+    /// claude/searchui-1005: the texts of the selected result's moment (and the moments folded into it), for its detail:
+    /// the timeline detail's own verified owner source, read off the main thread, never stored. A withheld or expired
+    /// one is left out.
+    private func loadEvidence(_ row: RecallRow?) {
+        guard let row, let load = browser?.loadOwnerSourcePreviews else { return }
+        let ticket = generation
+        for m in ([row.moment] + row.folded.map { Optional($0) }).compactMap({ $0 })
+        where evidence[m.id] == nil && !loadingEvidence.contains(m.id) {
+            loadingEvidence.insert(m.id)
+            let ids = m.actionIDs
+            Task { @MainActor [weak self] in
+                let previews = await load(ids)
+                guard let self, ticket == self.generation, self.loadingEvidence.contains(m.id) else { return }
+                self.loadingEvidence.remove(m.id)
+                let now = Date()
+                self.evidence[m.id] = previews.filter { !$0.isWithheld && !$0.parts.isEmpty && ($0.expiresAt.map { $0 > now } ?? true) }
+            }
+        }
+    }
+
+    // MARK: Selection
 
     /// Selects a row by ID (click).
     public func select(_ id: String) {
-        guard selectedRowID != id || detailRowID != nil else { return }
+        guard selectedRowID != id else { return }
         selectedRowID = id
         selectedAnchor = displayRows.first { $0.id == id }?.anchor?.id ?? id
-        if detailRowID != nil { detailRowID = id }
         loadMembersForSelection()
         updateContext()
     }
 
-    /// ↑/↓: moves the selection (in the detail, steps to the previous/next result).
+    /// ↑/↓: moves the selection.
     public func move(_ delta: Int) {
         let rows = displayRows
         guard !rows.isEmpty else { return }
@@ -953,37 +1105,27 @@ struct RecallActionForgetRequest: Identifiable, Equatable {
         guard next != current || selectedRowID == nil else { return }
         selectedRowID = rows[next].id
         selectedAnchor = rows[next].anchor?.id ?? rows[next].id
-        if detailRowID != nil { detailRowID = rows[next].id }
         scrollSerial += 1
         loadMembersForSelection()
         updateContext()
     }
 
-    /// Return / Open Moment: pushes the selected result's detail.
+    /// claude/searchui-1005 (owner 10/04: the full-page result "repeats the preview" and adds filler): Return and a
+    /// double-click show the selected result in context, in its own day with the moment open (`showInDay`). The preview
+    /// beside the list is where a result is read; there is no pushed detail.
+    public static let openTitle = "Show in Context"
     public func openMoment() {
-        guard let row = selectedRow else { return }
+        guard selectedRow != nil else { return }
         if menuOpen { closeMenu() }
-        selectedRowID = row.id
-        selectedAnchor = row.anchor?.id ?? row.id
-        detailRowID = row.id
-        if let m = row.moment { loadMembers(m, limit: 40) }
-        updateContext()
+        showInDay()
     }
 
-    /// Back to the results; selection and scroll stay where they were.
-    public func back() {
-        guard detailRowID != nil else { return }
-        detailRowID = nil
-        updateContext()
-    }
-
-    /// Esc (plan §5): closes a menu, else pops the detail, else clears the query and the filter, else
+    /// Esc (plan §5): closes a menu, else clears the query and the filter, else
     /// closes Recall. Clearing a query that alone presented Recall closes it; a summoned Recall
     /// (⌘K, ⌘F, Search…) goes back to Pick up where you left off.
     public func cancel() {
         if rangeMenuOpen { closeRangeMenu(); return }
         if menuOpen { closeMenu(); return }
-        if detailRowID != nil { back(); return }
         if let browser, !browser.query.isEmpty || filter != nil {
             if browser.query.isEmpty { applyFilter(nil); return }
             filter = nil
@@ -1021,12 +1163,6 @@ struct RecallActionForgetRequest: Identifiable, Equatable {
         if browser.recallPresented { browser.recallPresented = false }
     }
 
-    /// "Result 3 of 7" (or "7+"): the detail bar's VoiceOver value (it isn't drawn).
-    public var positionText: String {
-        guard let i = selectedIndex else { return "" }
-        return "Result \(DaydreamFormat.count(i + 1)) of \(showsRecents ? DaydreamFormat.count(displayRows.count) : countText)"
-    }
-
     func requestFocus() { focusSerial += 1 }
 
     // MARK: Actions menu
@@ -1047,7 +1183,8 @@ struct RecallActionForgetRequest: Identifiable, Equatable {
                     guard let original else { return nil }
                     return MomentActionItem(id: original.id, title: original.title, symbol: original.symbol, keys: item.keys,
                                             enabled: !originalBlocked, reason: OriginalUnavailableBanner.text, group: item.group, help: original.help)
-                case .openMoment where detailRowID != nil:
+                case .openMoment:
+                    // claude/searchui-1005: Return shows the result in context; Show in <Day> is that item.
                     return nil
                 case .findRelated:
                     // Search's moments are shown in context instead (owner, 9/30: Show in Context under the summary).
@@ -1063,14 +1200,15 @@ struct RecallActionForgetRequest: Identifiable, Equatable {
         }
         guard let hit = row.anchor else { return [] }
         var out: [MomentActionItem] = []
-        if detailRowID == nil { out.append(MomentActionItem(id: .openMoment, title: "Open Moment", symbol: "rectangle.stack", keys: "↩", group: .open)) }
         if let original {
             out.append(MomentActionItem(id: original.id, title: original.title, symbol: original.symbol, keys: "⌘↩",
                                         enabled: !originalBlocked, reason: OriginalUnavailableBanner.text, group: .open, help: original.help))
         }
         let dayName = isToday(row.dayKey) ? "Today" : DaydreamFormat.dayName(row.time, now: now, calendar: calendar)
         out.append(MomentActionItem(id: .showInToday, title: "Show in " + dayName, symbol: "calendar", keys: "⌘T", group: .open))
-        if caps.delete {
+        // claude/searchui-1005: a row of several merged hits forgets nothing on its own (Forget This Action names one);
+        // Show in <Day> reaches each of them.
+        if caps.delete, row.hits.count == 1 {
             out.append(MomentActionItem(id: .forget, title: "Forget This Action…", symbol: "trash", destructive: true, group: .privacy))
         }
         let bundle = hit.evidence.bundle, name = RecallText.appName(hit)
@@ -1220,7 +1358,7 @@ struct RecallActionForgetRequest: Identifiable, Equatable {
 
     func dismissOriginalBanner() { originalFailedQuery = nil }
 
-    /// Show in Today / <Weekday>, and the detail's Show in Context: closes Recall and expands the moment in its day
+    /// Show in Today / <Weekday>, the preview's Show in Context, and Return: closes Recall and expands the moment in its day
     /// (the day is the moment's own, so a moment from another day opens that day with it selected).
     public func showInDay() {
         guard let browser, let row = actionRow else { return }
@@ -1284,11 +1422,10 @@ struct RecallActionForgetRequest: Identifiable, Equatable {
 
     /// After a forget or an exclusion: the day data changed, so read again.
     func memoryChanged() {
-        detailRowID = nil
         browser?.dayCache.invalidateAll()
         resolverInstance = nil
         items = []; result = nil; resolved = [:]; attempted = []; members = [:]; loadingMembers = []
-        noteHits = []; noteMoments = [:]; noteAttempted = []; sections = []; resultRows = []
+        noteHits = []; noteMoments = [:]; noteAttempted = []; sections = []; resultRows = []; evidence = [:]; loadingEvidence = []
         if !showsRecents { load(immediate: true) } else { browser?.today.refresh(force: true) }
     }
 
@@ -1340,6 +1477,157 @@ struct RecallActionForgetRequest: Identifiable, Equatable {
         } else {
             post()
         }
+    }
+}
+
+// MARK: - What matched (claude/searchui-1005)
+
+/// One line of evidence in a search result: who, when and what. Owner 10/04 ("The search is shit right now", "the actual
+/// text evidence stuff is not showing"): a result shows the matching message itself, with who sent it and when, and the
+/// detail shows the moment's texts with the match highlighted, before any note line.
+public struct RecallHitLine: Equatable, Identifiable, Sendable {
+    public let id: String
+    public let at: Date?
+    /// "You" for the person's own words; "Your draft" for words not sent; else the app or site the line is from.
+    public let who: String
+    public let text: String
+    /// The person's own words (typed or texted).
+    public let typed: Bool
+    /// Holds a query word. A message shown for context, or found by its conversation's name, doesn't.
+    public let matched: Bool
+    public init(id: String, at: Date?, who: String, text: String, typed: Bool, matched: Bool) {
+        self.id = id; self.at = at; self.who = who; self.text = text; self.typed = typed; self.matched = matched
+    }
+}
+
+/// A result row's second line and its one time: the matching line (or a conversation's latest message), when it was,
+/// and how many matching lines the row holds.
+public struct RecallRowLine: Equatable, Sendable {
+    public let text: String
+    public let at: Date?
+    public let count: Int
+}
+
+extension RecallModel {
+    /// Who wrote the person's own words.
+    public static let you = "You"
+    public static let yourDraft = "Your draft"
+    /// What code says for a Messages moment it saw only being read. It is filler, never a result's line or title.
+    static let readingLine = "Read texts with "
+    /// The detail shows at most this many evidence lines (every matching one first).
+    public static let evidenceLimit = 8
+
+    /// The row's matching lines in time order, each once: the person's typed words (the longer part around the match),
+    /// else the field that matched (a window or page title, with its app). A typed hit with no words left shows nothing,
+    /// never its conversation's name, and a title that only names the row's conversation says nothing new.
+    public func hitLines(_ row: RecallRow) -> [RecallHitLine] { Self.hitLines(row, terms: terms) }
+
+    public static func hitLines(_ row: RecallRow, terms: [String]) -> [RecallHitLine] {
+        var out: [RecallHitLine] = []
+        var seen = Set<String>()
+        let title = row.title
+        for hit in row.hits {
+            let at = timestamp(hit.evidence.at)
+            if row.typed[hit.id] != nil || row.typedLines[hit.id] != nil {
+                let words = (row.typedLines[hit.id] ?? row.typed[hit.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !words.isEmpty, seen.insert("you|" + words.lowercased()).inserted else { continue }
+                out.append(RecallHitLine(id: hit.id, at: at, who: you, text: words, typed: true,
+                                         matched: !row.byName.contains(hit.id) && RecallText.contains(words, terms)))
+                continue
+            }
+            let found = RecallText.matches(hit, terms: terms).filter { $0.source != .typed }.map { RecallResultRow.line($0, row: row) }
+            guard let text = found.first(where: { !MomentSubtitle.same($0, title) }) ?? (row.conversation == nil ? found.first : nil) else { continue }
+            let app = RecallText.appName(hit)
+            let who = app.isEmpty ? (RecallText.webHost(hit.evidence.url) ?? "") : app
+            guard seen.insert(who.lowercased() + "|" + text.lowercased()).inserted else { continue }
+            out.append(RecallHitLine(id: hit.id, at: at, who: who, text: text, typed: false, matched: true))
+        }
+        return out.sorted { ($0.at ?? .distantFuture, $0.id) < ($1.at ?? .distantFuture, $1.id) }
+    }
+
+    /// The row's second line and time (one time per row, owner 10/04):
+    /// 1. the first of the person's own lines that holds a query word;
+    /// 2. found by a conversation's name: its latest message;
+    /// 3. the first other matching field that doesn't repeat the title;
+    /// 4. the note line that matched (never a conversation's: code's "Read texts with …" says nothing);
+    /// 5. the moment's own line (its note's first line, never a reading line), else its site.
+    /// Never a template ("Line in …"). A search typed in an app has no second line (its words are the title).
+    public func rowLine(_ row: RecallRow) -> RecallRowLine { Self.rowLine(row, terms: terms) }
+
+    public static func rowLine(_ row: RecallRow, terms: [String]) -> RecallRowLine {
+        let lines = hitLines(row, terms: terms)
+        let count = lines.count
+        func short(_ l: RecallHitLine) -> String { l.typed ? (row.typed[l.id].flatMap { $0.isEmpty ? nil : $0 } ?? l.text) : l.text }
+        if row.isTypedSearch { return RecallRowLine(text: "", at: lines.first?.at ?? row.time, count: 1) }
+        if let l = lines.first(where: { $0.typed && $0.matched }) { return RecallRowLine(text: short(l), at: l.at, count: count) }
+        if let l = lines.last(where: \.typed) { return RecallRowLine(text: short(l), at: l.at, count: count) }
+        if let l = lines.first(where: { !MomentSubtitle.same($0.text, row.title) }) { return RecallRowLine(text: l.text, at: l.at, count: count) }
+        if let n = row.note, row.conversation == nil {
+            let text = n.level == "line" ? n.text : (n.lines.first { RecallText.contains($0, terms) } ?? "")
+            if !text.isEmpty, !MomentSubtitle.same(text, row.title) { return RecallRowLine(text: text, at: timestamp(n.at), count: max(count, 1)) }
+        }
+        return RecallRowLine(text: fallback(row), at: lines.first?.at ?? row.time, count: count)
+    }
+
+    /// A row's own line when nothing that matched can stand there.
+    static func fallback(_ row: RecallRow) -> String {
+        if let m = row.moment {
+            var text = MomentSubtitle.rowText(for: m)
+            if text.hasPrefix(readingLine) || row.conversation != nil && MomentSubtitle.same(text, row.title) { text = "" }
+            // "Had Investor update open in Claude." under "Investor update" says the title again: the app (and site) instead.
+            if text.hasPrefix("Had "), row.title.count >= 3, text.localizedCaseInsensitiveContains(row.title) {
+                let site = row.site.flatMap { !$0.isEmpty && !row.title.localizedCaseInsensitiveContains($0) ? $0 : nil }
+                let place = [row.appName, site ?? ""].filter { !$0.isEmpty }.joined(separator: " \u{00B7} ")
+                if !place.isEmpty { return place }
+            }
+            if !text.isEmpty || row.conversation != nil { return text }
+            guard let site = row.site, !site.isEmpty, !row.title.localizedCaseInsensitiveContains(site) else { return "" }
+            return site
+        }
+        return row.anchor?.summary ?? ""
+    }
+
+    /// The detail's evidence: the texts of the row's moment (read for the detail) and its matching lines, each once, in
+    /// time order. When there are more than `evidenceLimit`, every matching line stays and the rest are the latest.
+    public func evidenceLines(_ row: RecallRow) -> [RecallHitLine] {
+        let moments = ([row.moment] + row.folded.map { Optional($0) }).compactMap { $0 }
+        let texts = moments.flatMap { evidence[$0.id] ?? [] }.map { p in
+            (id: p.id, at: timestamp(p.at), text: p.parts.map(\.text).joined(separator: " "), draft: p.state == "draft", actionIDs: p.actionIDs)
+        }
+        return Self.evidence(texts: texts, hits: hitLines(row), terms: terms)
+    }
+
+    public static func evidence(texts: [(id: String, at: Date?, text: String, draft: Bool, actionIDs: [String])], hits: [RecallHitLine],
+                                terms: [String]) -> [RecallHitLine] {
+        var out: [RecallHitLine] = []
+        var seen = Set<String>(), covered = Set<String>()
+        func norm(_ s: String) -> String { s.split(whereSeparator: \.isWhitespace).joined(separator: " ").lowercased() }
+        for t in texts {
+            let text = t.text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            guard !text.isEmpty, seen.insert(norm(text)).inserted else { continue }
+            covered.formUnion(t.actionIDs)
+            out.append(RecallHitLine(id: t.id, at: t.at, who: t.draft ? yourDraft : you, text: text, typed: true, matched: RecallText.contains(text, terms)))
+        }
+        for h in hits where !covered.contains(h.id) {
+            // A search's words are a part of a text already shown when that text holds them all.
+            let key = norm(h.text.trimmingCharacters(in: CharacterSet(charactersIn: "\u{2026}")))
+            guard seen.insert(norm(h.text)).inserted, !(h.typed && out.contains { $0.typed && norm($0.text).contains(key) }) else { continue }
+            out.append(h)
+        }
+        if out.count > evidenceLimit {
+            let matched = out.filter(\.matched)
+            let rest = out.filter { !$0.matched }.sorted { ($0.at ?? .distantPast) > ($1.at ?? .distantPast) }
+            let keep = Set((matched + rest.prefix(max(0, evidenceLimit - matched.count))).map(\.id))
+            out = out.filter { keep.contains($0.id) }
+        }
+        return out.sorted { ($0.at ?? .distantFuture, $0.id) < ($1.at ?? .distantFuture, $1.id) }
+    }
+
+    /// The note's lines the detail shows: a code reading line ("Read texts with Jordan Lane.") goes when the evidence holds
+    /// the person's own texts (it says less than they do).
+    public static func noteLines(_ bullets: [MomentBullet], evidence: [RecallHitLine]) -> [MomentBullet] {
+        guard evidence.contains(where: \.typed) else { return bullets }
+        return bullets.filter { $0.correction || !$0.text.hasPrefix(readingLine) }
     }
 }
 

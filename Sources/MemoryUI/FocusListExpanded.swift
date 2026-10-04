@@ -182,7 +182,7 @@ public struct FocusListExpanded: View {
                 .accessibilityIdentifier("card-summary-bullets")
             } else if !messages.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(messages.prefix(FocusAppCard.messageLimit).enumerated()), id: \.offset) { _, message in
+                    ForEach(Array(FocusAppCard.visibleMessages(messages, expanded: quotesOpen).enumerated()), id: \.offset) { _, message in
                         HStack(alignment: .firstTextBaseline, spacing: 7) {
                             Text("\u{2022}").foregroundStyle(.tertiary).accessibilityHidden(true)
                             Text(FocusAppCard.quote(message, limit: quotesOpen ? FocusAppCard.openQuoteLimit : FocusAppCard.quoteLimit))
@@ -192,9 +192,8 @@ public struct FocusListExpanded: View {
                         }
                         .font(.system(size: 12.5))
                     }
-                    if let earlier = FocusAppCard.earlierLine(messages.count) {
-                        Text(earlier).font(.system(size: 11.5)).foregroundStyle(.tertiary)
-                    }
+                    // claude/searchui-1005 (owner 10/04): "+N earlier messages" opens them inline; "Show less" closes them.
+                    OverflowToggle(collapsed: FocusAppCard.earlierLine(messages.count), expanded: $quotesOpen, size: 11.5)
                 }
                 // summary-v2: ONE sweep over the whole quote block (a single band, a single phase), never one per line.
                 .modifier(QuoteSweep(active: state.sweeps && !reduceMotion))
@@ -453,21 +452,23 @@ public struct FocusListExpanded: View {
         let catalog = browser.dayCache.bundleNames
         Task { @MainActor in
             do {
-                var actions: [CanonicalAction] = [], complete = true
-                for m in group {
-                    let found = try await resolver.memberActions(of: m, limit: min(m.actionIDs.count, Self.sourceScanLimit))
-                    actions += found.actions; complete = complete && found.complete
-                }
+                // perf-1005: the whole card in one read (it read the day once per member, one after another).
+                var (actions, complete) = try await resolver.memberActions(of: group, limitEach: Self.sourceScanLimit)
                 guard ticket == generation else { return }
                 actions.sort { ($0.at, $0.id) < ($1.at, $1.id) }
+                let typedIDs = actions.filter { $0.kind == "keyboard.text_input" }.map(\.id)
+                var lines: [String: ComposeLine] = [:]
+                if let loader = browser.loadComposeLines, !typedIDs.isEmpty {
+                    lines = await loader(typedIDs)
+                    guard ticket == generation else { return }
+                }
+                // perf-1005: the card grows ONCE with everything it read (it grew up to three times, each a new layout of
+                // the day's list and a scroll anchor move: the jump after a click).
+                let all = Self.allSources(from: actions, catalog: catalog)
                 historyActions = actions
                 historyComplete = complete; historyFailed = false
-                let typedIDs = actions.filter { $0.kind == "keyboard.text_input" }.map(\.id)
-                if let loader = browser.loadComposeLines, !typedIDs.isEmpty {
-                    let lines = await loader(typedIDs)
-                    if ticket == generation { composeLines = lines }
-                } else { composeLines = [:] }
-                sources = .loaded(Self.allSources(from: actions, catalog: catalog), complete: complete)
+                composeLines = lines
+                sources = .loaded(all, complete: complete)
                 probe?.sources[target.id] = Self.sources(from: actions, catalog: catalog)
                 probe?.sourcesComplete[target.id] = complete
             } catch {
@@ -814,19 +815,25 @@ struct FocusSourceEntry<Label: View>: View {
 /// claude/messages2-1003 (owner 10/3): a Texts card's (and its details page's) Summary: each conversation's name or
 /// number, an optional short gist when it has more texts than shown, then the texts sent, verbatim, newest first, about
 /// 3 each and "+N more".
+/// claude/searchui-1005 (owner 10/04): the person's name is regular weight (a note line, like the Today lines; no bold),
+/// and "+N more" is a link that opens the rest of that conversation's texts inline ("Show less" closes them).
 struct TextThreadList: View {
     let threads: [FocusAppCard.TextThread]
     let size: CGFloat
+    @State private var open: Set<String> = []
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            ForEach(Array(threads.enumerated()), id: \.offset) { _, thread in
+            ForEach(Array(threads.enumerated()), id: \.offset) { index, thread in
+                let key = "\(index)|\(thread.title)|\(thread.latest)"
+                let expanded = open.contains(key)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(thread.title).font(.system(size: size, weight: .semibold)).lineLimit(1)
+                    Text(thread.title).font(.system(size: size)).lineLimit(1)
+                        .accessibilityAddTraits(.isHeader)
                     if let gist = thread.gist {
                         Text(gist).font(.system(size: size - 0.5)).foregroundStyle(.secondary).lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    ForEach(Array(thread.shown.enumerated()), id: \.offset) { _, text in
+                    ForEach(Array(thread.visible(expanded: expanded).enumerated()), id: \.offset) { _, text in
                         HStack(alignment: .firstTextBaseline, spacing: 7) {
                             Text("\u{2022}").foregroundStyle(.tertiary).accessibilityHidden(true)
                             Text(FocusAppCard.quote(text, limit: FocusAppCard.openQuoteLimit)).lineLimit(4)
@@ -835,12 +842,42 @@ struct TextThreadList: View {
                         }
                         .font(.system(size: size))
                     }
-                    if let more = FocusAppCard.moreLine(thread.more) {
-                        Text(more).font(.system(size: size - 1)).foregroundStyle(.tertiary)
-                    }
+                    OverflowToggle(collapsed: FocusAppCard.moreLine(thread.more), expanded: Binding(
+                        get: { open.contains(key) },
+                        set: { if $0 { open.insert(key) } else { open.remove(key) } }), size: size - 1)
                 }
-                .accessibilityElement(children: .combine)
+                .accessibilityElement(children: .contain)
             }
+        }
+    }
+}
+
+/// claude/searchui-1005 (owner 10/04: "+6 more" did nothing when clicked): an overflow line drawn as a link (the accent
+/// colour, regular weight, never bold). A Button, so a click, or Space with keyboard focus (Full Keyboard Access), opens the rest inline; it then
+/// reads "Show less" and closes them. Draws nothing when nothing is hidden.
+struct OverflowToggle: View {
+    let collapsed: String?
+    @Binding var expanded: Bool
+    var size: CGFloat = 12
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(collapsed: String?, expanded: Binding<Bool>, size: CGFloat = 12) {
+        self.collapsed = collapsed; self._expanded = expanded; self.size = size
+    }
+
+    var body: some View {
+        if let title = FocusAppCard.overflowToggle(collapsed, expanded: expanded) {
+            Button {
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) { expanded.toggle() }
+            } label: {
+                Text(title).font(.system(size: size))
+            }
+            .buttonStyle(FocusLinkButtonStyle())
+            .help(expanded ? "Show fewer" : "Show the rest")
+            .accessibilityLabel(title)
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+            .accessibilityHint(expanded ? "Hides the rest" : "Shows the rest here")
+            .accessibilityIdentifier("overflow-toggle")
         }
     }
 }

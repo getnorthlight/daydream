@@ -114,9 +114,10 @@ extension BrowserTypingJoin {
             // QF-10 (fix/chrome-capture): the same title match as the synchronous join (the name, or the name plus
             // Chrome's suffix and profile tail; several matches refuse).
             let matches = candidates.indices.filter { ChromeWindowMatching.titleMatches(axTitle: title, aeName: names[$0]) }
-            guard !matches.isEmpty else { return .failure(.window) }
-            guard matches.count == 1 else { return .failure(.ambiguousWindow) }
-            return .success((names, title, ids[candidates[matches[0]]], names[matches[0]]))
+            guard matches.count <= 1 else { return .failure(.ambiguousWindow) }
+            // claude/typing-1004: as the synchronous join, the title decides only among several same-bounds windows.
+            guard let pick = matches.first ?? (candidates.count == 1 ? 0 : nil) else { return .failure(.window) }
+            return .success((names, title, ids[candidates[pick]], matches.isEmpty ? "" : names[pick]))
         }
         guard case .success(let n) = named else { if case .failure(let d) = named { return .denied(d) }; return .denied(.window) }
         // 8. The window's active tab and its URL.

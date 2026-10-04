@@ -127,7 +127,7 @@ struct RecallSearchField: NSViewRepresentable {
             if model.rangeMenuOpen { model.rangeMove(1) } else if model.menuOpen { model.menuMove(1) } else { model.move(1) }
             return true
         case #selector(NSResponder.insertNewline(_:)):
-            if model.rangeMenuOpen { model.rangeRun() } else if model.menuOpen { model.menuRun() } else if model.detailRowID == nil { model.openMoment() }
+            if model.rangeMenuOpen { model.rangeRun() } else if model.menuOpen { model.menuRun() } else { model.openMoment() }
             return true
         case #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
             if model.rangeMenuOpen { model.rangeRun() } else if model.menuOpen { model.menuRun() } else { model.searchMore() }

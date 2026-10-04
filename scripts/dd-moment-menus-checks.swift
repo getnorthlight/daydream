@@ -258,16 +258,16 @@ func lines(_ menu: NSMenu?) -> [String] {
         }
         expect(found, "Recall finds moments in the sample")
         settle(1.5)
-        // The first result row with a moment: its menu leads with Open Moment. Which row: the one Open Moment opens.
+        // The first result row with a moment: its menu has Show in <Day> and Copy Summary. claude/searchui-1005 (owner
+        // 10/04): no Open Moment item (there is no pushed detail; Return is Show in Context).
         guard let (recallMenu, recallPoint) = firstMenu(x: host.bounds.width / 2 - 120, from: 60, to: host.bounds.height - 10,
-                                                        where: { $0.first == "Open Moment" && $0.contains("Copy Summary") }) else { fail("no Recall row with a moment menu") }
+                                                        where: { $0.contains { $0.hasPrefix("Show in ") } && $0.contains("Copy Summary") }) else { fail("no Recall row with a moment menu") }
         let contextLines = lines(menu(at: recallPoint) ?? recallMenu)
-        let openMoment = (menu(at: recallPoint) ?? recallMenu)
-        guard let oi = openMoment.items.firstIndex(where: { $0.title == "Open Moment" }) else { fail("no Open Moment") }
-        openMoment.performActionForItem(at: oi); pump(0.4)
-        guard let rowID = recall.detailRowID, let recallRow = recall.displayRows.first(where: { $0.id == rowID }) else { fail("Open Moment opened no row") }
-        expect(true, "the Recall row menu's Open Moment opens that row (\(recallRow.title))")
-        recall.back(); pump(0.3)
+        expect(!contextLines.contains("Open Moment"), "a Recall row's menu has no Open Moment (no pushed detail)")
+        guard let recallRow = recall.displayRows.first(where: { lines(MomentContextMenu.entries(recall.menuItems(for: $0))) == contextLines }) else {
+            fail("no Recall row has that menu")
+        }
+        let rowID = recallRow.id
         recall.select(rowID); pump(0.3)
         recall.toggleMenu(); pump(0.2)
         expect(recall.menuOpen, "⌘K opens the Actions menu for the selected row")

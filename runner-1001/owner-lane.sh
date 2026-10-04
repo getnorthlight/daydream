@@ -24,6 +24,13 @@ if [ -z "${OWNER_UI:-}" ]; then
     mkdir -p "$OUT/owner-day-review-root" "$OUT/owner-day-review-home/Library/Preferences"
     step owner-day-review env HOME="$OUT/owner-day-review-home" CFFIXED_USER_HOME="$OUT/owner-day-review-home" DAY_REVIEW_ROOT="$OUT/owner-day-review-root" nice "$OUT/owner-day-review"
   fi
+  # claude/searchui-1005: the search results' rows and detail, flagged (Messages typing compiles in).
+  if [ -f scripts/search-results-ui-checks.swift ]; then
+    step compile-owner-search-results-ui swiftc -parse-as-library "${OSW[@]}" -module-cache-path "$I/modcache" -I "$OB/Modules" -I Sources/CSQLite \
+      scripts/search-results-ui-checks.swift $(oobjs MemoryCore HistoryCore PrivacyPolicy MemoryUI) -lsqlite3 -lc++ -o "$OUT/owner-search-results-ui"
+    mkdir -p "$OUT/owner-search-results-ui-dd"
+    step owner-search-results-ui env DD_CHECK_OUT="$OUT/owner-search-results-ui-dd" "$OUT/owner-search-results-ui"
+  fi
   # Store-level checks (typed vault, preferences, the setup typing choice, data home, controls).
   for pair in typed-store:typed-store preference-save:preference-save typing-choice:onboarding-typing-choice \
               memory-controls:memory-controls onboarding-staging:onboarding-staging data-home-migration:data-home-migration; do

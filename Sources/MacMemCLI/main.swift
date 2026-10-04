@@ -78,7 +78,8 @@ func searchQuery(_ text: String, app: String? = nil, start: String? = nil, end: 
 /// with a different build) meanwhile, this process carries on as the updated copy: the same process, arguments,
 /// environment (its access key) and stdin/stdout, so the AI app's DayDream tools keep working without restarting the
 /// AI app. Old code never answers once the bundle has changed. Nothing about a request goes into the arguments or the
-/// environment; the server keeps no state between requests.
+/// environment; the server keeps no state between requests except what it decided itself and carries across a renewal
+/// in its environment (`ToolListState`): the protocol revision agreed at initialize and the tool list it gave the AI app.
 enum ServerRenewal {
     /// How often an idle server looks whether DayDream was updated (milliseconds).
     static let idleCheck: Int32 = 2000
@@ -126,6 +127,54 @@ enum ServerRenewal {
                 usleep(200_000)
             }
         }
+    }
+}
+/// claude/recall-1004: AI apps keep the tool list `mac-mem mcp` gave them when the chat started. After a renewal the
+/// updated copy answers, but the AI app's list is still the older copy's, so a Next line could name a tool the AI app
+/// doesn't have (a laptop chat begun on an older build was told to use `recap` and `moment_details` it never saw).
+/// This server (1) says it may change its tool list (initialize `capabilities.tools.listChanged`), (2) after a renewal
+/// whose list differs from the one the AI app was given, sends `notifications/tools/list_changed` once, so an AI app
+/// that supports it fetches the new list, and (3) until the AI app fetches it, starts every tool reply with a note
+/// that names the tools it lacks and how to get them (`AssistantCatalog.staleToolsNotice`). Only values this server
+/// made cross a renewal, in its environment: the agreed protocol revision, and the fingerprint and names of the list
+/// it gave (never a request's content, never the access key's value).
+enum ToolListState {
+    static let listedKey = "DAYDREAM_MCP_LISTED"
+    static let protocolKey = "DAYDREAM_MCP_PROTOCOL"
+    /// Nothing was listed yet in this AI app session (a process from before this change leaves the key unset).
+    static let nothingListed = "-"
+    /// This process is a renewal: an earlier copy of DayDream started it.
+    static let renewed = (getenv(ServerRenewal.counter).flatMap { Int(String(cString:$0)) } ?? 0) > 0
+    /// What the AI app was last given by tools/list in this session: `fingerprint:name,name,...`, `-`, or nil when an
+    /// earlier copy that doesn't record it renewed into this one.
+    static var listed: String? = getenv(listedKey).map { String(cString:$0) }
+    /// The revision agreed at initialize by this process or the copy it carried on from.
+    static var agreed: String? = getenv(protocolKey).map { String(cString:$0) }.flatMap { AssistantCatalog.protocolVersions.contains($0) ? $0 : nil }
+
+    /// At start. A fresh server records that nothing is listed yet; a renewal keeps what the earlier copy recorded.
+    /// True when the AI app should be told the list changed.
+    static func start() -> Bool {
+        if listed == nil && !renewed { record(nothingListed) }
+        guard renewed, agreed != nil || listed == nil else { return false }
+        guard let listed else { return true }
+        return listed != nothingListed && !listed.hasPrefix(AssistantCatalog.toolListFingerprint + ":")
+    }
+    /// tools/list answered with this build's list.
+    static func gaveList() { record(AssistantCatalog.toolListFingerprint + ":" + AssistantCatalog.toolNames.joined(separator:",")) }
+    static func initialized(_ revision: String) { agreed = revision; setenv(protocolKey, revision, 1) }
+    private static func record(_ value: String) { listed = value; setenv(listedKey, value, 1) }
+    /// This build's tools the AI app doesn't have: [] when its list is current or nothing was listed yet, nil when not known.
+    static var missing: [String]? {
+        guard let listed else { return renewed ? nil : [] }
+        guard listed != nothingListed, !listed.hasPrefix(AssistantCatalog.toolListFingerprint + ":") else { return [] }
+        let names = Set((listed.split(separator:":", maxSplits:1).dropFirst().first ?? "").split(separator:",").map(String.init))
+        return AssistantCatalog.toolNames.filter { !names.contains($0) }
+    }
+    /// The note every tool reply starts with while the AI app's list lacks tools; nil when it doesn't.
+    static var notice: String? {
+        let lacking = missing
+        if let lacking, lacking.isEmpty { return nil }
+        return AssistantCatalog.staleToolsNotice(client:client, missing:lacking)
     }
 }
 /// The history file as it is on disk now (device and inode); nil when there is none.
@@ -243,9 +292,14 @@ func mcp(_ served: ServedHistory) {
     var store: MemoryStore { served.store }
     var file = historyFile(served.store.home)
     // The revision the client agreed in initialize; structuredContent is offered from 2025-06-18 on.
-    var negotiated = AssistantCatalog.protocolVersions.last!
+    // claude/recall-1004: a renewal keeps the revision the earlier copy agreed (it was reset to the oldest before).
+    var negotiated = ToolListState.agreed ?? AssistantCatalog.protocolVersions.last!
     // Unbuffered: nothing past the request being read sits in this process, so a renewal loses no queued request.
     setvbuf(stdin, nil, _IONBF, 0)
+    if ToolListState.start() {
+        print(#"{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}"#)
+        fflush(stdout)
+    }
     while true {
         ServerRenewal.awaitRequest()
         let current = ServerRenewal.settle()
@@ -272,9 +326,10 @@ func mcp(_ served: ServedHistory) {
             // MemoryCore/AssistantCatalog.swift. Tools stay read-only.
             case "initialize":
                 negotiated = AssistantCatalog.negotiatedVersion(params["protocolVersion"])
-                result = ["protocolVersion":negotiated,"capabilities":["tools":[:],"resources":[:]],"serverInfo":["name":"DayDream","title":"DayDream","version":try companionIdentity.get().version],"instructions":AssistantCatalog.instructions] as [String:Any]
+                ToolListState.initialized(negotiated)
+                result = ["protocolVersion":negotiated,"capabilities":["tools":["listChanged":true],"resources":[:]],"serverInfo":["name":"DayDream","title":"DayDream","version":try companionIdentity.get().version],"instructions":AssistantCatalog.instructions] as [String:Any]
             case "ping": result = [:] as [String:String]
-            case "tools/list": result = ["tools":AssistantCatalog.toolList()]
+            case "tools/list": result = ["tools":AssistantCatalog.toolList()]; ToolListState.gaveList()
             case "resources/list": result = ["resources":AssistantCatalog.resources]
             case "resources/templates/list": result = ["resourceTemplates":AssistantCatalog.resourceTemplates]
             case "tools/call", "resources/read":
@@ -360,6 +415,11 @@ func mcp(_ served: ServedHistory) {
                 } catch let failure where resource == nil && !(failure is MCPProtocolError) {
                     // A tool that ran and failed: the model reads why and what to do next (MCP: isError tool results).
                     result = ["content":[["type":"text","text":AssistantCatalog.toolErrorMessage(failure,tool:name)]],"isError":true]
+                }
+                // claude/recall-1004: the AI app's tool list is older than this copy: the note comes first.
+                if resource == nil, let notice = ToolListState.notice, var reply = result as? [String:Any], let content = reply["content"] as? [[String:Any]] {
+                    reply["content"] = [["type":"text","text":notice]] + content
+                    result = reply
                 }
             default: throw MCPProtocolError(code: -32601, message: "Unsupported method")
             }

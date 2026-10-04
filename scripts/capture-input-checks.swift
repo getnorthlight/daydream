@@ -150,6 +150,8 @@ final class Rig {
         EventCapture.reenableTap = { _ in check(false, "no real tap is turned on"); return false }
         EventCapture.remakeTap = { _ in check(false, "no real tap is made"); return false }
         EventCapture.registerAX = { _, _, _ in check(false, "no real app is observed"); return (nil, true) }
+        // claude/typing-1004: the session's key count is the checks' own (nobody's real typing counts here).
+        EventCapture.keyCounter = { (0, false) }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("capture-input-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -159,6 +161,8 @@ final class Rig {
         try lateStreak(root)
         try pauseChord(root)
         try tapTurnedOff(root)
+        try keysNotArriving(root)
+        keyCharactersOffMain()
         try tapCallback(root)
         try appNotifications(root)
         try messagesConversationCache(root)
@@ -772,6 +776,91 @@ final class Rig {
             steady.advance(0.3); password(steady, false); steady.key("x"); back(steady); steady.advance(40)
             check(try r.words().isEmpty && steady.words().isEmpty, "G7 round 1: a draft still open when a key goes straight into a password field is dropped, as with no stall (a boundary writes only what was judged on time)")
         }
+    }
+
+    // MARK: claude/typing-1004 — a tap macOS made but never feeds a key
+
+    /// Owner laptop 10/04 (public 0.1.4): Recording showed and Chrome pages were saved while no key could reach a tap
+    /// made before Input Monitoring applied. The heartbeat compares the session's key count with the keys the tap got.
+    static func keysNotArriving(_ root: URL) throws {
+        var count: UInt32 = 5000, secure = false
+        EventCapture.keyCounter = { (count, secure) }
+        defer { EventCapture.keyCounter = { (0, false) } }
+        let r = try Rig(root, "no-keys")
+        var reports = 0
+        r.capture.onKeysNotArriving = { reports += 1 }
+        let before = WebTypingRefusals.shared.snapshot()["tap.noKeys"] ?? 0
+        r.capture.heartbeat()
+        count += 10; r.capture.heartbeat()
+        check(reports == 0, "no keys: fewer keys than the threshold say nothing")
+        secure = true; count += 200; r.capture.heartbeat()
+        secure = false; count += 5; r.capture.heartbeat()
+        check(reports == 0, "no keys: keys counted under secure input (a password) never count")
+        count += UInt32(KeyArrivalWatch.threshold); r.capture.heartbeat()
+        check(reports == 1 && r.coordinator.isRunning, "no keys: the threshold of keys counted, none at the tap: reported once (the app decides)")
+        check((WebTypingRefusals.shared.snapshot()["tap.noKeys"] ?? 0) == before + 1, "no keys: the tally says so (tap.noKeys)")
+        count += 500; r.capture.heartbeat()
+        check(reports == 1, "no keys: once per recording")
+        // A key at the tap: the tap is fed, nothing is ever reported.
+        let fed = try Rig(root, "fed")
+        var fedReports = 0
+        fed.capture.onKeysNotArriving = { fedReports += 1 }
+        fed.capture.heartbeat()
+        fed.capture.tapEventForChecks(.keyDown, CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true)!)
+        count += 500; fed.capture.heartbeat(); count += 500; fed.capture.heartbeat()
+        check(fedReports == 0 && fed.capture.keyWatchForChecks.proved, "no keys: a key that reached the tap proves it is fed")
+        let app = source("Sources/MacMemApp/MacMemApp.swift")
+        check(app.contains("next.onKeysNotArriving = { [weak self] in MainActor.assumeIsolated { self?.keysNotArriving() } }")
+              && app.contains("capture?.stop(reason:\"Input event tap unavailable. No recording started.\")"),
+              "no keys: the app restarts itself or stops with the tap's reason, so Start offers Quit & Reopen (inputNeedsReopen)")
+    }
+
+    // MARK: claude/typing-1004 — a key's characters off the main queue
+
+    /// Owner laptop 10/04 (public 0.1.4, macOS 15.7.2): DayDream quit (EXC_BREAKPOINT, `_dispatch_assert_queue_fail` under
+    /// `TSMTranslateKeyEvent` / `-[NSEvent characters]`) on the "DayDream input tap" thread, queue daydream.web-typing.route,
+    /// whenever a Chrome typing burst read its key. AppKit's key reading asserts the main QUEUE; off it, the event's own
+    /// Unicode string is read. macOS 26 doesn't trap, so this is simulated: AppKit's half counts any call off the main queue.
+    static func keyCharactersOffMain() {
+        let saved = EventCapture.appKitCharacters
+        defer { EventCapture.appKitCharacters = saved }
+        let lock = NSLock()
+        var appKitOffMain = 0, appKitOnMain = 0
+        EventCapture.appKitCharacters = { _ in
+            lock.lock(); defer { lock.unlock() }
+            if MainQueue.isCurrent { appKitOnMain += 1 } else { appKitOffMain += 1 }
+            return "appkit"
+        }
+        let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true)!
+        let units = Array("é".utf16)
+        event.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
+        check(MainQueue.isCurrent && Thread.isMainThread, "key characters: the checks start on the main queue")
+        check(EventCapture.keyCharacters(event) == "appkit" && appKitOnMain == 1, "key characters: on the main queue, AppKit's reading (as always)")
+        // A serial queue's sync from the main thread runs on the main thread, but not on the main queue: TSM traps there.
+        let route = TypingRouteExecutor(label: "capture-input-checks.web-typing.route")
+        let viaSync = route.sync { (Thread.isMainThread, MainQueue.isCurrent, EventCapture.keyCharacters(event)) }
+        check(!viaSync.1 && viaSync.2 == "é", "key characters: the route's executor (sync from main, main thread: \(viaSync.0)) reads the event's own string")
+        var onThread = ""
+        let done = DispatchSemaphore(value: 0)
+        let tap = Thread { onThread = EventCapture.keyCharacters(event); done.signal() }
+        tap.name = "capture-input-checks tap"; tap.start(); done.wait()
+        check(onThread == "é", "key characters: a tap thread reads the event's own string")
+        DispatchQueue.global().async { onThread = route.sync { EventCapture.keyCharacters(event) }; done.signal() }
+        done.wait()
+        check(onThread == "é", "key characters: the route's executor from the tap thread reads the event's own string")
+        check(appKitOffMain == 0 && appKitOnMain == 1, "key characters: AppKit's reading (TSM) never ran off the main queue (\(appKitOffMain))")
+        // The input source rule (Text Input Sources) is read on the main queue only; the executor reads the last value.
+        let memory = DirectInputMemory()
+        var live = 0
+        check(memory.read({ live += 1; return true }) && live == 1, "input source: read live on the main queue")
+        let remembered = route.sync { memory.read({ live += 1; return false }) }
+        check(remembered && live == 1, "input source: the route's executor (even on the main thread) reads the remembered value, never TIS")
+        let capture = source("Sources/MacMemApp/EventCapture.swift")
+        let offMain = capture.components(separatedBy: "fileprivate func handleTapOffMain(").dropFirst().first?.components(separatedBy: "\n    }\n").first ?? ""
+        check(!offMain.isEmpty && !offMain.contains("NSEvent") && offMain.contains("Self.keyCharacters(event)"),
+              "key characters: the tap thread's work reads through keyCharacters, never NSEvent")
+        check(capture.components(separatedBy: "NSEvent(cgEvent").count == 2 && capture.contains("static var appKitCharacters: (CGEvent) -> String = { NSEvent(cgEvent: $0)?.characters ?? \"\" }"),
+              "key characters: NSEvent(cgEvent:) is made in one place, AppKit's main-queue half")
     }
 
     // MARK: G3 — an input tap macOS turned off

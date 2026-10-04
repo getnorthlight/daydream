@@ -109,6 +109,33 @@ func runOwnerTypedSearchChecks(home: URL) throws {
     _ = try? store.ingest(secure, now: now)
     try check(try found("puffinsecure").isEmpty, "secure field: never matches")
 
+    // MARK: claude/searchui-1005 (owner 10/04, a search for a contact's name): what a result shows
+    // Found only by the conversation's name: the snippet is the message's own words, never the name.
+    let byName = try store.ownerTypedSearch(MemorySearchQuery("pat quill"), now: now)
+    try check(byName.byName.contains("t-msg") && byName.byName.contains("t-fresh"), "result: rows found only by the conversation's name are marked")
+    try check((byName.snippets["t-msg"] ?? "").hasPrefix("me and my pals") && !(byName.snippets["t-msg"] ?? "").localizedCaseInsensitiveContains("pat quill"),
+              "result: a name-only match's snippet is the start of the message, not the name")
+    try check(byName.lines["t-msg"] == words, "result: the detail's line is the whole (short) message")
+    let byWord = try store.ownerTypedSearch(MemorySearchQuery("zux"), now: now)
+    try check(!byWord.byName.contains("t-msg") && (byWord.lines["t-msg"] ?? "").contains("ZUX")
+              && (byWord.lines["t-msg"] ?? "").count <= 2 * OwnerTypedSearchText.lineRadius + 2, "result: a word match's detail line holds the match, bounded")
+    // Words typed into a search field are a search, never a text to someone.
+    try check(try store.ingest(typed("t-search", "zephyrq", 40, app: place.app, bundle: place.bundle, title: place.app, surface: "search",
+                                     field: "search", send: nil), now: now), "fixture: words typed in an app's search field")
+    let searched = try store.ownerTypedSearch(MemorySearchQuery("zephyrq"), now: now)
+    try check(searched.items.map(\.id) == ["t-search"] && searched.places["t-search"]?.search == true
+              && searched.places["t-search"]?.label == place.app && searched.places["t-search"]?.place == "",
+              "result: a search field's words are a search in \(place.app), not \"Texts · \(place.app)\"")
+    if place.app == "Messages" {
+        // A Messages row naming no conversation is what was typed in Messages, never "Texts · Messages".
+        try check(try store.ingest(typed("t-noconv", "orphanwordq here", 50, app: place.app, bundle: place.bundle, title: "Messages", surface: "text",
+                                         field: "message", send: nil), now: now), "fixture: a Messages row with no conversation")
+        let orphan = try store.ownerTypedSearch(MemorySearchQuery("orphanwordq"), now: now).places["t-noconv"]
+        try check(orphan?.line == "Messages" && orphan?.search == false, "result: a Messages row with no conversation reads \"Messages\" (\(orphan?.line ?? "none"))")
+    } else {
+        print("LIMIT: this build types in no Messages; the no-conversation Messages place is checked in the owner lane")
+    }
+
     // MARK: Gates
     let before = try showAllStoreDigest(home), revision = try store.disclosureRevision()
     _ = try found("zux"); _ = try found("pat quill")

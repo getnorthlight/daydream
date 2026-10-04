@@ -55,4 +55,56 @@ func runWebTypingRefusalsChecks() throws {
     relaunched.join(denial: "timeout"); relaunched.flush()
     try check(WebTypingRefusals.read(domain: suite)?.counts["join.timeout"] == 2, "tally: counting goes on across a relaunch")
     defaults.removePersistentDomain(forName: suite)
+    try runJoinStepChecks()
+    try runKeyArrivalWatchChecks()
+}
+
+/// claude/typing-1004 (owner laptop, public 0.1.4: `join.window` 2, `join.frame` 1 and nothing to say which step): the
+/// step of a full join that refused `window` or `frame` is counted with that join's answer, as an episode of its own.
+func runJoinStepChecks() throws {
+    let t = WebTypingRefusals()
+    t.step("window.title"); t.join(denial: "window")
+    t.step("window.title"); t.join(denial: "window")
+    try check(t.snapshot()["join.window"] == 1 && t.snapshot()["step.window.title"] == 1,
+              "join steps: the refusing step counts with its join, once per episode")
+    t.join(denial: nil); t.step("window.title"); t.join(denial: "window")
+    try check(t.snapshot()["step.window.title"] == 2, "join steps: a join with no step ends the step's episode")
+    t.step("frame.chromeUI"); t.join(denial: "frame")
+    t.step("window.titleUnmatched"); t.join(denial: nil)
+    try check(t.snapshot()["step.frame.chromeUI"] == 1 && t.snapshot()["step.window.titleUnmatched"] == 1,
+              "join steps: Chrome's own UI (no web area) and a window let through on its bounds alone have names")
+    let size = t.snapshot().count
+    t.step("window.somethingNew"); t.join(denial: "window")
+    try check(t.snapshot().count == size, "join steps: a step outside the list is never kept")
+    t.join(denial: "url")
+    try check(t.snapshot()["step.window.title"] == 2, "join steps: a step is counted only with the join that noted it")
+    try check(WebTypingRefusals.stepNames.count == 10 && WebTypingRefusals.names.contains("tap.noKeys"),
+              "join steps: ten step names, and the tap's own name")
+}
+
+/// claude/typing-1004: `KeyArrivalWatch`, the public build's check for an input tap that macOS made but never feeds
+/// a key (Input Monitoring turned on after launch): Recording showed while no typing was saved.
+func runKeyArrivalWatchChecks() throws {
+    var w = KeyArrivalWatch()
+    try check(!w.sample(counter: 1000, secureInput: false), "key watch: the first sample only sets the base")
+    try check(!w.sample(counter: 1000 + UInt32(KeyArrivalWatch.threshold - 1), secureInput: false), "key watch: fewer keys than the threshold: nothing")
+    try check(w.sample(counter: 1000 + UInt32(KeyArrivalWatch.threshold), secureInput: false) && w.reported,
+              "key watch: the threshold of keys the Mac counted, none at the tap: reported")
+    try check(!w.sample(counter: 5000, secureInput: false), "key watch: reported once per recording")
+    w.start()
+    try check(!w.reported && w.unseen == 0, "key watch: a new recording watches again")
+    // Secure input: the tap doesn't get those keys either, so they never count.
+    _ = w.sample(counter: 0, secureInput: false)
+    try check(!w.sample(counter: 500, secureInput: true) && w.unseen == 0, "key watch: keys counted while secure input is on don't count")
+    try check(!w.sample(counter: 520, secureInput: false) && w.unseen == 0, "key watch: nor the sample right after secure input ends")
+    // A key at the tap proves it is fed.
+    _ = w.sample(counter: 530, secureInput: false)
+    w.keyArrived()
+    try check(!w.sample(counter: 900, secureInput: false) && w.proved, "key watch: a key at the tap: nothing is ever reported")
+    // A counter jump (reset or wrap) is not believed.
+    var j = KeyArrivalWatch()
+    _ = j.sample(counter: 10, secureInput: false)
+    try check(!j.sample(counter: 10 &+ KeyArrivalWatch.maxStep &+ 1, secureInput: false) && j.unseen == 0, "key watch: an implausible jump is ignored")
+    _ = j.sample(counter: UInt32.max - 5, secureInput: false)
+    try check(!j.sample(counter: 10, secureInput: false) && j.unseen == 16, "key watch: the counter wraps around")
 }

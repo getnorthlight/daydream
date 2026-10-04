@@ -36,6 +36,15 @@ class Server:
         self.p = subprocess.Popen([str(exe), '--home', str(home), '--client', 'claude-desktop', '--recipient', 'daydream-connect', 'mcp'],
                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
         self.n = 0
+        self.notifications = []
+
+    def line(self):
+        """The next reply; notifications the server sends on its own (no id) are kept aside, as an AI app does."""
+        while True:
+            message = json.loads(self.p.stdout.readline())
+            if 'id' in message:
+                return message
+            self.notifications.append(message.get('method'))
 
     def send(self, *requests):
         lines = []
@@ -44,7 +53,7 @@ class Server:
             lines.append(json.dumps({'jsonrpc': '2.0', 'id': self.n, 'method': method, 'params': params or {}}) + '\n')
         self.p.stdin.write(''.join(lines).encode())   # one write: pipelined, the way hosts may send them
         self.p.stdin.flush()
-        return [json.loads(self.p.stdout.readline()) for _ in requests]
+        return [self.line() for _ in requests]
 
     def ask(self, method, params=None):
         return self.send((method, params))[0]
@@ -178,7 +187,7 @@ class MCPUpdate(unittest.TestCase):
         server.p.stdin.flush()
         time.sleep(1)
         os.rename(staged, self.app)
-        reply = json.loads(server.p.stdout.readline())
+        reply = server.line()
         self.assertEqual(reply['id'], 99)
         self.assertIn('result', reply, f'a request during the swap waits for it, then the new copy answers: {reply}')
         self.assertEqual(server.version(), 'sat-test-5')
@@ -259,6 +268,62 @@ class MCPUpdate(unittest.TestCase):
         os.rename(fresh / 'memory.sqlite', self.home / 'memory.sqlite')
         self.assertNotEqual(status().get('last_activity'), 'Nothing recorded yet.', 'the server reads the new history, not the file set aside')
         self.assertLessEqual(self.history_opens(server.p.pid), 1, 'the file set aside is closed, not kept open')
+
+    # claude/recall-1004: an AI app keeps the tool list it was given when its chat started. After the server carries on
+    # as an update whose list differs, the server says so (notifications/tools/list_changed) and, until the AI app
+    # fetches the list again, starts every tool reply with a note naming the tools the AI app lacks.
+    STALE = 'DayDream was updated while this chat was open'
+    OLDER = 'status,context,search,read,open,recall,current-context'
+
+    def text(self, reply):
+        return '\n'.join(c['text'] for c in reply['result']['content'])
+
+    def carried_on(self, **env):
+        """A server as an earlier copy hands it over: started by a renewal, with what that copy recorded."""
+        server = Server(self.exe, self.home, dict(self.env, DAYDREAM_MCP_RENEWALS='1', **env))
+        self.servers.append(server)
+        return server
+
+    def test_carried_on_from_an_older_tool_list(self):
+        server = self.carried_on(DAYDREAM_MCP_PROTOCOL='2025-06-18', DAYDREAM_MCP_LISTED='0123456789abcdef:' + self.OLDER)
+        status = server.ask('tools/call', {'name': 'status'})
+        self.assertEqual(server.notifications, ['notifications/tools/list_changed'], 'the AI app is told once that the list changed')
+        first = status['result']['content'][0]['text']
+        self.assertTrue(first.startswith('Note: ' + self.STALE), first)
+        self.assertIn('without recap, moment_details', first, 'the note names the tools the AI app lacks')
+        self.assertIn('quit Claude Desktop and open it again', first, 'and how to get them')
+        detailed = server.ask('tools/call', {'name': 'status', 'arguments': {'response_format': 'detailed'}})
+        self.assertIn('structuredContent', detailed['result'], 'the revision agreed before the renewal still holds')
+        failed = server.ask('tools/call', {'name': 'moment_details', 'arguments': {'id': 'nothing-here'}})
+        self.assertTrue(failed['result'].get('isError') and self.STALE in self.text(failed), 'a failed call carries the note too')
+        self.assertIn('moment_details', [t['name'] for t in server.ask('tools/list')['result']['tools']])
+        self.assertNotIn(self.STALE, self.text(server.ask('tools/call', {'name': 'status'})), 'once the AI app has the new list, no note')
+        self.assertEqual(server.notifications, ['notifications/tools/list_changed'], 'never told twice')
+
+    def test_carried_on_from_a_copy_that_kept_no_list(self):
+        # A copy from before this change records nothing: what the AI app has isn't known, so the note lists this copy's tools.
+        server = self.carried_on()
+        first = self.text(server.ask('tools/call', {'name': 'status'}))
+        self.assertEqual(server.notifications, ['notifications/tools/list_changed'])
+        self.assertIn('may be out of date', first)
+        self.assertIn('recap, moment_details', first)
+
+    def test_carried_on_with_the_same_list_says_nothing(self):
+        server = self.start()
+        self.assertIn('result', server.ask('tools/list'))
+        self.assertTrue(server.ask('initialize', {'protocolVersion': '2025-06-18'})['result']['capabilities']['tools'].get('listChanged'))
+        self.update_in_place('500', 'sat-test-5')   # the same mac-mem: the same tools
+        reply = server.ask('tools/call', {'name': 'status', 'arguments': {'response_format': 'detailed'}})
+        self.assertEqual(server.version(), 'sat-test-5')
+        self.assertEqual(server.notifications, [], 'no list_changed when the list is the same')
+        self.assertNotIn(self.STALE, self.text(reply))
+        self.assertIn('structuredContent', reply['result'], 'the agreed revision carries over a real renewal')
+
+    def test_carried_on_before_any_list_says_nothing(self):
+        server = self.start()   # initialize and status only: the AI app hasn't asked for the list yet
+        self.update_in_place('500', 'sat-test-5')
+        self.assertNotIn(self.STALE, self.text(server.ask('tools/call', {'name': 'status'})))
+        self.assertEqual(server.notifications, [])
 
     def test_old_update_message_is_gone(self):
         data = Path(CLI).read_bytes()

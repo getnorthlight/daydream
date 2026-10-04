@@ -31,6 +31,8 @@ do {
     try runBrowserSitesChecks()
     try runChromePageStoreChecks(home:dir.appendingPathComponent("chrome-pages"),now:now)
     try runChromePageProbeChecks()
+    // claude/search-1005 (owner decision 2026-10-04): a search engine's results page keeps its search words.
+    try runSearchPageChecks(home:dir.appendingPathComponent("search-pages"),now:now)
     // page-links-1003 (owner decision 2026-10-03): a page row opens the exact page through a safe link.
     try runPageLinkChecks(home:dir.appendingPathComponent("page-links"),now:now)
     // email-1003 (owner decision 2026-10-03): email subjects, Mail titles, the subject rules, compose/send, lines.
@@ -74,6 +76,7 @@ do {
     try runThreadChecks(home:dir.appendingPathComponent("threads"))
     try runNoteBacklogChecks(home:dir.appendingPathComponent("note-backlog"))
     try runRecapChecks(home:dir.appendingPathComponent("recap"))
+    try runRecallFoldChecks(home:dir.appendingPathComponent("recall-fold"))
     try runForgetRangeChecks(home:dir.appendingPathComponent("forget-range"))
     let crashHome = dir.appendingPathComponent("unclean")
     let child = Process(); child.executableURL = URL(fileURLWithPath:CommandLine.arguments[0])

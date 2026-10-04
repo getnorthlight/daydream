@@ -104,6 +104,8 @@ extension MemoryStore {
         switch writer {
         case "local": result["summaries"] = "on this Mac: DayDream writes short notes about each moment on this Mac; nothing is sent to write them."
         case "cloud": result["summaries"] = "cloud: DayDream sends activity through OpenRouter to write short notes about each moment (see cloud_summaries)."
+        // claude/recall-1004: the person's choice is kept across a relaunch or an update; until the writer runs, say so.
+        case "starting": result["summaries"] = "turned on, starting: the person's choice is kept, and DayDream turns summaries back on after its launch check (or once the one thing DayDream Settings › Summarizer names is fixed). No new notes until then; earlier notes are still here."
         case "off": result["summaries"] = "off: no notes are written; moments still show apps, windows and times. The person can turn summaries on in DayDream Settings › Summarizer."
         default: result["summaries"] = "unknown: DayDream hasn't reported its summary setting yet."
         }

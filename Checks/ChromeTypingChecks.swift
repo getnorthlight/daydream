@@ -1028,13 +1028,26 @@ func checkWindowTitleSuffix() throws {
         try check(p?.pageTitle == plain?.pageTitle && !(p?.pageTitle ?? "").contains("Google Chrome") && !(p?.pageTitle ?? "").contains("Work"),
                   "AXTitle with the Chrome \(label): the saved page title is the tab's own, never the suffix or profile")
     }
-    // Still denied: an unrelated title, and a name that is only a prefix of the title.
-    try check(page("Project notes", axTitle: "Bank statement - Google Chrome").run(BrowserTypingJoin<FakeAXNode>()).denial == .window,
-              "unrelated AXTitle with the Chrome suffix: denied")
-    try check(page("Project notes", axTitle: "Project notes 2 - Google Chrome").run(BrowserTypingJoin<FakeAXNode>()).denial == .window,
-              "AXTitle that only starts with the name: denied")
-    try check(page("Project notes", axTitle: "Project notes - Google Chrome - ").run(BrowserTypingJoin<FakeAXNode>()).denial == .window,
-              "AXTitle with an empty profile tail: denied")
+    // claude/typing-1004 (owner laptop 10/04: an X reply refused `window` on every join): with ONE listed window of the
+    // focused window's bounds, bounds alone bind it (as the bracketed design's lean read): an AXTitle of a shape the
+    // rule doesn't know is let through, site only: no page title is saved (the name it couldn't match may lag the page).
+    for (axTitle, label) in [("Bank statement - Google Chrome", "an unrelated AXTitle"), ("Project notes 2 - Google Chrome", "an AXTitle that only starts with the name"),
+                             ("Project notes - Google Chrome - ", "an AXTitle with an empty profile tail"),
+                             ("Project notes - Some new tab state - Google Chrome", "an AXTitle with a tab state the rule doesn't know")] {
+        let p = page("Project notes", axTitle: axTitle).run(BrowserTypingJoin<FakeAXNode>()).proof
+        try check(p?.windowID == "101" && p?.pageTitle == "" && !(plain?.pageTitle ?? "").isEmpty,
+                  "one window with these bounds, \(label): allowed on its bounds, site only (no title it couldn't match is saved)")
+    }
+    // With several listed windows of those bounds (another Space), the title still decides, exactly as before.
+    for axTitle in ["Bank statement - Google Chrome", "Project notes 2 - Google Chrome", "Project notes - Google Chrome - "] {
+        let w = page("Project notes", axTitle: axTitle)
+        w.addWindow("202", mode: "normal", front: false, bounds: FakeChromeWorld.bounds, name: "Other page", url: "https://other.example.org/", onThisSpace: false)
+        try check(w.run(BrowserTypingJoin<FakeAXNode>()).denial == .window, "two windows with these bounds, an AXTitle matching neither name: denied (\(axTitle.count) chars)")
+    }
+    // The page itself is still proven: the tab's address must be the web area's.
+    let switched = page("Project notes", axTitle: "Bank statement - Google Chrome")
+    switched.web.url = "https://bank.example.org/statement"
+    try check(switched.run(BrowserTypingJoin<FakeAXNode>()).denial == .url, "title let through on bounds, but the web area shows another page: denied (url)")
     // A page whose own title contains " - Google Chrome" never matches a different window: with another listed
     // window of the same bounds (another Space) named like it, both match and the join refuses.
     var w = page("Plan - Google Chrome", axTitle: "Plan - Google Chrome - Google Chrome")
@@ -1453,8 +1466,12 @@ private func checkJoin() throws {
         try check(w.run(BrowserTypingJoin<FakeAXNode>()).denial == denial, "Chrome slow to answer '\(kind)': denied")
     }
     // AE <-> AX window match.
+    // claude/typing-1004: a name mismatch decides only among windows with the same bounds (one window: its bounds bind it).
     w = FakeChromeWorld(); w.window.title = "Inbox (4) - someone@example.org - Gmail"
-    try check(w.run(BrowserTypingJoin<FakeAXNode>()).denial == .window, "window name mismatch: denied")
+    w.addWindow("202", mode: "normal", front: false, bounds: FakeChromeWorld.bounds, name: "Elsewhere", url: "https://other.example.org/", onThisSpace: false)
+    try check(w.run(BrowserTypingJoin<FakeAXNode>()).denial == .window, "window name mismatch with a same-bounds window elsewhere: denied")
+    w = FakeChromeWorld(); w.window.title = "Inbox (4) - someone@example.org - Gmail"
+    try check(w.run(BrowserTypingJoin<FakeAXNode>()).proof != nil, "window name mismatch, one window with those bounds: allowed on its bounds")
     try checkWindowTitleSuffix()
     try checkSwitchShortcuts()
     try checkFormScan()

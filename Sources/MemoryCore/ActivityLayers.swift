@@ -284,6 +284,18 @@ extension MemoryStore {
     public func dayLayers(day:String,timezone:String,after:String?=nil,limit:Int=100,now:Date=Date()) throws -> ActionDay {
         try assembleDay(day:day,timezone:timezone,after:after,limit:limit,now:now,notes:true).day
     }
+    /// perf-1005 (owner 10/4: "loading in what happened took so long"): a moment's member actions in ONE read, in time
+    /// order, the same values the day's pages hold (the day's assembly, cached per process; no notes are read). A card's
+    /// What happened and its details page walked the day's pages 200 at a time from the first instead, each page a whole
+    /// day assembly with every moment's note: a late card on a big day read the day dozens of times (13-20 s measured).
+    /// nil for a partial day (past the assembly's safety cap): the caller walks the pages as before.
+    public func memberActions(day:String,timezone:String,ids:[String],now:Date=Date()) throws -> [CanonicalAction]? {
+        let assembled=try assembleDay(day:day,timezone:timezone,limit:1,now:now,notes:false)
+        guard !assembled.day.partial else { return nil }
+        var seen=Set<String>()
+        let found=ids.compactMap { id -> CanonicalAction? in seen.insert(id).inserted ? assembled.actions[id] : nil }
+        return found.sorted { (timestamp($0.at) ?? .distantPast,$0.id) < (timestamp($1.at) ?? .distantPast,$1.id) }
+    }
     /// The local days ("yyyy-MM-dd" in `timezone`) that hold at least one record, oldest first: the main window's
     /// Previous/Next Day steps between these and never lands on an empty day (owner 10/2: Back from Today landed on a
     /// day with nothing, whose page was only the week line). Read from the records' UTC hours, never their contents;

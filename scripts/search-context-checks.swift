@@ -149,10 +149,10 @@ import MemoryUI
             check(false, "a moment from another day is found"); return
         }
         model.select(other.id)
-        model.openMoment()
-        equal(model.detailRowID, other.id, "Open Moment pushes the detail")
-        check(!model.menuItems.contains { $0.id == .findRelated }, "the detail's Actions menu has no Find Related Moments")
-        check(model.menuItems.contains { $0.id == .showInToday }, "the detail keeps Show in <Day> (the path Show in Context runs)")
+        // claude/searchui-1005 (owner 10/04): no pushed detail; Return shows the result in context.
+        check(!model.menuItems.contains { $0.id == .findRelated }, "the result's Actions menu has no Find Related Moments")
+        check(model.menuItems.contains { $0.id == .showInToday }, "the result keeps Show in <Day> (the path Show in Context runs)")
+        check(!model.menuItems.contains { $0.id == .openMoment }, "no Open Moment item: there is no pushed detail to open")
         check(!browser.commandContext.canFindRelated, "the Moment menu's Find Related Moments is off while search shows a moment")
         let caps = MomentActions.Capabilities(browser: browser)
         check(MomentActions.items(for: m, context: .focusList, browser: caps).contains { $0.id == .findRelated },
@@ -166,10 +166,11 @@ import MemoryUI
         check(!FocusListExpanded.accessibilityActions(MomentActions.items(for: m, context: .focusList, browser: caps)).contains { $0.id == .findRelated },
               "a moment's detail offers no Find Related Moments to VoiceOver")
 
-        // 3. Show in Context = Show in Today: the moment's own day, selected and open, and search closes.
+        // 3. Show in Context = Show in Today = Return (claude/searchui-1005: Open goes straight there): the moment's own
+        // day, selected and open, and search closes.
         browser.selectedCanonicalActivity = "old-detail"
         let serial = browser.contextRevealSerial
-        model.showInDay()
+        model.openMoment()
         pump(0.1)
         equal(browser.focusedDay, "2026-09-21", "Show in Context opens the moment's own day")
         equal(browser.selectedMomentID, m.id, "Show in Context keeps the moment selected")
@@ -187,7 +188,6 @@ import MemoryUI
         if let today = model.displayRows.first(where: { $0.dayKey == "2026-09-22" && $0.moment != nil }), let tm = today.moment {
             model.select(today.id)
             model.openMoment()
-            model.showInDay()
             check(browser.focusedDay == nil && browser.selectedMomentID == tm.id && browser.expandedMomentID == tm.id,
                   "Show in Context on today's moment stays on today with it selected")
         } else {
@@ -209,7 +209,7 @@ import MemoryUI
         check(wait { !model.busy && model.displayRows.count == 2 && model.displayRows.allSatisfy { $0.moment?.bundles == [zed.1] } },
               "an app-filtered search excludes nearby moments from other apps")
         if let past = model.displayRows.first(where: { $0.dayKey == "2026-09-21" }), let pm = past.moment {
-            model.select(past.id); model.openMoment(); model.showInDay()
+            model.select(past.id); model.openMoment()
             check(browser.focusedDay == pm.dayKey && browser.selectedMomentID == pm.id && browser.expandedMomentID == pm.id
                   && browser.reference?.moments == [pm.id], "filtered result returns to its own day and child selection")
             let before = browser.contextRevealSerial
@@ -250,7 +250,9 @@ import MemoryUI
         check(!kit.isEmpty && !detail.isEmpty && !preview.isEmpty && !model.isEmpty && !rows.isEmpty, "sources read (run from the repo root)")
         check(kit.contains("if let onShowInContext { VStack(alignment: .leading, spacing: 10) { summary ShowInContextButton(action: onShowInContext) } }"),
               "the moment detail draws Show in Context directly under the summary")
-        check(detail.contains("onShowInContext: { model.showInDay() }"), "search's pushed detail wires Show in Context to Show in Today")
+        check(!detail.contains("RecallDetailView") && !detail.contains("MomentDetailBody") && !panel.contains("RecallDetail")
+              && !model.contains("detailRowID") && model.contains("public func openMoment() { guard selectedRow != nil else { return } if menuOpen { closeMenu() } showInDay() }"),
+              "search has no pushed detail: Return and a double-click run Show in Context")
         check(preview.contains("summary(m) ShowInContextButton { model.showInDay() }"), "search's preview draws Show in Context under the summary")
         check(model.contains("case .showInToday: showInDay()"), "Show in Today (⌘T, the menus) runs the same showInDay")
         check(model.contains("browser.showInDay(m)") && browser.contains("focusedDay = moment.dayKey == today ? nil : moment.dayKey")
@@ -260,8 +262,7 @@ import MemoryUI
               && expanded.contains(".font(.system(size: 12, weight: .medium)) .frame(height: 30) } .buttonStyle(FocusLinkButtonStyle())"),
               "shared Show in Context exactly matches the existing Show All font, height and link style")
         check(kit.contains("MomentSummaryAndHistory {") && kit.contains("OwnerSourceMomentProjection.history(actions")
-              && detail.contains("let loaded = model.members[m.id]")
-              && panel.contains("model.run(copy.id)") && model.contains("actionRow.map(menuItems(for:)) ?? []"),
+              && model.contains("actionRow.map(menuItems(for:)) ?? []"),
               "summary and chronological history remain separate alongside existing Copy/Forget presentation")
         check(!focusDetail.contains("onShowInContext:") && !expanded.contains("ShowInContextButton"),
               "Show in Context is offered only by search, never timeline detail or expanded cards")

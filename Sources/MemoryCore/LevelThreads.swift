@@ -434,7 +434,9 @@ tuesday wednesday thursday saturday sunday morning evening night dinner lunch br
                 return ThreadEntity(raw: "video:" + h + "|" + norm(t), fallback: "site:" + h, kind: "video", label: friendlyHosts[h] ?? h,
                                     topic: topicWords(t), nouns: salientNouns(t))
             }
-            if searchHosts.contains(h) && (bare || lower == "google" || lower.hasSuffix(" - google search") || lower.hasSuffix(" - bing") || lower.contains("duckduckgo")) {
+            // claude/search-1005: a Chrome page row of a results page carries the search words alone as its title.
+            if searchHosts.contains(h) && (bare || lower == "google" || lower.hasSuffix(" - google search") || lower.hasSuffix(" - bing") || lower.contains("duckduckgo"))
+                || (!bare && SearchPage.keepsTitle(host: h, title: title)) {
                 return ThreadEntity(raw: "search", kind: "search", label: "Web searches")
             }
             if h == "docs.google.com" || h == "notion.so" || h.hasSuffix(".notion.site") || h == "figma.com" || h == "coda.io" || h == "dropbox.com" && lower.contains("paper") {

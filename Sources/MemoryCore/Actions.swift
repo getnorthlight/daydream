@@ -119,6 +119,10 @@ public enum ActionProjection {
             }
             if e.browserVerification?.provider == BrowserSafety.pageProvider, let host=URL(string:e.url)?.host, !host.isEmpty {
                 description=e.title.isEmpty ? "Observed \(host) in \(e.app); reading is not established." : "Observed \(e.title) on \(host) in \(e.app); reading is not established."
+                // claude/search-1005: a search engine's page row keeps its search words as its title: said as a search.
+                if SearchPage.keepsTitle(host:host,title:e.title) {
+                    description="Observed search results for \(e.title) in \(e.app); submission and reading are not established."
+                }
             }
         case "browser.tab_opened", "browser.tab_visited":
             let supported=e.synthetic || BrowserSafety.valid(e)

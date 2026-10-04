@@ -85,9 +85,11 @@ public enum BrowserSafety {
               let origin=BrowserSites.origin(e.url), e.url == origin || e.url == origin + "/", let host=BrowserSites.host(of:origin),
               !BrowserSites.blockedByDefault(host:host),
               // email-1003 (owner decision 2026-10-03): an email page keeps its cleaned title (`EmailTitle`) when it
-              // passes the subject rules and holds no address; search and chat pages stay the site only.
+              // passes the subject rules and holds no address; chat pages stay the site only. claude/search-1005 (owner
+              // decision 2026-10-04): a search engine's page keeps its search words (`SearchPage.keepsTitle`).
               !BrowserSites.siteOnly(host:host) || e.title.isEmpty
-                || (BrowserSites.emailHost(host:host) && EmailTitle.keepable(e.title)) else { return false }
+                || (BrowserSites.emailHost(host:host) && EmailTitle.keepable(e.title))
+                || SearchPage.keepsTitle(host:host, title:e.title) else { return false }
         return true
     }
     /// One Chrome app-time row: the app's name and the time. Everything else is empty.

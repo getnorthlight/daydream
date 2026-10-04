@@ -5,7 +5,7 @@
 // `No moments match "…"` with "Some recent moments may not show yet." under it.
 //  - Control (the bug): with the metadata search only, and the index catching up, a typed word finds nothing.
 //  - Fixed: with `searchOwnerTyped` wired as the app wires it (`MemoryStore.ownerTypedSearch` on the app's own store),
-//    the same query (any case, a prefix) shows the moment, its row reads where and when ("Texts · Pat Quill · 2:29 AM")
+//    the same query (any case, a prefix) shows the moment, its row reads as the conversation ("Pat Quill", Texts, 2:29 AM)
 //    and its subtitle is the typed snippet holding the query; Why it matched lists "You typed"; Show in Context opens
 //    the moment's day. A row typed seconds ago is found at once. Nothing typed reaches the store's search result.
 // Synthetic data, in-memory keys, a temp store under DD_CHECK_OUT or TMPDIR: no app, no window, no Keychain.
@@ -120,7 +120,10 @@ import MemoryUI
             check(row != nil && !model.showsNoResults, "typed: the sent text's row is found, any case or a prefix", "\(model.displayRows.map(\.id))")
             guard let row else { continue }
             let time = DaydreamFormat.time(timestamp(iso(now.addingTimeInterval(-3 * 3600)))!, cal.timeZone)
-            check(row.title == "Texts \u{00B7} Pat Quill \u{00B7} " + time, "typed: the row reads where and when, never a bare moment title", row.title)
+            // claude/searchui-1005 (owner 10/04): the title is the conversation ("Pat Quill", "Texts" as a small label);
+            // the row's one time is the text's, beside it, never in the title.
+            check(row.title == "Pat Quill" && row.kindLabel == "Texts", "typed: the row reads as the conversation, never a bare moment title", row.title)
+            check(DaydreamFormat.time(model.rowLine(row).at ?? row.time, cal.timeZone) == time, "typed: the row's one time is the text's")
             let snippet = row.typed["t1"] ?? ""
             check(snippet.range(of: q, options: .caseInsensitive) != nil && snippet.contains("ZUX"), "typed: the row carries the snippet with the word as typed")
             check(model.matchSources(row).first == .typed, "typed: Why it matched leads with You typed", "\(model.matchSources(row))")

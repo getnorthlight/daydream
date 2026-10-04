@@ -466,11 +466,20 @@ private func checkWebXComposer() throws {
     try check(WebTypingTitle.clean(post + " \u{1F50A}", url: "https://x.com/ada/status/1839", origin: "https://x.com") == post,
               "website typing (fix/chrome-x): the speaker never reaches the row's place")
     // Strict controls: anything else between the name and " - Google Chrome", or a title that isn't the name, matches no window.
+    // claude/typing-1004 (owner laptop 10/04, public 0.1.4: every X reply and Google search box join refused `window`):
+    // the title decides only among several windows with the focused window's bounds. With one, its bounds bind it and
+    // the reply is saved, site only; with a same-bounds window elsewhere, nothing is saved, as before.
     for title in [post + " - Something else - Google Chrome", post + " - Audio playing", post + " - Audio playing extra - Google Chrome",
                   post + " - Memory usage - lots - Google Chrome", "Ada on X: \"launch day\" / X - Audio playing - Google Chrome"] {
+        try check(!ChromeWindowMatching.titleMatches(axTitle: title, aeName: post), "website typing (fix/chrome-x): a window title that is not the name plus Chrome's own states matches no name")
         let r = rig("https://x.com/ada/status/1839", name: post, title: title, label: "Post your reply")
-        r.type("never kept"); _ = r.key(.submit)
-        try check(r.rows.isEmpty && r.result().denial == .window, "website typing (fix/chrome-x): a window title that is not the name plus Chrome's own states matches no window")
+        r.type("kept on its bounds"); _ = r.key(.submit)
+        try check(r.words == ["kept on its bounds"] && r.rows.allSatisfy { $0.url == "https://x.com" },
+                  "website typing (claude/typing-1004): one window with those bounds, a title of a shape the rule doesn't know: the X reply is saved, site only (\(r.words))")
+        let twin = rig("https://x.com/ada/status/1839", name: post, title: title, label: "Post your reply")
+        twin.w.addWindow("202", mode: "normal", front: false, bounds: FakeChromeWorld.bounds, name: "Elsewhere", url: "https://other.example.org/", onThisSpace: false)
+        twin.type("never kept"); _ = twin.key(.submit)
+        try check(twin.rows.isEmpty && twin.result().denial == .window, "website typing (fix/chrome-x): with a same-bounds window elsewhere, the title still decides: nothing saved")
     }
     try check(!ChromeWindowMatching.titleMatches(axTitle: post + " - Audio playing - Audio playing - Audio playing - Audio playing - Audio playing - Google Chrome", aeName: post),
               "website typing (fix/chrome-x): at most four tab states are skipped")
@@ -499,7 +508,9 @@ private func checkWebXComposer() throws {
               "website typing (fix/chrome-x): an X unread count that changes while typing loses nothing (\(r.words))")
     // Accessibility one count behind the Apple Events name at a burst's first key: that full join matches no window
     // (the key is dropped, fail closed); once they agree the next burst is saved.
+    // claude/typing-1004: with a same-bounds window elsewhere the title decides (one window: its bounds bind it, below).
     r = rig("https://x.com/home", name: "(5) Home / X", title: "(4) Home / X - Google Chrome - Sam", label: "Post text")
+    r.w.addWindow("202", mode: "normal", front: false, bounds: FakeChromeWorld.bounds, name: "Elsewhere", url: "https://other.example.org/", onThisSpace: false)
     r.type("x")
     try check(r.rows.isEmpty && r.result().denial == .window, "website typing (fix/chrome-x): an Accessibility title one unread count behind matches no window")
     r.w.window.title = "(5) Home / X - Google Chrome - Sam"
@@ -507,6 +518,10 @@ private func checkWebXComposer() throws {
     r.type("and after"); _ = r.key(.submit)
     try check(r.words == ["and after"] && r.rows.first?.url == "https://x.com",
               "website typing (fix/chrome-x): once the counts agree the typing is saved (\(r.words))")
+    let lagging = rig("https://x.com/home", name: "(5) Home / X", title: "(4) Home / X - Google Chrome - Sam", label: "Post text")
+    lagging.type("one window"); _ = lagging.key(.submit)
+    try check(lagging.words == ["one window"] && lagging.rows.first?.url == "https://x.com",
+              "website typing (claude/typing-1004): one window, an Accessibility title one unread count behind: saved on its bounds, site only (\(lagging.words))")
     // The same tab states on Reddit, Outlook and ChatGPT composers.
     for (url, name, label, origin) in [("https://www.reddit.com/r/test/comments/1/t/", "t : r/test", "Join the conversation", "https://www.reddit.com"),
                                        ("https://outlook.office.com/mail/deeplink/compose", "Mail - Ada - Outlook", "Message body", "https://outlook.office.com"),
@@ -690,7 +705,8 @@ private func checkWebSearchCapture() throws {
         try check(got?.engine == want?.0 && got?.query == want?.1,
                   "search capture (fix/chrome-x2): \(want == nil ? "no query" : "the query") from a \(URLComponents(string: url)?.host ?? "?") address (\(got?.engine ?? "nil"))")
     }
-    // The page read keeps it on the read only, never on the page row (still the site only, once).
+    // The page read keeps it on the read only when asked; the page row itself (claude/search-1005) carries the search words
+    // as its title in every build, so both reads give the same row.
     func read(_ url: String, search: Bool) -> ChromePageResult {
         ChromePageProbe.read(userBlocked: [], searchQuery: search ? { WebSearchQuery.query($0) } : nil) { r in
             switch r {
@@ -704,9 +720,9 @@ private func checkWebSearchCapture() throws {
     }
     let url = "https://www.google.com/search?q=red+boots&sca_esv=1"
     guard case .page(let page) = read(url, search: true), case .page(let plain) = read(url, search: false) else { throw MemError.invalid("FAILED: search capture: page read") }
-    try check(page.search?.engine == "Google" && page.search?.query == "red boots" && page.siteOnly && page.title.isEmpty && page.link == nil
+    try check(page.search?.engine == "Google" && page.search?.query == "red boots" && page.siteOnly && page.title == "red boots" && page.link == nil
               && plain.search == nil && page == plain,
-              "search capture (fix/chrome-x2): the results page stays a site-only page row; the query rides on the read only when asked")
+              "search capture (fix/chrome-x2, claude/search-1005): the results page is a site-only page row with its search words; the query rides on the read only when asked")
     if case .skipped(.notNormal) = ChromePageProbe.read(userBlocked: [], searchQuery: { WebSearchQuery.query($0) }, { r in
         switch r { case .windowIDs: return .ids(["1", "2"]); case .mode("1"): return .text("normal"); case .mode("2"): return .text("incognito"); default: return .text(url) }
     }) {} else { try check(false, "search capture (fix/chrome-x2): an Incognito window anywhere: no page read, no search") }
@@ -912,6 +928,8 @@ private func checkWebRejoinLoop() throws {
         r.w.tick = 12_500_000; r.w.axTick = 100_000
         r.w.windows[0].name = post; r.w.window.title = title
         r.w.field.role = "AXTextArea"; r.w.field.labels = BrowserTypingFieldLabels(texts: ["Post your reply"], identifiers: [])
+        // claude/typing-1004: a title decides only among same-bounds windows, so the refused page has one elsewhere.
+        r.w.addWindow("202", mode: "normal", front: false, bounds: FakeChromeWorld.bounds, name: "Elsewhere", url: "https://other.example.org/", onThisSpace: false)
         return r
     }
     let refused = post + " - Not a Chrome state - Google Chrome"

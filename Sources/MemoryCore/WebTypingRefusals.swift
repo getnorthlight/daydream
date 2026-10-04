@@ -41,7 +41,15 @@ public final class WebTypingRefusals: @unchecked Sendable {
         "key.lateAtIntake",
         // Writes.
         "saved", "store.refused",
+        // claude/typing-1004: which step of a full join refused `window` or `frame`, or let the window through on its
+        // bounds alone (`step`). Window geometry and title shape only: never a title, a size, a site or a privacy fact.
+        "step.window.focused", "step.window.bounds", "step.window.noBounds", "step.window.name", "step.window.axTitle",
+        "step.window.title", "step.window.titleUnmatched", "step.frame.chain", "step.frame.chromeUI", "step.frame.nested",
+        // claude/typing-1004: keys the Mac saw while recording never reached DayDream's input tap (`KeyArrivalWatch`).
+        "tap.noKeys",
     ]
+    /// The `step` names a join may note (without the "step." prefix).
+    public static let stepNames: Set<String> = Set(names.filter { $0.hasPrefix("step.") }.map { String($0.dropFirst(5)) })
     /// Join refusals that are privacy facts: never named apart (review B5-1).
     public static let privacyDenials: Set<String> = ["notNormal", "sensitiveField", "blockedSite"]
 
@@ -50,6 +58,8 @@ public final class WebTypingRefusals: @unchecked Sendable {
     /// The last outcome of each stream (`stream`).
     private var last: [String: String] = [:]
     private var pendingTransport = false
+    /// The step a full join noted on its way (`step`), counted with its answer.
+    private var pendingStep: String?
     private var since: Date?
     private var dirty = false
     /// Where `flush` writes the counts (the app: its own defaults, from capture's heartbeat; checks: their own).
@@ -60,11 +70,22 @@ public final class WebTypingRefusals: @unchecked Sendable {
     public func note(_ name: StaticString) { record(name.description, episode: true) }
     /// A full join's answer. A failed Apple Event noted during it (`transportFailed`) is counted once with it.
     public func join(denial: String?) {
-        lock.lock(); let transport = pendingTransport; pendingTransport = false; lock.unlock()
+        lock.lock(); let transport = pendingTransport; pendingTransport = false; let step = pendingStep; pendingStep = nil; lock.unlock()
         // Its own stream: a join with no failed event ends the episode, so the next failure counts again.
         record(transport ? "appleEvent.failed" : "appleEvent.ok", episode: true)
+        defer {
+            // The step's own stream: a join that noted none ends its episode, so the next one counts again.
+            if let step { record("step." + step, episode: true) } else { lock.lock(); last["step"] = nil; lock.unlock() }
+        }
         guard let denial else { record("join.allowed", episode: true); return }
         record(Self.privacyDenials.contains(denial) ? "join.privacy" : "join." + denial, episode: true)
+    }
+    /// claude/typing-1004: the step of the full join under way that refused `window` or `frame` (or admitted a window on
+    /// its bounds alone), counted with that join's answer (`join`). Only names from `stepNames`.
+    public func step(_ name: StaticString) {
+        let n = name.description
+        guard Self.stepNames.contains(n) else { return }
+        lock.lock(); pendingStep = n; lock.unlock()
     }
     /// An Apple Event of a join got no answer in time (or an error). Counted with the join's answer.
     public func transportFailed() { lock.lock(); pendingTransport = true; lock.unlock() }
@@ -102,7 +123,7 @@ public final class WebTypingRefusals: @unchecked Sendable {
         lock.unlock()
         persist?(copy, since)
     }
-    public func reset() { lock.lock(); counts = [:]; last = [:]; pendingTransport = false; since = nil; dirty = false; lock.unlock() }
+    public func reset() { lock.lock(); counts = [:]; last = [:]; pendingTransport = false; pendingStep = nil; since = nil; dirty = false; lock.unlock() }
 
     // MARK: Storage (the app's own defaults)
 

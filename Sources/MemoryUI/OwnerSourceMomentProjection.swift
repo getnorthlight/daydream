@@ -64,8 +64,11 @@ enum OwnerSourceMomentProjection {
             .map { action in
                 let app = AppNames.display(app: action.app, bundle: action.bundle)
                 let host = action.site.isEmpty ? "" : KitBrowsers.host(action.site)
+                // claude/search-1005 (owner 10/04): a search engine's page row is one search, said as one:
+                // "Searched “red boots”", never "google.com 4 times".
+                let search = MomentHistoryCondense.pageView(action) && SearchPage.keepsTitle(host: action.site, title: action.title) ? action.title : nil
                 // A withheld title is named by its app or site, never "[sensitive title omitted]" row after row.
-                let title = TerminalTitle.display(action.title.isEmpty || action.title == MomentHistoryCondense.withheldTitle
+                let title = search.map(SearchPage.line) ?? TerminalTitle.display(action.title.isEmpty || action.title == MomentHistoryCondense.withheldTitle
                     ? (host.isEmpty ? app : host) : action.title, bundle: action.bundle, app: app)
                 let wording = captured[action.id]
                 let blocks = wording.map { words in [MomentTypedBlock(id: action.id, at: action.at,
@@ -86,6 +89,7 @@ enum OwnerSourceMomentProjection {
                     openActionID: host.isEmpty ? nil : action.id,
                     sends: typed.sends[action.id].map { [$0] } ?? [], typed: blocks)
                 entry.link = host.isEmpty ? nil : action.link
+                entry.search = search
                 // claude/terminal-details-1003: only a privacy reason is shown (owner 10/03), never a default "unavailable".
                 entry.withheldReason = action.kind == "keyboard.text_input" && blocks.isEmpty ? withheld[action.id] : nil
                 entry.capturedWordingUnavailable = entry.withheldReason != nil
@@ -113,6 +117,30 @@ enum MomentHistoryCondense {
 
     /// page-links-1003: a page seen in a browser (a page row: its description only repeats the page's title and site).
     static func pageView(_ a: CanonicalAction) -> Bool { a.kind == "window.changed" && !a.site.isEmpty }
+
+    /// claude/search-1005: one search is one line. The same search can be saved twice: as its results page's row (page
+    /// history, `SearchPage`: "Searched “red boots”") and, while typing is on, as a typed row on the engine's site (typed in
+    /// the page's search box, or fix/chrome-x2's typed search row for the address bar, `WebTypedRow.searchEvidence`). A
+    /// typed entry on a search engine's site whose every block's words are a search line's words on the same site (case and
+    /// spacing aside) joins that search line: its actions stay reachable there, its words are not shown twice. Anything
+    /// else typed there (a different search, a sent message) keeps its own line.
+    static func foldSearches(_ entries: [MomentDetailEntry]) -> [MomentDetailEntry] {
+        func norm(_ s: String) -> String { s.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ").lowercased() }
+        guard entries.contains(where: { $0.search != nil }) else { return entries }
+        var out = entries
+        var drop = Set<Int>()
+        for (i, e) in entries.enumerated() where e.search == nil && !e.typed.isEmpty && e.sends.isEmpty && e.message == nil
+            && !e.host.isEmpty && SearchPage.engine(host: e.host) != nil {
+            let words = Set(e.typed.map { norm($0.text) })
+            guard words.count == 1, let w = words.first, !w.isEmpty,
+                  let j = entries.indices.first(where: { entries[$0].search.map(norm) == w && entries[$0].host == e.host }) else { continue }
+            out[j].actionIDs += e.actionIDs
+            out[j].first = [out[j].first, e.first].compactMap { $0 }.min()
+            out[j].last = [out[j].last, e.last].compactMap { $0 }.max()
+            drop.insert(i)
+        }
+        return out.enumerated().filter { !drop.contains($0.offset) }.map(\.element)
+    }
 
     /// The evidence hedges, said plainly or not at all. A description keeps what happened ("Pressed Return").
     static func plain(_ description: String, app: String) -> String {
@@ -201,7 +229,7 @@ enum MomentHistoryCondense {
         // Terminal lines are MomentDetailFold's (one line per Return, "Asked Claude Code" / "Ran a command").
         let bundles = Dictionary(actions.map { ($0.id, $0.bundle) }, uniquingKeysWith: { first, _ in first })
         let compose = compose.filter { !terminalBundles.contains(bundles[$0.key] ?? "") }
-        for e in MessagesTypedFold.fold(entries, actions: actions, compose: compose) {
+        for e in MessagesTypedFold.fold(foldSearches(entries), actions: actions, compose: compose) {
             if e.message != nil { flush(); out.append(e); continue }
             if signal(e, kinds: kinds) {
                 flush()
@@ -210,6 +238,7 @@ enum MomentHistoryCondense {
                     openActionID: e.openActionID, sends: e.sends, typed: e.typed)
                 line.capturedWordingUnavailable = e.capturedWordingUnavailable
                 line.link = e.link
+                line.search = e.search
                 out.append(line)
             } else {
                 if let head = run.first, head.bundle + "|" + head.app != e.bundle + "|" + e.app { flush() }
@@ -226,7 +255,9 @@ enum MomentHistoryCondense {
         for e in out {
             if let last = result.last, repeatable(last), repeatable(e), last.title == e.title, last.bundle == e.bundle, last.host == e.host,
                last.link == e.link, base(last.detail) == base(e.detail) {
-                let ids = last.actionIDs + e.actionIDs, n = ids.count
+                // claude/search-1005: a search line counts its searches (page views), not a typed row folded into it.
+                let ids = last.actionIDs + e.actionIDs
+                let n = last.search != nil ? max(1, ids.filter { kinds[$0] == "window.changed" }.count) : ids.count
                 let first = [last.first, e.first].compactMap { $0 }.min(), lastAt = [last.last, e.last].compactMap { $0 }.max()
                 let range = first.flatMap { f in lastAt.map { DaydreamFormat.range(f, $0, timeZone) } }
                 var merged = MomentDetailEntry(id: last.id, bundle: last.bundle, app: last.app, host: last.host, title: last.title,
@@ -234,12 +265,62 @@ enum MomentHistoryCondense {
                     first: first, last: lastAt, actionIDs: ids, openActionID: e.openActionID ?? last.openActionID, sends: [], typed: [])
                 merged.capturedWordingUnavailable = false
                 merged.link = e.link
+                merged.search = e.search
                 result[result.count - 1] = merged
             } else {
                 result.append(e)
             }
         }
-        return MomentDetailFold.fold(result, entries: entries, actions: actions, timeZone: timeZone)
+        return foldRepeats(MomentDetailFold.fold(result, entries: entries, actions: actions, timeZone: timeZone), kinds: kinds, timeZone: timeZone)
+    }
+
+    /// perf-1005 (owner 10/4: fifteen "ChatGPT  chatgpt.com · Clicked" rows in the same minute): back-to-back rows of the same
+    /// app, site and kind, with no words of their own, are ONE row: how many times and the time range, in the same words
+    /// as above ("chatgpt.com · Clicked · 15 times · 2:31–2:32 PM"). The neighbour rule above missed them: two links can
+    /// read the same short link, a conversation can be renamed mid-run, and some rows only meet once `MomentDetailFold`
+    /// folded the quiet rows between them. The row opens, and is titled by, the latest. A page view stays one row per page
+    /// (page-links-1003: each page opens itself); a window row (no site) folds only with its own title.
+    static func foldRepeats(_ lines: [MomentDetailEntry], kinds: [String: String], timeZone: TimeZone) -> [MomentDetailEntry] {
+        func base(_ detail: String) -> String {
+            // Without a count ("4 times"), a range ("2:31–2:33 PM") or a lone time ("2:40 PM") an earlier fold added.
+            detail.components(separatedBy: " · ").filter { part in
+                !part.hasSuffix(" times") && !part.contains("\u{2013}")
+                    && part.range(of: #"^\d{1,2}:\d{2}(\s?[AaPp]\.?[Mm]\.?)?$"#, options: .regularExpression) == nil
+            }.joined(separator: " · ")
+        }
+        // The kind part of the detail: what it says after the place ("Clicked"), never the place itself.
+        func operation(_ e: MomentDetailEntry) -> String {
+            let parts = base(e.detail).components(separatedBy: " · ")
+            return parts.count > 1 ? parts.dropFirst().joined(separator: " · ") : (e.isWeb ? "" : parts.first ?? "")
+        }
+        // The row's own kind (its first action's), never the quiet actions folded into it.
+        func kind(_ e: MomentDetailEntry) -> String { kinds[e.id] ?? e.actionIDs.first.flatMap { kinds[$0] } ?? "" }
+        func repeatable(_ e: MomentDetailEntry) -> Bool {
+            !e.quiet && e.typed.isEmpty && e.sends.isEmpty && !e.capturedWordingUnavailable && e.message == nil && e.withheldReason == nil
+                && e.context == nil && !e.actionIDs.isEmpty
+        }
+        func same(_ a: MomentDetailEntry, _ b: MomentDetailEntry) -> Bool {
+            guard repeatable(a), repeatable(b), a.bundle == b.bundle, a.app == b.app, a.host == b.host,
+                  kind(a) == kind(b), operation(a) == operation(b) else { return false }
+            let pages = kind(a) == "window.changed" || operation(a).isEmpty
+            if !a.isWeb || pages { return a.title == b.title && a.link == b.link }
+            return true
+        }
+        var out: [MomentDetailEntry] = []
+        for e in lines {
+            guard let last = out.last, same(last, e) else { out.append(e); continue }
+            let ids = last.actionIDs + e.actionIDs
+            let first = [last.first, e.first].compactMap { $0 }.min(), lastAt = [last.last, e.last].compactMap { $0 }.max()
+            var range: String?
+            if let first, let lastAt { range = DaydreamFormat.range(first, lastAt, timeZone) }
+            if range == first.map({ DaydreamFormat.time($0, timeZone) }) { range = nil }
+            var merged = MomentDetailEntry(id: last.id, bundle: e.bundle, app: e.app, host: e.host, title: e.title,
+                detail: [base(e.detail), "\(ids.filter { kinds[$0] == kind(e) }.count) times", range ?? ""].filter { !$0.isEmpty }.joined(separator: " · "),
+                first: first, last: lastAt, actionIDs: ids, openActionID: e.openActionID ?? last.openActionID, sends: [], typed: [])
+            merged.link = e.link ?? last.link
+            out[out.count - 1] = merged
+        }
+        return out
     }
 }
 

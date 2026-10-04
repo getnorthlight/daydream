@@ -75,9 +75,21 @@ public final class DirectInputMemory: @unchecked Sendable {
     private var value = false
     public init() {}
     public func read(_ live: () -> Bool) -> Bool {
-        guard Thread.isMainThread else { lock.lock(); defer { lock.unlock() }; return value }
+        // The main QUEUE (claude/typing-1004): the executor's `sync` may run on the main thread, where Text Input Sources
+        // still assert the main queue (macOS 15 traps).
+        guard MainQueue.isCurrent else { lock.lock(); defer { lock.unlock() }; return value }
         let now = live()
         lock.lock(); value = now; lock.unlock()
         return now
     }
+}
+
+/// claude/typing-1004 (owner laptop 10/04, macOS 15.7.2: EXC_BREAKPOINT in `_dispatch_assert_queue_fail` under TSM on the
+/// route's queue): whether this code runs on the main QUEUE, which is what AppKit's key translation, HIToolbox and Text
+/// Input Sources assert. Not `Thread.isMainThread`: a serial queue's `sync` from the main thread runs its work on the main
+/// thread while the current queue is that serial queue.
+public enum MainQueue {
+    private static let key = DispatchSpecificKey<UInt8>()
+    private static let marked: Void = DispatchQueue.main.setSpecific(key: key, value: 1)
+    public static var isCurrent: Bool { _ = marked; return DispatchQueue.getSpecific(key: key) == 1 }
 }

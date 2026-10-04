@@ -10,9 +10,13 @@ import HistoryCore
 // 3. the active tab of the front window, then its address. The address is
 //    judged by BrowserSites and dropped: the row keeps the origin, and on this
 //    Mac only the page's own link (`BrowserSites.pageLink`: no login, token,
-//    tracking or search part; none for search, email and chat pages);
-// 4. the tab title, only for pages that keep a title (search, email and chat
-//    pages keep the site only and their title is never asked for);
+//    tracking or search part; none for search, email and chat pages). A search
+//    engine's results page keeps its search words as the row's title
+//    (claude/search-1005, owner decision 2026-10-04), never the address;
+// 4. the tab title, only for pages that keep a title (chat pages keep the site
+//    only and their title is never asked for; an email page's only while "Save
+//    email subjects" is on; a search engine's results page's only when its
+//    address holds no search words: claude/search-1005, `SearchPage`);
 // 5. the window list, every mode, the tab and the address again. Any change
 //    means nothing is saved.
 // No page text, field, click or background tab is read or kept, and no query
@@ -131,8 +135,9 @@ public enum ChromePageReply: Equatable, Sendable {
 }
 
 /// One page as it may be saved: the window and tab it was in, the origin, and
-/// the cleaned title ("" for search and chat pages, and for email pages unless "Save email subjects" is on and the
-/// title passes `EmailTitle.web`: email-1003, owner decision 2026-10-03).
+/// the cleaned title ("" for chat pages, for email pages unless "Save email subjects" is on and the title passes
+/// `EmailTitle.web`: email-1003, owner decision 2026-10-03; a search engine's results page's search words, `SearchPage`:
+/// claude/search-1005, owner decision 2026-10-04; "" for any other search page).
 public struct ChromePageRead: Equatable, Sendable {
     public let windowID: String
     public let tabID: String
@@ -211,11 +216,20 @@ public enum ChromePageProbe {
         // 5. Title, only when one may be kept: a page that keeps its title, or (email-1003, owner decision 2026-10-03)
         // an email page while "Save email subjects" is on: its folder or open email's subject (`EmailTitle.web`),
         // cleaned and scrubbed; nothing usable keeps the site only. An email page stays site-only (no link, no path).
+        // claude/search-1005 (owner decision 2026-10-04): a search engine's results page keeps its search words as the
+        // title (`SearchPage.query`, from the address already read); only when the address has none is the tab title
+        // asked for ("<words> - Google Search", `SearchPage.titleQuery`). Words that can't be kept leave the site only.
+        // A search page stays site-only (no link, no path, no other part of the address).
         var title = ""
         let emailTitle = siteOnly && emailSubjects && BrowserSites.emailPage(url)
-        if !siteOnly || emailTitle {
+        let searchPage = siteOnly && !emailTitle && SearchPage.resultsPage(url)
+        let searchWords = searchPage ? SearchPage.query(url)?.query : nil
+        if let searchWords { title = searchWords }
+        if !siteOnly || emailTitle || (searchPage && searchWords == nil) {
             guard case .text(let raw)? = ask(.tabTitle(front, tab)), raw.utf8.count <= maxTitleBytes else { return .skipped(.unreadable) }
-            if emailTitle {
+            if searchPage {
+                title = SearchPage.titleQuery(raw, url: url)?.query ?? ""
+            } else if emailTitle {
                 guard !ObservationPolicy.titleLooksPrivate(raw) else { return .skipped(.blocked) }
                 if let kept = EmailTitle.web(raw, host: BrowserSites.host(of: origin) ?? "").flatMap({ ChromePageTitle.clean($0, origin: origin, url: url) }),
                    !ObservationPolicy.titleLooksPrivate(kept) { title = kept }

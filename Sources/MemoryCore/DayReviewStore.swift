@@ -276,7 +276,8 @@ extension MemoryStore {
                     let effortful = personSends.max { ($0.effort, $0.at) < ($1.effort, $1.at) }!
                     let subject = channel == "email" ? personSends.compactMap(\.subject).last : nil
                     let told = channel == "email" ? "Emailed " + g.name : "Told " + g.name
-                    items.append(DayReviewItem(id: key + "#said", lead: told, plainLead: verb + " " + g.name, tail: subject.map { "about " + $0 },
+                    items.append(DayReviewItem(id: key + "#said", lead: told, plainLead: verb + " " + g.name,
+                                               tail: DayReview.topic(subject, echoing: [g.name]).map { "about " + $0 },
                                                clauseKey: key, quote: latest.id, score: score, moments: momentIDs))
                     source(key, lead: told, name: g.name, colon: false, ids: momentIDs, sendCount: personSends.count, askCount: 0)
                     // The second line quotes the highest-effort text (else the one before the latest); once the first line has
@@ -328,7 +329,12 @@ extension MemoryStore {
                     let apps = used.contains { !browsers.contains($0) } ? used.filter { !browsers.contains($0) } : used
                     if let ask = ownAsks.last {
                         let tool = ask.tool ?? Self.aiName(assembled.actions[ask.id]!, host: ThreadEntities.host(ask.site))
-                        items.append(DayReviewItem(id: t.key, lead: "Asked " + tool, tail: "about " + about, clauseKey: t.key, quote: ask.id, score: s, moments: ids))
+                        // claude/today-copy-1004 (owner 10/04): an AI app's own thread is named after the app ("Claude"), so
+                        // its ask read "Asked Claude about Claude". No "about …" when it only names the tool, the app or
+                        // the site again: "Asked Claude: “…”".
+                        let host = ThreadEntities.host(ask.site)
+                        let topic = DayReview.topic(about, echoing: [tool, ask.app, ThreadEntities.friendlyHosts[host] ?? host] + DayReview.askPlaces)
+                        items.append(DayReviewItem(id: t.key, lead: "Asked " + tool, tail: topic.map { "about " + $0 }, clauseKey: t.key, quote: ask.id, score: s, moments: ids))
                         source(t.key, lead: "Asked " + tool, name: about, colon: false, ids: ids, sendCount: 0, askCount: ownAsks.count)
                         continue
                     }
@@ -364,6 +370,14 @@ extension MemoryStore {
                         items.append(DayReviewItem(id: t.key, lead: "Used", tail: label, score: s, moments: ids))
                     default:
                         // Code, an AI chat read, anything worked on: "Worked on DayDream: <clause>", else "… in Xcode".
+                        // claude/today-rank-1005: an AI app's own thread read with no ask ("Worked on Claude: in Claude.") is "Used
+                        // Claude", the sentence going on after it, as "Asked Claude" does (today-copy-1004's echo rule).
+                        if DayReview.topic(about, echoing: apps + DayReview.askPlaces) == nil {
+                            let lead = "Used " + about
+                            items.append(DayReviewItem(id: t.key, lead: lead, clauseKey: t.key, score: s, moments: ids))
+                            source(t.key, lead: lead, name: about, colon: false, ids: ids, sendCount: 0, askCount: 0)
+                            continue
+                        }
                         let lead = "Worked on " + about
                         items.append(DayReviewItem(id: t.key, lead: lead, colon: true, tail: apps.isEmpty ? nil : "in " + LevelThreads.names(Array(apps.prefix(2))),
                                                    clauseKey: t.key, score: s, moments: ids))
@@ -373,8 +387,12 @@ extension MemoryStore {
                 items.sort { ($0.score, $1.id) > ($1.score, $0.id) }
             }
             guard !items.isEmpty else { continue }
+            // claude/today-rank-1005: the thread's category for the card's order (a person's by the channel they were met in).
+            let channel = g.members.first.map { $0.key.hasPrefix("chat:teams") ? "teams" : $0.kind }
+            let category = DayReview.category(kind: g.kind, key: key, channel: channel, name: g.name)
             out.append(DayReviewThread(key: key, name: g.name, kind: g.kind, seconds: seconds, words: words, personSends: personSends.count, asks: asks.count,
-                                       sendHours: hours, stakes: Array(Set(stakes)).sorted { $0.rawValue < $1.rawValue }, score: score, items: items, moments: momentIDs))
+                                       sendHours: hours, stakes: Array(Set(stakes)).sorted { $0.rawValue < $1.rawValue }, score: score, items: items, moments: momentIDs,
+                                       category: category.rawValue))
         }
         out.sort { ($0.score, $1.key) > ($1.score, $0.key) }
         return (DayReviewFacts(day: day, threads: out, clauses: [:], activeSeconds: activeSeconds, personSends: personSendsDay), sources)
@@ -553,8 +571,11 @@ youtube reddit twitter slack zoom figma notion untitled shell bash zsh users use
             guard !assembled.day.partial, let built = try cachedReviewBuild(assembled, plan: nil, day: day, timezone: timezone, now: now), built.facts.warm else { continue }
             let stored = try reviewClauses(day: day)
             let final = day != today || zone.component(.hour, from: now) >= DayReview.finalHour
-            for (rank, t) in built.facts.threads.prefix(DayReview.slots.count).enumerated() {
-                for item in t.items.prefix(DayReview.slots[rank]) {
+            // claude/today-rank-1005: clauses for the items the card shows, in its order (no quotes opened here).
+            let threads = Dictionary(built.facts.threads.map { ($0.key, $0) }, uniquingKeysWith: { a, _ in a })
+            let shown = DayReview.assemble(built.facts, quotes: [:]).flatMap(\.bullets).compactMap { b in threads[b.thread]?.items.first { $0.id == b.id } }
+            do {
+                for item in shown {
                     guard let key = item.clauseKey, let src = built.sources[key], !src.notes.isEmpty, !src.actionIDs.isEmpty,
                           !skipping.contains(key + "|" + src.signature) else { continue }
                     if let s = stored[key], s.generator == DayReviewClauses.version {

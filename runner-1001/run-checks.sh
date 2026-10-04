@@ -68,11 +68,24 @@ if [ -f scripts/perf-1003-checks.swift ]; then
     scripts/perf-1003-checks.swift $(objs MemoryCore HistoryCore PrivacyPolicy MemoryUI) -lc++ -lsqlite3 -o "$OUT/perf-1003"
   step perf-1003 env DD_CHECK_OUT="$OUT" "$OUT/perf-1003"
 fi
+# perf-1005: What happened folds back-to-back rows of the same app, site and kind; a card's member actions are one read
+# (the same actions as the page walk, a fraction of its cost). Headless: fictional actions and a scratch store.
+if [ -f scripts/what-happened-fold-checks.swift ]; then
+  step compile-what-happened-fold swiftc -parse-as-library -module-cache-path "$I/modcache" -I "$B/Modules" -I Sources/CSQLite "${LLAMA[@]}" \
+    scripts/what-happened-fold-checks.swift $(objs MemoryCore HistoryCore PrivacyPolicy MemoryUI) -lc++ -lsqlite3 -o "$OUT/what-happened-fold"
+  step what-happened-fold "$OUT/what-happened-fold"
+fi
 # gold/r2-store-perf: launch prepares the history (repair, time indexes, website typing settle) off the main thread.
 if [ -f scripts/launch-preparation-checks.swift ]; then
   step compile-launch-preparation swiftc -parse-as-library -module-cache-path "$I/modcache" -I "$B/Modules" -I Sources/CSQLite \
     scripts/launch-preparation-checks.swift $(objs MemoryCore HistoryCore PrivacyPolicy MemoryUI) -o "$OUT/launch-preparation"
   step launch-preparation "$OUT/launch-preparation"
+fi
+# claude/search-1005 (owner decision 2026-10-04): the Web searches card lists each search with its words.
+if [ -f scripts/search-words-checks.swift ]; then
+  step compile-search-words swiftc -parse-as-library -module-cache-path "$I/modcache" -I "$B/Modules" -I Sources/CSQLite \
+    scripts/search-words-checks.swift $(objs MemoryCore HistoryCore PrivacyPolicy MemoryUI) -lc++ -lsqlite3 -o "$OUT/search-words"
+  step search-words "$OUT/search-words"
 fi
 if [ -f scripts/store-main-thread-source-checks.py ]; then
   step store-main-thread-source-py python3 scripts/store-main-thread-source-checks.py -v
@@ -126,6 +139,14 @@ if [ -f scripts/search-app-label-checks.swift ]; then
     scripts/search-app-label-checks.swift $(objs MemoryCore HistoryCore PrivacyPolicy) -o "$OUT/search-app-label"
   step search-app-label "$OUT/search-app-label"
 fi
+# claude/searchui-1005 (owner 10/04): search results show the matching lines (who, when, the hit), one time per row, no
+# template snippets, merged hits; What happened folds back-to-back clicks. Headless RecallModel over a temp store.
+if [ -f scripts/search-results-ui-checks.swift ]; then
+  step compile-search-results-ui swiftc -parse-as-library -module-cache-path "$I/modcache" -I "$B/Modules" -I Sources/CSQLite \
+    scripts/search-results-ui-checks.swift $(objs MemoryCore HistoryCore PrivacyPolicy MemoryUI) -lsqlite3 -lc++ -o "$OUT/search-results-ui"
+  mkdir -p "$OUT/search-results-ui-dd"
+  step search-results-ui env DD_CHECK_OUT="$OUT/search-results-ui-dd" "$OUT/search-results-ui"
+fi
 # W0 (typing-all SPEC-LATER section 2): launch wiring from the app's own files
 # (vault attach, build 4 settle, hourly expiry), in-memory keys, fake scheduler.
 step compile-typed-launch swiftc -parse-as-library -module-cache-path "$I/modcache" -I "$B/Modules" -I Sources/CSQLite \
@@ -141,6 +162,11 @@ if [ -f scripts/typing-unlock-delivery-checks.swift ]; then
   step typing-unlock-delivery "$OUT/typing-unlock-delivery"
 fi
 step typing-wiring-source-py python3 scripts/typing-wiring-source-checks.py -v
+# claude/typing-1004: public 0.1.4 compiles typing like the owner copy; the Chrome window title only breaks ties;
+# a tap that gets no keys stops with the reason that offers Quit & Reopen.
+if [ -f scripts/typing-public-lane-checks.py ]; then
+  step typing-public-lane-py python3 scripts/typing-public-lane-checks.py
+fi
 CAPTURE=$(python3 -c "import re;s=open('scripts/daydream-core-source-checks.py').read();print(' '.join('Sources/MacMemApp/%s.swift'%n for n in eval(re.search(r'capture=(\[[^\]]*\])',s).group(1))))")
 python3 "$C/copy-check-source.py" Sources/MacMemApp/Coordinator.swift "$R" > "$OUT/src/headless-Coordinator.swift"
 CAPTURE=${CAPTURE/Sources\/MacMemApp\/Coordinator.swift/$OUT\/src\/headless-Coordinator.swift}
@@ -738,6 +764,8 @@ if [ -f scripts/connect-config-checks.swift ]; then
     step ${lane}mcp-interfaces-py env DAYDREAM_TEST_CLI="$CLI_FOR/mac-mem" python3 scripts/check_interfaces.py
     step ${lane}mcp-readiness-py env DAYDREAM_TEST_CLI="$CLI_FOR/mac-mem" python3 scripts/mcp-readiness-checks.py
     step ${lane}mcp-resources-py env MACMEM_TEST_CLI="$CLI_FOR/mac-mem" python3 scripts/check_action_resources.py
+    # claude/recall-1004: every tool the MCP text names (Next lines, hints, instructions) is in that build's tool list.
+    [ -f scripts/mcp-tool-hint-checks.py ] && step ${lane}mcp-tool-hints-py env DAYDREAM_TEST_CLI="$CLI_FOR/mac-mem" python3 scripts/mcp-tool-hint-checks.py
   done
   step mcp-skill-py python3 scripts/mcp-skill-checks.py
   CONNHOME=$OUT/connect-home; CONNDD=$OUT/connect-dd; mkdir -p "$CONNHOME/Library/Preferences" "$CONNDD"

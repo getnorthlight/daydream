@@ -202,10 +202,46 @@ public enum FocusAppCard {
     /// going (no note yet) showed an older moment's summary, so what was just asked never appeared on the card.
     public static func collapsedLine(_ members: [MomentSlice]) -> String {
         if let newest = members.first, let ask = MomentSubtitle.shownPrompt(newest) { return PromptLine.open + ask + PromptLine.close }
-        if let line = bullets(members).first?.text { return line }
+        let lines = bullets(members).map(\.text)
+        if let line = lines.first { return peopleLine(lines) ?? line }
         guard let start = members.map(\.start).min(), let end = members.map(\.end).max() else { return "" }
         if let read = readingSentence(members, names: members.compactMap(FocusListLayout.recordedConversation)) { return read }
         return workedSentence(app: title(members), from: start, to: end)
+    }
+
+    /// claude/searchui-1005 (owner 10/04: a collapsed Texts row read "Texted <one person>" while its card listed three
+    /// conversations): when the newest line is one person or thread acted on ("Texted Sam Rivera about …", "Asked
+    /// Claude to …") and other lines act the same way on others, the collapsed line names the newest one and counts
+    /// the rest: "Texted Sam Rivera + 2 others", "Asked Claude + 1 other". nil when the line names no one, or only one.
+    public static let peopleVerbs = ["Texted", "Messaged", "Emailed", "Asked", "Called", "Replied to", "Wrote to"]
+    public static func peopleLine(_ lines: [String]) -> String? {
+        guard let first = lines.first, let (verb, name) = actedOn(first) else { return nil }
+        var others: [String] = []
+        for line in lines.dropFirst() {
+            guard let (v, n) = actedOn(line), v == verb, n.lowercased() != name.lowercased(),
+                  !others.contains(where: { $0.lowercased() == n.lowercased() }) else { continue }
+            others.append(n)
+        }
+        guard !others.isEmpty else { return nil }
+        return verb + " " + name + " + " + (others.count == 1 ? "1 other" : "\(others.count) others")
+    }
+    /// The verb and the person or thread a line acts on: the capitalised words (or a number) right after the verb.
+    static func actedOn(_ line: String) -> (String, String)? {
+        for verb in peopleVerbs where line.hasPrefix(verb + " ") {
+            var words: [String] = []
+            for raw in line.dropFirst(verb.count + 1).split(separator: " ") {
+                var word = String(raw)
+                guard let c = word.first, c.isUppercase || c.isNumber || c == "+" else { break }
+                let possessive = word.hasSuffix("'s") || word.hasSuffix("\u{2019}s")
+                if possessive { word = String(word.dropLast(2)) }
+                let ends = word.last.map { ".,;:!?".contains($0) } ?? false
+                words.append(word.trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!?")))
+                if possessive || ends { break }
+            }
+            let name = words.joined(separator: " ").trimmingCharacters(in: .whitespaces)
+            return name.isEmpty ? nil : (verb, name)
+        }
+        return nil
     }
 
     /// A Messages card with no writing: "Read texts with Q7 and Alex." An email card with no writing: "Read 'Demo
@@ -331,6 +367,8 @@ public enum FocusAppCard {
             }
             if !e.sends.isEmpty { return "Sent to \(e.sends.joined(separator: ", ")) in \(e.title == app ? app : e.title)." }
             if !e.typed.isEmpty || e.capturedWordingUnavailable { return "Typed in \(e.title)." }
+            // claude/search-1005: one search, with its words ("Searched “red boots”.").
+            if e.search != nil { return e.title + (times > 1 ? " (\(times) times)." : ".") }
             if e.isWeb { return "Visited \(e.title == e.host ? e.host : e.title)." }
             let what = e.detail.components(separatedBy: " · ").filter { !$0.hasSuffix(" times") && !$0.contains("\u{2013}") && $0 != e.app && $0 != e.host }.last
             return [what, e.title == app ? nil : "in " + e.title].compactMap { $0 }.joined(separator: " ").trimmingCharacters(in: .whitespaces)
@@ -424,11 +462,20 @@ public enum FocusAppCard {
         public var title: String { name ?? FocusAppCard.otherTexts }
         public var shown: [String] { Array(texts.prefix(FocusAppCard.threadLimit)) }
         public var more: Int { max(0, texts.count - FocusAppCard.threadLimit) }
+        /// claude/searchui-1005 (owner 10/04: "+6 more" did nothing): the texts drawn, every one once "+N more" is opened.
+        public func visible(expanded: Bool) -> [String] { expanded ? texts : shown }
     }
     /// Texts shown per conversation; the rest are "+N more".
     public static let threadLimit = 3
     public static let otherTexts = "Other texts"
     public static func moreLine(_ n: Int) -> String? { n > 0 ? "+\(n) more" : nil }
+    /// claude/searchui-1005 (owner 10/04): an overflow line ("+N more", "+N earlier messages") is a link that opens the
+    /// rest inline; opened, it reads "Show less" and closes them again. nil when nothing is hidden.
+    public static let showLess = "Show less"
+    public static func overflowToggle(_ collapsed: String?, expanded: Bool) -> String? {
+        guard let collapsed else { return nil }
+        return expanded ? showLess : collapsed
+    }
     /// A Texts (Messages) card.
     public static func isTexts(_ members: [MomentSlice]) -> Bool {
         members.contains { $0.bundles.contains("com.apple.MobileSMS") || $0.apps.contains("Messages") || $0.primaryApp == "Messages" }
@@ -512,6 +559,10 @@ public enum FocusAppCard {
 
     /// Quoted messages shown before the summary; the rest are "+N earlier messages".
     public static let messageLimit = 2
+    /// The quoted messages drawn: the first `messageLimit`, every one once "+N earlier messages" is opened.
+    public static func visibleMessages(_ messages: [String], expanded: Bool) -> [String] {
+        expanded ? messages : Array(messages.prefix(messageLimit))
+    }
     public static func earlierLine(_ count: Int) -> String? {
         count <= messageLimit ? nil : count - messageLimit == 1 ? "+1 earlier message" : "+\(count - messageLimit) earlier messages"
     }
