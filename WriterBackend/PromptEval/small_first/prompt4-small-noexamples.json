@@ -1,0 +1,10 @@
+{
+ "name": "prompt4-small-noexamples",
+ "description": "A/B arm: prompt4-small without the two worked examples (about half the instruction tokens).",
+ "instructionFile": "prompt4-small.txt",
+ "stripExamples": true,
+ "contract": "view1-v6",
+ "prefill": true,
+ "maxTokens": 512,
+ "repairTurn": true
+}

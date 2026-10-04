@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>DayDream browser setup</title>
+<body><h1>DayDream browser setup</h1>
+<p>This exchanges public registrations only. It does not grant site access, read pages, enable recording or validate physical privacy checks.</p>
+<button id="prepare">Prepare or reuse this extension's key</button>
+<p>Copy this public registration to the native DayDream setup:</p><textarea id="registration" rows="8" cols="80" readonly></textarea>
+<p>Paste the native setup challenge. Compare the displayed app fingerprint in both windows.</p><textarea id="challenge" rows="8" cols="80"></textarea>
+<button id="inspect">Show app fingerprint</button><pre id="fingerprint"></pre>
+<button id="approve" disabled>I compared and approve this app fingerprint</button>
+<p>Copy this signed proof back to native setup:</p><textarea id="proof" rows="8" cols="80" readonly></textarea>
+<p id="status" role="status">Not enrolled.</p><script type="module" src="setup.js"></script>
+<h2>Connection diagnostic</h2>
+<p>After enrollment, paste the short-lived signed ticket from native setup. This checks connection only, without reading browser pages.</p>
+<textarea id="diagnostic-ticket" rows="6" cols="80" aria-label="Signed diagnostic ticket"></textarea>
+<button id="diagnostic-run">Test existing connection</button><button id="diagnostic-cancel">Cancel test</button>
+<p id="diagnostic-status" role="status">No diagnostic started.</p>
+<script type="module" src="diagnostic-setup.js"></script></body></html>

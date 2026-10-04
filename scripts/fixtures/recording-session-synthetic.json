@@ -1,0 +1,370 @@
+{
+  "schemaVersion": 1,
+  "synthetic": true,
+  "about": "Entire trace fabricated; no recorded owner input. Native TextEdit typing route, not Chrome witness.",
+  "pieces": [
+    {
+      "name": "edit-backspace",
+      "events": [
+        {
+          "op": "type",
+          "text": "Cedar plam"
+        },
+        {
+          "op": "key",
+          "code": 51
+        },
+        {
+          "op": "type",
+          "text": "n."
+        },
+        {
+          "op": "flush"
+        }
+      ],
+      "expectNewWords": [
+        "Cedar plan."
+      ],
+      "expectPending": false,
+      "expectNoAcquisition": false
+    },
+    {
+      "name": "redundant-AX",
+      "events": [
+        {
+          "op": "type",
+          "text": "Review cedar layout.",
+          "redundantAX": true
+        },
+        {
+          "op": "flush"
+        }
+      ],
+      "expectNewWords": [
+        "Review cedar layout."
+      ],
+      "expectPending": false,
+      "expectNoAcquisition": false
+    },
+    {
+      "name": "different-focus",
+      "events": [
+        {
+          "op": "type",
+          "text": "First field draft."
+        },
+        {
+          "op": "metadata",
+          "focus": "field-b"
+        },
+        {
+          "op": "ax",
+          "notification": "focus"
+        },
+        {
+          "op": "wait",
+          "seconds": 0.6
+        },
+        {
+          "op": "resolve"
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "type",
+          "text": "Second field draft."
+        },
+        {
+          "op": "flush"
+        }
+      ],
+      "expectNewWords": [
+        "First field draft.",
+        "Second field draft."
+      ],
+      "expectPending": false,
+      "expectNoAcquisition": false
+    },
+    {
+      "name": "different-window",
+      "events": [
+        {
+          "op": "type",
+          "text": "First window draft."
+        },
+        {
+          "op": "metadata",
+          "window": "window-b"
+        },
+        {
+          "op": "ax",
+          "notification": "window"
+        },
+        {
+          "op": "wait",
+          "seconds": 0.6
+        },
+        {
+          "op": "resolve"
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "type",
+          "text": "Second window draft."
+        },
+        {
+          "op": "flush"
+        }
+      ],
+      "expectNewWords": [
+        "First window draft.",
+        "Second window draft."
+      ],
+      "expectPending": false,
+      "expectNoAcquisition": false
+    },
+    {
+      "name": "live-pending",
+      "events": [
+        {
+          "op": "type",
+          "text": "Pending cedar draft."
+        }
+      ],
+      "expectNewWords": [],
+      "expectPending": true,
+      "expectNoAcquisition": false
+    },
+    {
+      "name": "flush-pending",
+      "events": [
+        {
+          "op": "flush"
+        }
+      ],
+      "expectNewWords": [
+        "Pending cedar draft."
+      ],
+      "expectPending": false,
+      "expectNoAcquisition": false
+    },
+    {
+      "name": "secure-denial",
+      "events": [
+        {
+          "op": "metadata",
+          "secure": true
+        },
+        {
+          "op": "type",
+          "text": "fabricated-password-cedar"
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "metadata",
+          "secure": false
+        },
+        {
+          "op": "wait",
+          "seconds": 1
+        }
+      ],
+      "expectNewWords": [],
+      "expectPending": false,
+      "expectNoAcquisition": true
+    },
+    {
+      "name": "OTP-denial",
+      "events": [
+        {
+          "op": "metadata",
+          "autocomplete": "one-time-code",
+          "fieldLabel": "One time code"
+        },
+        {
+          "op": "type",
+          "text": "482913"
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "metadata",
+          "autocomplete": "",
+          "fieldLabel": ""
+        },
+        {
+          "op": "wait",
+          "seconds": 1
+        }
+      ],
+      "expectNewWords": [],
+      "expectPending": false,
+      "expectNoAcquisition": true
+    },
+    {
+      "name": "private-denial",
+      "events": [
+        {
+          "op": "metadata",
+          "private": true
+        },
+        {
+          "op": "type",
+          "text": "Fabricated private draft."
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "metadata",
+          "private": false
+        },
+        {
+          "op": "wait",
+          "seconds": 1
+        }
+      ],
+      "expectNewWords": [],
+      "expectPending": false,
+      "expectNoAcquisition": true
+    },
+    {
+      "name": "unknown-focus",
+      "events": [
+        {
+          "op": "metadata",
+          "known": false
+        },
+        {
+          "op": "type",
+          "text": "Unknown focus draft."
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "metadata",
+          "known": true
+        },
+        {
+          "op": "wait",
+          "seconds": 1
+        }
+      ],
+      "expectNewWords": [],
+      "expectPending": false,
+      "expectNoAcquisition": true
+    },
+    {
+      "name": "secret-token",
+      "events": [
+        {
+          "op": "type",
+          "text": "sk-abcdefghijkl0123"
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "wait",
+          "seconds": 1
+        }
+      ],
+      "expectNewWords": [],
+      "expectPending": false,
+      "expectNoAcquisition": false
+    },
+    {
+      "name": "settings-off",
+      "events": [
+        {
+          "op": "settings",
+          "captureText": false
+        },
+        {
+          "op": "type",
+          "text": "Typed setting off."
+        },
+        {
+          "op": "flush"
+        }
+      ],
+      "expectNewWords": [],
+      "expectPending": false,
+      "expectNoAcquisition": true
+    },
+    {
+      "name": "settings-on",
+      "events": [
+        {
+          "op": "settings",
+          "captureText": true
+        },
+        {
+          "op": "wait",
+          "seconds": 1
+        },
+        {
+          "op": "type",
+          "text": "Typing setting restored."
+        },
+        {
+          "op": "flush"
+        }
+      ],
+      "expectNewWords": [
+        "Typing setting restored."
+      ],
+      "expectPending": false,
+      "expectNoAcquisition": false
+    },
+    {
+      "name": "pause",
+      "events": [
+        {
+          "op": "pause"
+        },
+        {
+          "op": "type",
+          "text": "Paused draft ignored."
+        },
+        {
+          "op": "flush"
+        }
+      ],
+      "expectNewWords": [],
+      "expectPending": false,
+      "expectNoAcquisition": true
+    },
+    {
+      "name": "resume",
+      "events": [
+        {
+          "op": "resume"
+        },
+        {
+          "op": "wait",
+          "seconds": 1
+        },
+        {
+          "op": "type",
+          "text": "Resumed cedar draft."
+        },
+        {
+          "op": "flush"
+        }
+      ],
+      "expectNewWords": [
+        "Resumed cedar draft."
+      ],
+      "expectPending": false,
+      "expectNoAcquisition": false
+    }
+  ]
+}

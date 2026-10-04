@@ -1,0 +1,197 @@
+{
+ "version": 1,
+ "format": "request = CanonicalNoteRequest (WriterBackend/Sources/WriterBackend/CanonicalNotes.swift:11-14); actions = NoteAction rows exactly as ActionProjection + CoreWriterBinding produce them, sorted by (at,id)",
+ "greatFormat": "great.bullets[].actions are 1-based positions in request.actions; a GREAT answer merges related actions and cites every action once",
+ "globalMustNotSay": [
+  {
+   "pattern": "<\\|im_|</?think>|macmem://|\\\\u003c",
+   "why": "template tokens, escapes or internal links: the output echoed or obeyed its input"
+  }
+ ],
+ "globalLeak": [
+  {
+   "pattern": "not established|Recorded a |canonical|\\bevidence\\b|\\baction ?IDs?\\b|untrusted",
+   "why": "internal wording leaks into user-facing notes and MCP answers"
+  },
+  {
+   "pattern": "native-[0-9A-F]{8}-|browser_[0-9a-f]{8}|[0-9a-f]{40,}|```",
+   "why": "IDs, hashes or code fences in prose"
+  },
+  {
+   "pattern": "\\b(com|jp|net|org|io|us)\\.[a-z0-9-]+\\.[A-Za-z0-9.-]+",
+   "why": "bundle ID instead of the app's name"
+  }
+ ],
+ "globalStyle": [
+  {
+   "pattern": "\\b(the user|User)\\b",
+   "why": "write for the person (you / implicit subject), not about 'the user'"
+  },
+  {
+   "pattern": "\\b(mouse click|keyboard shortcut|Return key)\\b|^Observed\\b|^Recorded\\b|^Viewed\\b",
+   "why": "low-signal input mechanics / restating the raw event"
+  }
+ ],
+ "cases": [
+  {
+   "id": "E18",
+   "name": "Chrome typing on two sites (needs chrome/v1 capture; origin only)",
+   "covers": [
+    "chrome-typing",
+    "site-origin",
+    "draft-vs-send",
+    "return-trap",
+    "plan-not-done"
+   ],
+   "notes": "Only meaningful once chrome/v1 ships and CoreCaptureBinding stores the origin in `site` for typed Chrome actions. Kept out of cases.json so the shared 17-case set is unchanged.",
+   "request": {
+    "id": "eval-E18",
+    "schemaVersion": 1,
+    "targetKind": "activity",
+    "targetID": "activity_eval-E18",
+    "day": "2026-10-16",
+    "timezone": "America/Los_Angeles",
+    "inputRevision": "eval-E18",
+    "policyRevision": "eval",
+    "expiresAt": "2099-01-01T00:00:00Z",
+    "actionCount": 7,
+    "next": null,
+    "actions": [
+     {
+      "id": "native-E18-001",
+      "at": "2026-10-16T18:10:00Z",
+      "kind": "browser.tab_visited",
+      "app": "Chrome",
+      "site": "docs.google.com",
+      "title": "",
+      "description": "Observed a continuous foreground tab visit in Chrome; reading is not established.",
+      "state": "observed",
+      "revision": "b2d1b63d80eb7a3d8975c9e56da8352d3d0e48c41ea3e9bdcf8f72925271ca11"
+     },
+     {
+      "id": "native-E18-002",
+      "at": "2026-10-16T18:10:20Z",
+      "kind": "keyboard.text_input",
+      "app": "com.google.Chrome",
+      "site": "https://docs.google.com",
+      "title": "",
+      "description": "Typed a draft in com.google.Chrome. Q3 offsite: book the venue by Friday and send the agenda to the team",
+      "state": "draft",
+      "revision": "8507fcfe8926f10a91b9b000fdd910232b467702df0d12160864ffa16348c9b7"
+     },
+     {
+      "id": "native-E18-003",
+      "at": "2026-10-16T18:10:25Z",
+      "kind": "keyboard.submit",
+      "app": "com.google.Chrome",
+      "site": "https://docs.google.com",
+      "title": "",
+      "description": "Pressed Return in com.google.Chrome; sending is not established.",
+      "state": "draft",
+      "revision": "d3c7fe238b8fdb60fbe752d2a9f0e2ffa5c90411e02db43537ac754ab127992f"
+     },
+     {
+      "id": "native-E18-004",
+      "at": "2026-10-16T18:11:30Z",
+      "kind": "browser.tab_visited",
+      "app": "Chrome",
+      "site": "mail.google.com",
+      "title": "",
+      "description": "Observed a continuous foreground tab visit in Chrome; reading is not established.",
+      "state": "observed",
+      "revision": "b91ec0ec723321b4f47d1b987d9b949ec477522685a6e0d2f5d2b16a7fdc4763"
+     },
+     {
+      "id": "native-E18-005",
+      "at": "2026-10-16T18:11:40Z",
+      "kind": "mouse.click",
+      "app": "com.google.Chrome",
+      "site": "",
+      "title": "",
+      "description": "Recorded a mouse click in com.google.Chrome.",
+      "state": "observed",
+      "revision": "a601fc788365629613a58683a2c39a961cda848b6c0ffc38f56b6876b2e9c541"
+     },
+     {
+      "id": "native-E18-006",
+      "at": "2026-10-16T18:12:10Z",
+      "kind": "keyboard.text_input",
+      "app": "com.google.Chrome",
+      "site": "https://mail.google.com",
+      "title": "",
+      "description": "Typed a draft in com.google.Chrome. Hi Sam, can we move our 1:1 to Thursday?",
+      "state": "draft",
+      "revision": "fb768585c27d5f1735aeb5f9128dbf86a44bc974644b707afc2f451435f06423"
+     },
+     {
+      "id": "native-E18-007",
+      "at": "2026-10-16T18:12:20Z",
+      "kind": "keyboard.submit",
+      "app": "com.google.Chrome",
+      "site": "https://mail.google.com",
+      "title": "",
+      "description": "Pressed Return in com.google.Chrome; sending is not established.",
+      "state": "draft",
+      "revision": "144366f71f2c778dfc9a06c19a256efe795a235d4240789d8618395a71630999"
+     }
+    ]
+   },
+   "great": {
+    "title": "Q3 offsite and Sam's 1:1",
+    "bullets": [
+     {
+      "text": "Typed Q3 offsite notes on docs.google.com in Chrome: book the venue by Friday and send the agenda.",
+      "actions": [
+       1,
+       2,
+       3
+      ]
+     },
+     {
+      "text": "Wrote a message on mail.google.com asking Sam to move your 1:1 to Thursday; sending isn't confirmed.",
+      "actions": [
+       4,
+       5,
+       6,
+       7
+      ]
+     }
+    ]
+   },
+   "checks": {
+    "maxBullets": 3,
+    "mustMention": [
+     [
+      "Chrome"
+     ],
+     [
+      "docs.google.com",
+      "Google Docs"
+     ],
+     [
+      "mail.google.com",
+      "Gmail"
+     ],
+     [
+      "isn't confirmed",
+      "not confirmed"
+     ]
+    ],
+    "mustNotSay": [
+     {
+      "pattern": "\\b(sent|emailed|messaged|submitted|booked|scheduled|moved|signed in|logged in|agenda (is|was) sent)\\b",
+      "why": "typing and Return on a web page prove none of these"
+     },
+     {
+      "pattern": "https?://|\\bURL\\b",
+      "why": "show the site, not a link"
+     }
+    ],
+    "mustAttribute": [],
+    "allowNames": [
+     "Sam"
+    ]
+   }
+  }
+ ]
+}

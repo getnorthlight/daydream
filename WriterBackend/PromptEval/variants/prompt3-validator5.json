@@ -1,0 +1,8 @@
+{
+ "name": "prompt3-validator5",
+ "description": "The writer before prompt4 (qwen35-4b-q4-b9723-prompt3-validator5): CanonicalGrounding.instruction frozen from redesign/final @ 6f26d15, one bullet per action, validator5, app presentation, 1,024 tokens. Baseline for final/prompt4.py run --with-baseline.",
+ "instructionFile": "prompt3-validator5.txt",
+ "contract": "per-action",
+ "presentation": {},
+ "maxTokens": 1024
+}

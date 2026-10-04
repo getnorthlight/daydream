@@ -1,0 +1,22 @@
+{
+  "caseID": "native-messages-owned-new-preflight-v1",
+  "fixture": "native-messages-owned-new",
+  "implementation": "preflight_only",
+  "runtime": "not_executed",
+  "actualCaptureImplemented": false,
+  "productionSendVerified": false,
+  "interruptedContinuityImplemented": false,
+  "allowedModes": [
+    "preflight"
+  ],
+  "inputModes": [
+    "none",
+    "recipient-only"
+  ],
+  "bodyInputAllowed": false,
+  "externalSendAllowed": false,
+  "requiresExclusiveUILease": true,
+  "requiresReviewedFinalSignedEnvelope": true,
+  "additionalWindowPreservesNonemptyDraftImplemented": false,
+  "recipientOutcomeVerified": false
+}

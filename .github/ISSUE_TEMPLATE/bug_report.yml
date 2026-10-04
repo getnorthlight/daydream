@@ -1,0 +1,120 @@
+name: Bug report
+description: Something in DayDream doesn't work as expected.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > **Warning: issues are public, and forks and archives copy them permanently. Never paste your captured history here.**
+        >
+        > That means no window titles, app lists from your timeline, web addresses, typed text, generated notes or summaries, search results, `memory.sqlite` or other database files, backup files, or screenshots of your timeline or search. Replace any real value with a placeholder such as `<window title>`.
+        >
+        > If you need data to show the bug, reproduce it with demo data: `mac-mem --home <empty folder> demo`.
+        >
+        > **Security problem?** Don't file it here. Report it privately instead: https://github.com/getnorthlight/daydream/security/advisories/new
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the problem in your own words. Don't paste captured history.
+      placeholder: "When I pause for 15 minutes, recording doesn't resume afterwards."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The smallest set of steps that shows the problem.
+      placeholder: |
+        1. Start recording from the menu bar.
+        2. Choose Pause for 15 minutes.
+        3. Wait 15 minutes.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: report
+    attributes:
+      label: Report a Problem details
+      description: |
+        In DayDream, choose **Help › Report a Problem**. It opens an email in your mail app; paste its "Added by DayDream" lines here (or just send the email). They have the app and macOS version, permission, recording and summary states, connected AI apps, error codes and counts, and never your history, window titles, typed text or keys. Read them once more before you submit.
+        If DayDream won't open, leave this empty and fill in the version and macOS fields below.
+      render: text
+
+  - type: input
+    id: version
+    attributes:
+      label: DayDream version or commit
+      description: DayDream › About DayDream, or the commit you built from (`git rev-parse --short HEAD`).
+      placeholder: "0.1.0, or commit abc1234"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install it?
+      options:
+        - Built from source
+        - Download from the Releases page
+    validations:
+      required: true
+
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      description: Apple menu > About This Mac.
+      placeholder: "macOS 15.6"
+    validations:
+      required: true
+
+  - type: input
+    id: chip
+    attributes:
+      label: Mac and chip
+      placeholder: "MacBook Air, M2, 16 GB"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of DayDream?
+      options:
+        - Installing or opening the app
+        - Recording
+        - Permissions or setup
+        - Web pages in Chrome
+        - Updates
+        - Timeline or search
+        - Summaries
+        - AI app connection (MCP)
+        - Backup and restore
+        - Building from source
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Error messages or log lines help, but check them first and replace any window titles, web addresses, app names from your history or typed text with placeholders.
+
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I haven't included captured history, window titles, typed text, database or backup files, or screenshots of my timeline.
+          required: true

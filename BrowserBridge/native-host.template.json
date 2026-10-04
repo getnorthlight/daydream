@@ -1,0 +1,7 @@
+{
+  "name": "com.macmem.browser_bridge",
+  "description": "Unconfigured DayDream browser bridge. Do not register before consent and integration testing.",
+  "path": "/UNCONFIGURED/BrowserBridgeHost",
+  "type": "stdio",
+  "allowed_origins": []
+}

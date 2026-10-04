@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE dictionary SYSTEM "file://localhost/System/Library/DTDs/sdef.dtd">
+<!-- Synthetic dictionary for scripts/chrome-apple-event-parse-checks.swift.
+     Copies only the codes and types DayDream's Chrome reader relies on from
+     Google Chrome 153's scripting.sdef (window: pnam text :40, ID text :43,
+     pbnd rectangle :49, acTa tab :73, mode text :76; tab CrTb: ID text :208,
+     pnam text :211, URL text :212). Cocoa class names are local stand-ins.
+     Used only to parse object specifiers in-process; nothing is sent. -->
+<dictionary title="Synthetic Chrome-shaped dictionary">
+  <suite name="Standard Suite" code="????" description="Codes and types copied from Chrome's dictionary.">
+    <class name="application" code="capp" description="The application.">
+      <cocoa class="NSApplication"/>
+      <element type="window"><cocoa key="syntheticWindows"/></element>
+    </class>
+    <class name="window" code="cwin" description="A window.">
+      <cocoa class="SyntheticChromeWindow"/>
+      <element type="tab" access="r"><cocoa key="tabs"/></element>
+      <property name="name" code="pnam" type="text" access="r" description="Title."><cocoa key="title"/></property>
+      <property name="id" code="ID  " type="text" access="r" description="ID."><cocoa key="uniqueID"/></property>
+      <property name="bounds" code="pbnd" type="rectangle" description="Bounds."><cocoa key="boundsAsQDRect"/></property>
+      <property name="active tab" code="acTa" type="tab" access="r" description="Active tab."><cocoa key="activeTab"/></property>
+      <property name="mode" code="mode" type="text" description="normal or incognito."><cocoa key="mode"/></property>
+    </class>
+    <class name="tab" code="CrTb" description="A tab.">
+      <cocoa class="SyntheticChromeTab"/>
+      <property name="id" code="ID  " type="text" access="r" description="ID."><cocoa key="uniqueID"/></property>
+      <property name="title" code="pnam" type="text" access="r" description="Title."><cocoa key="title"/></property>
+      <property name="URL" code="URL " type="text" description="URL."><cocoa key="URL"/></property>
+    </class>
+  </suite>
+</dictionary>

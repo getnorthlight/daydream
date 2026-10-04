@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DayDream device test</title>
+<!-- Local test page for tools/chrome-device-test. No network requests, no
+     scripts from anywhere else, nothing is sent or stored. Serve it with
+     serve.py so it loads over http://127.0.0.1:8765/ (file:// pages are
+     denied by the join's scheme rule). Type made-up text only. -->
+<style>
+  :root { color-scheme: light dark; --line: #8886; --muted: #888; }
+  body { font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; margin: 0; padding: 24px; max-width: 760px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.lead { margin: 0 0 20px; color: var(--muted); }
+  section { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin: 0 0 14px; }
+  .num { display: inline-block; min-width: 26px; height: 26px; line-height: 26px; text-align: center; border-radius: 13px;
+         background: #2463eb; color: #fff; font-weight: 600; margin-right: 8px; }
+  label { font-weight: 600; }
+  input, textarea, .editor { display: block; width: 100%; box-sizing: border-box; margin-top: 8px; font: inherit; padding: 8px 10px;
+         border: 1px solid var(--line); border-radius: 6px; background: transparent; color: inherit; }
+  textarea { min-height: 70px; }
+  .editor { min-height: 70px; }
+  button { margin-top: 8px; font: inherit; padding: 4px 10px; }
+  iframe { display: block; width: 100%; height: 96px; margin-top: 8px; border: 1px dashed var(--line); border-radius: 6px; }
+  .hint { color: var(--muted); font-size: 13px; margin-top: 6px; }
+</style>
+</head>
+<body>
+<h1>DayDream device test</h1>
+<p class="lead">For chrome-device-test only. Use made-up text. Nothing on this page is sent anywhere.</p>
+
+<section>
+  <span class="num">1</span><label for="plain-input">Plain input</label>
+  <input id="plain-input" type="text" autocomplete="off" placeholder="Type made-up words here">
+</section>
+
+<section>
+  <span class="num">2</span><label for="plain-textarea">Textarea</label>
+  <textarea id="plain-textarea" placeholder="Type made-up sentences here"></textarea>
+</section>
+
+<section>
+  <span class="num">3</span><span id="editor-label" style="font-weight:600">Rich-text editor</span>
+  <div id="rich-editor" class="editor" contenteditable="true" aria-labelledby="editor-label">Click here (contenteditable).</div>
+</section>
+
+<section>
+  <span class="num">4</span><label for="dummy-password">Dummy password</label>
+  <!-- DUMMY value for the local test only. It is not, and must never be, a real password. -->
+  <input id="dummy-password" type="password" autocomplete="off" value="dummy-not-a-real-password">
+  <button id="toggle-password" type="button">Show password</button>
+  <div class="hint">Dummy value only. The toggle switches the field between hidden and shown.</div>
+</section>
+
+<section>
+  <span class="num">5</span><label for="card-number">Card number</label>
+  <input id="card-number" name="cardnumber" type="text" inputmode="numeric" autocomplete="cc-number" placeholder="Made-up digits only">
+  <label for="card-cvc" style="display:block;margin-top:10px">Security code (CVC)</label>
+  <input id="card-cvc" name="cvc" type="text" inputmode="numeric" autocomplete="cc-csc" placeholder="CVC">
+</section>
+
+<section>
+  <span class="num">6</span><label for="otp">One-time code</label>
+  <input id="otp" name="otp" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit code">
+</section>
+
+<section>
+  <span class="num">7</span><label>Same-origin iframe</label>
+  <iframe id="frame-same" src="frame.html" title="Same-origin iframe"></iframe>
+</section>
+
+<section>
+  <span class="num">8</span><label>Cross-site iframe</label>
+  <iframe id="frame-cross" title="Cross-site iframe"></iframe>
+  <div class="hint" id="cross-hint"></div>
+</section>
+
+<section>
+  <span class="num">9</span><label for="term-input">Web terminal (xterm-like)</label>
+  <!-- Shaped like the hidden input xterm.js puts under a web terminal: a
+       textarea with class xterm-helper-textarea and aria-label "Terminal input".
+       Nothing here runs commands. -->
+  <textarea id="term-input" class="xterm-helper-textarea" aria-label="Terminal input" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+  <div class="hint">Made-up commands only. Nothing runs.</div>
+</section>
+
+<section>
+  <span class="num">10</span><label for="ask-before-leaving"><input id="ask-before-leaving" type="checkbox" style="display:inline;width:auto;margin:0 6px 0 0">Ask before leaving</label>
+  <div class="hint">For the Incognito closing step: when ticked, closing this window makes Chrome ask "Leave site?".</div>
+</section>
+
+<section>
+  <span class="num">11</span><label for="search-box">Search field (optional, not a guided step)</label>
+  <input id="search-box" type="search" placeholder="Search (made-up)">
+</section>
+
+<section>
+  <span class="num">12</span><span style="font-weight:600">Search box with suggestions</span>
+  <!-- fix/web-textbox: an editable combo box with no label, placeholder or name, like the search
+       boxes on X, Google or YouTube. -->
+  <input id="combo-search" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" list="combo-suggestions" autocomplete="off">
+  <datalist id="combo-suggestions"><option value="purple lamp"><option value="quiet hills"></datalist>
+</section>
+
+<section>
+  <span class="num">13</span><span style="font-weight:600">Hidden combo box</span>
+  <!-- fix/web-textbox: a password input with role=combobox and no label. Empty; never type a real password. -->
+  <input id="hidden-combo" type="password" role="combobox" aria-expanded="false" autocomplete="off">
+  <div class="hint">Empty. Click only; don't type.</div>
+</section>
+
+<script>
+  // Show/hide the dummy password.
+  document.getElementById('toggle-password').addEventListener('click', function () {
+    var f = document.getElementById('dummy-password');
+    var shown = f.type === 'text';
+    f.type = shown ? 'password' : 'text';
+    this.textContent = shown ? 'Show password' : 'Hide password';
+  });
+  // "Leave site?" on close, only while box 10 is ticked (the Incognito
+  // closing step). Chrome shows it only after a click on the page.
+  window.addEventListener('beforeunload', function (e) {
+    if (document.getElementById('ask-before-leaving').checked) { e.preventDefault(); e.returnValue = ''; }
+  });
+  // Cross-site frame: 127.0.0.1 and localhost are different sites, so Chrome
+  // puts this frame in its own process (an out-of-process iframe).
+  (function () {
+    var here = location.hostname, port = location.port || '8765';
+    var other = here === 'localhost' ? '127.0.0.1' : 'localhost';
+    var src = location.protocol === 'file:' ? 'frame.html' : 'http://' + other + ':' + port + '/frame.html';
+    document.getElementById('frame-cross').src = src;
+    document.getElementById('cross-hint').textContent =
+      location.protocol === 'file:' ? 'Opened as a file: serve it with serve.py instead.' : 'Loaded from ' + other + ' (a different site).';
+  })();
+</script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="1">
+  <title>DayDream</title>
+  <welcome file="Welcome.html"/>
+  <options customize="never" require-scripts="false"/>
+  <domains enable_anywhere="false" enable_currentUserHome="true" enable_localSystem="true"/>
+  <choices-outline><line choice="macmem"/></choices-outline>
+  <choice id="macmem" title="DayDream" visible="false"><pkg-ref id="local.macmem.acceptance"/></choice>
+  <pkg-ref id="local.macmem.acceptance" version="0.1.0" onConclusion="None">MacMem-component.pkg</pkg-ref>
+</installer-gui-script>

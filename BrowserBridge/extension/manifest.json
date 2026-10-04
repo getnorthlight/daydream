@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "DayDream Browser Bridge (not integrated)",
+  "version": "0.1.0",
+  "minimum_chrome_version": "106",
+  "incognito": "not_allowed",
+  "permissions": ["nativeMessaging", "scripting", "webNavigation"],
+  "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "background": {"service_worker": "background.js", "type": "module"},
+  "options_ui": {"page":"setup.html","open_in_tab":true},
+  "action": {"default_title": "Connect to an already configured DayDream receiver"},
+  "content_security_policy": {"extension_pages": "script-src 'self'; object-src 'none'"}
+}

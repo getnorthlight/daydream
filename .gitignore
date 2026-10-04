@@ -1,0 +1,72 @@
+# Third-party binaries fetched by the bootstrap scripts (Sparkle, Node).
+# Anchored to the repo root on purpose: git on macOS ignores case, so an
+# unanchored "Vendor/" also matches WriterBackend/Sources/CLlamaBridge/vendor/,
+# which holds llama.cpp headers the build needs and must stay tracked.
+/Vendor/
+
+# Build output
+.build/
+dist/
+DerivedData/
+*.dSYM/
+*.xcarchive/
+.swiftpm/
+xcuserdata/
+*.xcuserstate
+*.dylib
+# ...except the signed "On this Mac" runtime, committed on purpose (RELEASE.md section 7): every stage
+# copies it unchanged into the app, so it can't go missing again.
+!/packaging/WriterRuntime/*/*.dylib
+*.o
+*.a
+*.swiftmodule
+*.swiftdoc
+*.swiftsourceinfo
+*.abi.json
+__pycache__/
+*.pyc
+node_modules/
+
+# Release and packaging artifacts
+*.app/
+*.dmg
+*.pkg
+*.zip
+*.tar.gz
+*.tgz
+
+# Local models and model caches (the local writer model is ~2.7 GB)
+*.gguf
+*.safetensors
+
+# Local data
+*.sqlite*
+*.db
+*.log
+
+# Signing material and secrets. Keep these in the Keychain, never in the repo.
+*.p12
+*.p8
+*.key
+*.pem
+*.cer
+*.certSigningRequest
+*.mobileprovision
+*.provisionprofile
+*private_key*
+*private-key*
+.env
+.env.*
+release-config.json
+
+# Receipts written by local packaging and trial runs (contain local paths and hashes)
+*receipt.json
+
+# Editor and OS junk
+.DS_Store
+._*
+.AppleDouble
+.idea/
+.vscode/
+*.swp
+*~

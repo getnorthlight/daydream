@@ -1,0 +1,366 @@
+{
+ "E01": {
+  "title": "SyncEngine.swift in tallybird",
+  "bullets": [
+   {
+    "ids": [
+     "i1"
+    ],
+    "text": "Worked in SyncEngine.swift in the tallybird project in Zed."
+   }
+  ]
+ },
+ "E02": {
+  "title": "tallybird, ledgerline and Q4 roadmap",
+  "bullets": [
+   {
+    "ids": [
+     "i1",
+     "i2"
+    ],
+    "text": "Worked in SyncEngine.swift in Zed and a swift test terminal in Ghostty for tallybird."
+   },
+   {
+    "ids": [
+     "i3",
+     "i4"
+    ],
+    "text": "Then used README.md in Zed and a cargo build terminal in Ghostty for ledgerline."
+   },
+   {
+    "ids": [
+     "i5"
+    ],
+    "text": "Had the Q4 roadmap deck in use in Keynote."
+   }
+  ]
+ },
+ "E03": {
+  "title": "Reply to Priya",
+  "bullets": [
+   {
+    "ids": [
+     "i1"
+    ],
+    "text": "Drafted a reply in Mail thanking Priya for the iPad streak-reset repro steps."
+   },
+   {
+    "ids": [
+     "i2"
+    ],
+    "text": "The draft says offline check-ins overwrite newer ones and that a fix is coming in 2.3."
+   },
+   {
+    "ids": [
+     "i3"
+    ],
+    "text": "The draft adds that a TestFlight link will follow; sending isn't confirmed."
+   }
+  ]
+ },
+ "E04": {
+  "title": "Slack messages about PR 482",
+  "bullets": [
+   {
+    "ids": [
+     "i1"
+    ],
+    "text": "Wrote a Slack message asking for a review of PR 482, the streak merge fix."
+   },
+   {
+    "ids": [
+     "i2"
+    ],
+    "text": "Slack confirmed that one message was sent."
+   },
+   {
+    "ids": [
+     "i3"
+    ],
+    "text": "Typed a lunch question too; a message appeared, but sending isn't confirmed."
+   }
+  ]
+ },
+ "E05": {
+  "title": "Returns and refunds policy",
+  "bullets": [
+   {
+    "ids": [
+     "i1",
+     "i2"
+    ],
+    "text": "Drafted a returns policy in Pages: unused items within 30 days, refunds to the original payment method."
+   },
+   {
+    "ids": [
+     "i3"
+    ],
+    "text": "Added that defective items ship back free."
+   }
+  ]
+ },
+ "E06": {
+  "title": "StreakMergeTests and CI",
+  "bullets": [
+   {
+    "ids": [
+     "i1"
+    ],
+    "text": "Worked in the StreakMergeTests terminal in Ghostty; its output isn't captured."
+   },
+   {
+    "ids": [
+     "i2"
+    ],
+    "text": "Had an email open in Mail whose subject says all checks passed on tallybird main #1287."
+   },
+   {
+    "ids": [
+     "i3"
+    ],
+    "text": "Claude reported that all 42 StreakMergeTests pass and the merge bug is fixed; not verified."
+   },
+   {
+    "ids": [
+     "i4"
+    ],
+    "text": "Drafted a Slack message saying local tests pass and you'll merge once lunch is over; sending isn't confirmed."
+   }
+  ]
+ },
+ "E07": {
+  "title": "Zoom meeting and design sync notes",
+  "bullets": [
+   {
+    "ids": [
+     "i3"
+    ],
+    "text": "Typed design sync notes in Notes: Maya has the onboarding copy and Leo the widget performance."
+   },
+   {
+    "ids": [
+     "i1",
+     "i2"
+    ],
+    "text": "Had Calendar and a Zoom Meeting window open."
+   }
+  ]
+ },
+ "E08": {
+  "title": "Onboarding v3 in Figma",
+  "bullets": [
+   {
+    "ids": [
+     "i1"
+    ],
+    "text": "Worked in the Onboarding v3 file in Figma."
+   },
+   {
+    "ids": [
+     "i2",
+     "i3"
+    ],
+    "text": "Had www.githubstatus.com open in Chrome and Nils Frahm – Says open in Spotify."
+   }
+  ]
+ },
+ "E09": {
+  "title": "Tallybird 2.3 release checklist",
+  "bullets": [
+   {
+    "ids": [
+     "i3"
+    ],
+    "text": "Worked in the Tallybird 2.3 release checklist in Pages."
+   },
+   {
+    "ids": [
+     "i1"
+    ],
+    "text": "Had an email open in Mail whose title is text addressed to AI tools."
+   },
+   {
+    "ids": [
+     "i2"
+    ],
+    "text": "Typed text addressed to AI tools in Notes."
+   }
+  ]
+ },
+ "E10": {
+  "title": "Personal notes",
+  "bullets": [
+   {
+    "ids": [
+     "i2",
+     "i3",
+     "i4"
+    ],
+    "text": "Typed a personal finance note and a personal health note in Notes."
+   },
+   {
+    "ids": [
+     "i1"
+    ],
+    "text": "Worked in a Ghostty window with a hidden title."
+   }
+  ]
+ },
+ "E11": {
+  "title": "Weekly planning in Mail",
+  "bullets": [
+   {
+    "ids": [
+     "i1"
+    ],
+    "text": "Had the Weekly planning email open in Mail."
+   }
+  ]
+ },
+ "E12": {
+  "title": "2.3 TestFlight to-do",
+  "bullets": [
+   {
+    "ids": [
+     "i1"
+    ],
+    "text": "Typed a to-do in Notes: put the 2.3 build on TestFlight tomorrow."
+   }
+  ]
+ },
+ "E13": {
+  "title": "Tallybird 2.3 release notes",
+  "bullets": [
+   {
+    "ids": [
+     "i1",
+     "i2",
+     "i3",
+     "i4"
+    ],
+    "text": "Drafted notes for the Tallybird 2.3 release in Notes: streaks stay in sync, a faster Today widget and Focus-aware reminders."
+   },
+   {
+    "ids": [
+     "i5",
+     "i6",
+     "i7"
+    ],
+    "text": "The draft adds a known widget issue, an iOS 17.6 requirement and thanks to beta testers."
+   },
+   {
+    "ids": [
+     "i8",
+     "i9",
+     "i10",
+     "i11"
+    ],
+    "text": "It also covers sync problems, privacy and what's next; the draft says Maya should check the wording first."
+   }
+  ]
+ },
+ "E14": {
+  "title": "Informe trimestral, LINE and Projekt Möwe",
+  "bullets": [
+   {
+    "ids": [
+     "i1",
+     "i2"
+    ],
+    "text": "Worked in the Informe trimestral Q3 report in Pages, typing that sales grew 12 % over the last quarter."
+   },
+   {
+    "ids": [
+     "i3",
+     "i4"
+    ],
+    "text": "Wrote a LINE message in 佐藤さんとのトーク asking to start tomorrow's meeting at 10; sending isn't confirmed."
+   },
+   {
+    "ids": [
+     "i5"
+    ],
+    "text": "Used the Besprechungsnotizen note for Projekt Möwe in Notes."
+   }
+  ]
+ },
+ "E15": {
+  "title": "Tallybird sync and 2.3 release prep",
+  "bullets": [
+   {
+    "ids": [
+     "i2",
+     "i3",
+     "i11"
+    ],
+    "text": "Worked in SyncEngine.swift in Zed with a StreakSyncTests terminal in Ghostty, and had SyncQueue.swift open."
+   },
+   {
+    "ids": [
+     "i4",
+     "i5",
+     "i6",
+     "i7"
+    ],
+    "text": "Drafted notes for the Tallybird 2.3 release in Notes and worked on the App Store listing and the 2.3 design review."
+   },
+   {
+    "ids": [
+     "i1",
+     "i9",
+     "i10"
+    ],
+    "text": "Drafted a reply in Mail on the streak sync bug thread, with the inbox open; sending isn't confirmed."
+   },
+   {
+    "ids": [
+     "i8",
+     "i12",
+     "i13"
+    ],
+    "text": "Typed to-dos for tomorrow: move the 2.3 build to TestFlight and look at the onboarding copy with Maya; Calendar was open."
+   }
+  ]
+ },
+ "E16": {
+  "title": "StreakMerge.swift in tallybird",
+  "bullets": [
+   {
+    "ids": [
+     "i1"
+    ],
+    "text": "Worked in StreakMerge.swift in the tallybird project in Zed."
+   },
+   {
+    "ids": [
+     "i2"
+    ],
+    "text": "You noted that you were pairing with Maya over FaceTime on the merge logic."
+   }
+  ]
+ },
+ "E17": {
+  "title": "SyncQueue refactor request",
+  "bullets": [
+   {
+    "ids": [
+     "i1"
+    ],
+    "text": "Asked Claude to refactor SyncQueue so writes are batched every 2 seconds."
+   },
+   {
+    "ids": [
+     "i2",
+     "i4"
+    ],
+    "text": "Claude reported refactoring SyncQueue, that all tests pass and that it updated the README; not verified."
+   },
+   {
+    "ids": [
+     "i3"
+    ],
+    "text": "You plan to ship 2.3 on Monday after one more TestFlight round."
+   }
+  ]
+ }
+}

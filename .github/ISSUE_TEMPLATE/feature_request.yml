@@ -1,0 +1,31 @@
+name: Feature request
+description: Suggest an idea or an improvement for DayDream.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea. Please describe it with made-up examples, never with your own captured history, window titles or screenshots of your timeline.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The problem or need behind the idea.
+      placeholder: "I'd like to find everything I worked on for one project last week."
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help?
+      description: How you imagine it working. Rough is fine.
+    validations:
+      required: true
+
+  - type: textarea
+    id: privacy
+    attributes:
+      label: Privacy impact
+      description: Would this record anything new, keep data longer, or send anything off your Mac? If so, how should people opt in?

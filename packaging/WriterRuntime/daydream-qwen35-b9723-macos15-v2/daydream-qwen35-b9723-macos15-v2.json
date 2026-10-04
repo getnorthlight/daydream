@@ -1,0 +1,58 @@
+{
+  "certificateSHA256": "4b87cd4e80280eb7a2fc8dee7d50bf5fb534f6f73f172343bc16dcfe36a1a9af",
+  "distributionID": "daydream-qwen35-b9723-macos15-v2",
+  "files": [
+    {
+      "name": "libggml-base.0.dylib",
+      "signedBytes": 724240,
+      "signedSHA256": "81fa83030efdff5f9b2259e12766bfcc568dbda1d51de60cabd97b1afc4dad56",
+      "signingIdentifier": "com.getnorthlight.daydream.writer.libggml-base.0",
+      "upstreamSHA256": "6db3ed93964340d9319f9f19ad196cf914b6886fcbc09d7776b2fb21ccc5623b"
+    },
+    {
+      "name": "libggml-blas.0.dylib",
+      "signedBytes": 76752,
+      "signedSHA256": "fefea93eefa671cdfcb0fe40cb97ac96bf486cef8b32346f50ac41ba8f6c835e",
+      "signingIdentifier": "com.getnorthlight.daydream.writer.libggml-blas.0",
+      "upstreamSHA256": "4a694d43d1babd66ca473335120a3221b422f8924a4e86ec8fc0e8939d56d031"
+    },
+    {
+      "name": "libggml-cpu.0.dylib",
+      "signedBytes": 930416,
+      "signedSHA256": "bb4d8ae23cc2e7056e9ee4483383f5e6b048db1b07f6860f221d1482f51d5a3c",
+      "signingIdentifier": "com.getnorthlight.daydream.writer.libggml-cpu.0",
+      "upstreamSHA256": "21dd443b21e656a8a041e2cd66174f67da454fa42977bfd106c0d1a6ee79f0de"
+    },
+    {
+      "name": "libggml-metal.0.dylib",
+      "signedBytes": 846016,
+      "signedSHA256": "6f670ff98e495ba22793b8587b8ca318bc1f0fc502d6c118f1600de681d3969c",
+      "signingIdentifier": "com.getnorthlight.daydream.writer.libggml-metal.0",
+      "upstreamSHA256": "32a8f0f4cd9a145aa040402c5b22968c984a17930cbafd7de471067fece81b72"
+    },
+    {
+      "name": "libggml-rpc.0.dylib",
+      "signedBytes": 150960,
+      "signedSHA256": "fd75c1bb482a08f3727ca9e6681935c0209c32385efe8d22ddb233694a3e2a1c",
+      "signingIdentifier": "com.getnorthlight.daydream.writer.libggml-rpc.0",
+      "upstreamSHA256": "37236a0aa3e46cc577ed19c41c3f10645a1ad3d130f4eae234162b516ae2912f"
+    },
+    {
+      "name": "libggml.0.dylib",
+      "signedBytes": 77856,
+      "signedSHA256": "8bb5da2701cb4ec520df970c57f12a6e529ec2aeebfb8e5e56ad1cd851dad308",
+      "signingIdentifier": "com.getnorthlight.daydream.writer.libggml.0",
+      "upstreamSHA256": "b8742eaf98f2a33c7c7f953b7d6ace16e0ef47438b94650d7a87d4b86da1dde7"
+    },
+    {
+      "name": "libllama.0.dylib",
+      "signedBytes": 2473392,
+      "signedSHA256": "ae5cecc986635bcd11d57dc8fa655eca06ee6d669e2a45c5ededa7b1c1c9b706",
+      "signingIdentifier": "com.getnorthlight.daydream.writer.libllama.0",
+      "upstreamSHA256": "ae33ee5d7acc95a58fa9bad0fc908db42059a8943c29e344b3fe70fd0532902d"
+    }
+  ],
+  "schema": "daydream-signed-runtime/macos15-v2",
+  "teamID": "L76C3ZC66J",
+  "upstreamArchiveSHA256": "714bdf726e3c9c6c81f346dc87c1188c8c4e5ae4bdb93a1ec690f4a73252672d"
+}

@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "enabledByDefault": false,
+  "runtime": {"kind": "native-swift", "minimumMacOS": "13", "ambientPATHFallback": false},
+  "requiredFiles": ["mac-mem-backup"],
+  "sourceTargets": {"BackupRestore": "BackupRestore/Native", "MacMemBackupWorker": "BackupRestore/Worker"},
+  "requiredCoreAPIs": ["exportCanonicalSnapshot", "inspectCanonicalSnapshot", "canonicalBackupAsset", "reconcileCanonicalSnapshot", "prepareCanonicalRestore", "confirmCanonicalRestore", "cancelCanonicalRestore"],
+  "adoptionEnabled": "explicit-confirmation-only",
+  "encryption": false,
+  "packagingOwner": "App interface",
+  "requirements": ["App interface adds root targets and signs native helper with app", "No Python or Node required by BackupRestore", "One BackupWorker supervisor per canonical store; trusted app pins selected manifest hash and prepared response", "Run worker off UI thread with 30-second deadline and cancellation", "Only explicit confirmation invokes core transactional merge; recording remains OFF", "No installer or service activation is supplied by this component"]
+}

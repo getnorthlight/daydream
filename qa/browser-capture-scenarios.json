@@ -1,0 +1,109 @@
+{
+  "revision": 1,
+  "cases": [
+    {
+      "id": "x-search-v1",
+      "text": "chess club service event ideas",
+      "origin": "https://x.com",
+      "surface": "search",
+      "fields": [
+        "search"
+      ],
+      "implementation": "implemented-fixed-input-capture",
+      "actualRun": "not-run"
+    },
+    {
+      "id": "x-post-draft-v1",
+      "text": "thanks for the chess club support",
+      "origin": "https://x.com",
+      "surface": "social",
+      "fields": [
+        "message",
+        "textArea"
+      ],
+      "implementation": "implemented-fixed-input-capture",
+      "actualRun": "not-run"
+    },
+    {
+      "id": "chatgpt-prompt-draft-v1",
+      "text": "help plan my morning study time",
+      "origin": "https://chatgpt.com",
+      "surface": "ai",
+      "fields": [
+        "message",
+        "textArea",
+        "body"
+      ],
+      "implementation": "implemented-fixed-input-capture",
+      "actualRun": "not-run"
+    },
+    {
+      "id": "reddit-search-v1",
+      "text": "chess club service event ideas",
+      "origin": "https://www.reddit.com",
+      "surface": "search",
+      "fields": [
+        "search"
+      ],
+      "implementation": "implemented-fixed-input-capture",
+      "actualRun": "not-run"
+    },
+    {
+      "id": "reddit-post-title-v1",
+      "text": "chess club service event",
+      "origin": "https://www.reddit.com",
+      "surface": "social",
+      "fields": [
+        "oneLine",
+        "textArea"
+      ],
+      "implementation": "implemented-fixed-input-capture",
+      "actualRun": "not-run"
+    },
+    {
+      "id": "x-post-interrupted-v1",
+      "text": "thanks for the chess club support",
+      "origin": "https://x.com",
+      "surface": "social",
+      "fields": [
+        "message",
+        "textArea"
+      ],
+      "implementation": "implemented-fixed-input-capture",
+      "actualRun": "not-run",
+      "pauseAfterKey": 15,
+      "pauseSeconds": 4.5,
+      "drainBeforePause": false,
+      "expectedParts": [
+        "thanks for the ",
+        "chess club support"
+      ],
+      "contextSwitchVerified": false,
+      "naturalIdleSealRequired": false,
+      "savedDuringRealPauseRequired": true
+    },
+    {
+      "id": "chatgpt-prompt-interrupted-v1",
+      "text": "help plan my morning study time",
+      "origin": "https://chatgpt.com",
+      "surface": "ai",
+      "fields": [
+        "message",
+        "textArea",
+        "body"
+      ],
+      "implementation": "implemented-fixed-input-capture",
+      "actualRun": "not-run",
+      "pauseAfterKey": 13,
+      "pauseSeconds": 4.5,
+      "drainBeforePause": false,
+      "expectedParts": [
+        "help plan my ",
+        "morning study time"
+      ],
+      "contextSwitchVerified": false,
+      "naturalIdleSealRequired": false,
+      "savedDuringRealPauseRequired": true
+    }
+  ]
+}

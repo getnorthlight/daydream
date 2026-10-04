@@ -1,0 +1,13 @@
+#!/bin/bash
+# Shim: cap every build and remove machine-specific source/debug roots.
+# The product string scan must check connection literals, not compile-root metadata.
+if [ "${1:-}" = build ]; then
+  shift
+  maps=()
+  for root in "${SRC:-}" "${WORKDIR:-}"; do
+    if [ -n "$root" ]; then maps+=(-Xswiftc -debug-prefix-map -Xswiftc "$root=." -Xswiftc -file-prefix-map -Xswiftc "$root=." -Xcc "-fdebug-prefix-map=$root=."); fi
+  done
+  case " $* " in *" --jobs "*|*" -j "*) exec /usr/bin/swift build "$@" "${maps[@]}";; esac
+  exec /usr/bin/swift build --jobs 3 "$@" "${maps[@]}"
+fi
+exec /usr/bin/swift "$@"

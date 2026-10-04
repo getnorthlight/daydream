@@ -1,0 +1,35 @@
+Typesense 30.2 (DayDream.app/Contents/Helpers/typesense-server)
+Copyright (C) Typesense, Inc. and the Typesense contributors.
+
+DayDream includes Typesense, a separate search server program that DayDream
+starts and talks to only over a local loopback connection. Typesense is free
+software: you can redistribute it and/or modify it under the terms of the
+GNU General Public License as published by the Free Software Foundation,
+version 3. The full license text is in Typesense-LICENSE.txt next to this file.
+
+Typesense is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
+A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+This copy is the official Typesense 30.2 darwin-arm64 build, unmodified.
+DayDream did not patch or rebuild it. The only change is that its ad-hoc code
+signature was replaced with DayDream's Developer ID signature, so that macOS
+runs it inside the notarized app; the program's code is unchanged.
+  Vendor archive: https://dl.typesense.org/releases/30.2/typesense-server-30.2-darwin-arm64.tar.gz
+    sha256 7d8d6d0c33930ad20ea23dd184250547b16615944be891b2078e8a075152fa7e
+  Server before re-signing: sha256 086d498fbf0afb45091f4e28b50e803a3633daac506388a5f71e5ed90407c91f
+
+Where the source is (Complete Corresponding Source, GPLv3 section 6(d)):
+  typesense-30.2-complete-source.tar.gz
+    sha256 bf6a5eaa126c42dde00fc0a3e9256485e7b524683ff6989464f3ccb43aac4ae5
+  It is attached to every DayDream release, next to the DMG, at
+  https://github.com/getnorthlight/daydream/releases
+  It holds Typesense tag v30.2 (commit d45d46baf3996d1de8bf96a87f375cfb43691560),
+  the source of every library its Bazel WORKSPACE builds into the server at its
+  pinned version, the WORKSPACE's patches and build scripts, and a README with
+  the build command and every dependency's version and license.
+  Upstream: https://github.com/typesense/typesense/tree/v30.2
+
+Typesense's build pins the snowball stemmer library to a branch rather than a
+commit. The kit names the best-determined snowball commit and also contains
+snowball's full history; its README explains this.

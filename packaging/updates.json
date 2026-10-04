@@ -1,0 +1,8 @@
+{
+  "_comment": "Sparkle update settings. scripts/developer-id-release.py stage writes them into the release app's Info.plist. The feed is https://<site>/appcast.xml on DayDream's website. Update archives are assets of a GitHub release of owner/repository, or files on the site or one of its subdomains. A release checks once a day, downloads an update quietly and installs it when DayDream quits or when the person chooses Restart to Update. public_key is the base64 public half of the EdDSA update key; the owner made it once (RELEASE.md, 'Owner: make the update key') and the private half stays in ~/DayDream-keys/sparkle-ed25519.key, never in this repo or the Keychain. Until public_key is set, a release stage refuses.",
+  "owner": "getnorthlight",
+  "repository": "daydream",
+  "site": "getdaydream.app",
+  "feed": "https://getdaydream.app/appcast.xml",
+  "public_key": "yJCzogP0s2x3YaR3CVuYJ+WCauu5m5ygHLK/svx3AQc="
+}

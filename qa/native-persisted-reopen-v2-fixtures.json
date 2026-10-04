@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "caseID": "native-owned-persisted-reopen-v2",
+  "texts": [
+    "I started a chess club note",
+    "Write the morning plan",
+    " about the vote and support"
+  ],
+  "visits": [
+    "A",
+    "B",
+    "A"
+  ],
+  "controls": [
+    "owned-save-close-reopen",
+    "fixed-command-down-arrow-before-A-resume"
+  ],
+  "actualSleep": false,
+  "externalSends": false,
+  "unimplemented": [
+    "fixture-app-relaunch",
+    "simulated-suspension",
+    "physical-system-sleep",
+    "cross-application-switch"
+  ],
+  "coverage": [
+    "owned-disk-backed-document-reopen"
+  ],
+  "crossApplicationRequired": false,
+  "oracle": "fixed Save command issued; exact protected disk bytes; actual owned window invalidated; fresh exact document rebind; bytes unchanged",
+  "editedStateRequired": false,
+  "saveCommandCausalityVerified": false,
+  "powerLossDurabilityVerified": false,
+  "controlKeyPairs": 7,
+  "caretPosition": {
+    "visit": 2,
+    "document": "A",
+    "location": 26,
+    "length": 0,
+    "required": true
+  },
+  "shortcutPrimarySource": "https://support.apple.com/en-us/102650"
+}

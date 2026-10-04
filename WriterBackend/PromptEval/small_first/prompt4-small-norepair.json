@@ -1,0 +1,9 @@
+{
+ "name": "prompt4-small-norepair",
+ "description": "A/B arm: prompt4-small first pass only (no repair turn).",
+ "instructionFile": "prompt4-small.txt",
+ "contract": "view1-v6",
+ "prefill": true,
+ "maxTokens": 512,
+ "repairTurn": false
+}

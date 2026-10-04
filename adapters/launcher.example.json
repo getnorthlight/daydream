@@ -1,0 +1,6 @@
+{
+  "label": "REPLACE.WITH.VERIFIED.LABEL",
+  "plist": "/absolute/path/to/verified/collector.plist",
+  "executable": "/absolute/path/from/that/manifest",
+  "historyHome": "/absolute/path/to/preserved/legacy/history"
+}

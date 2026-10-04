@@ -1,0 +1,29 @@
+{
+  "architecture": "arm64",
+  "archiveSHA256": "7d8d6d0c33930ad20ea23dd184250547b16615944be891b2078e8a075152fa7e",
+  "completeCorrespondingSource": true,
+  "correspondingSource": {
+    "bytes": 624901777,
+    "delivery": "GPLv3 6(d): attached to each GitHub release next to the DMG",
+    "name": "typesense-30.2-complete-source.tar.gz",
+    "sha256": "bf6a5eaa126c42dde00fc0a3e9256485e7b524683ff6989464f3ccb43aac4ae5",
+    "snowballCommit": "f34fe0eebaaa2032fc806b5ff64f03f30998d86a",
+    "snowballDetermination": "best-determination"
+  },
+  "inputServerSHA256": "086d498fbf0afb45091f4e28b50e803a3633daac506388a5f71e5ed90407c91f",
+  "minimumOS": "13.1",
+  "modified": false,
+  "publicDistribution": true,
+  "publicDistributionApproval": {
+    "by": "owner",
+    "date": "2026-10-03",
+    "statement": "Ship typesense."
+  },
+  "runtimeURL": "https://dl.typesense.org/releases/30.2/typesense-server-30.2-darwin-arm64.tar.gz",
+  "runtimeVersion": "30.2",
+  "schema": "daydream-local-search-payload/v1",
+  "scope": "public-unmodified-vendor-binary",
+  "sourceCommit": "d45d46baf3996d1de8bf96a87f375cfb43691560",
+  "sourceSHA256": "98ce13b5f05b68ff280b2e4b463c9a0f3be303d2c83a1e18ffbddf90f2b19ad1",
+  "sourceURL": "https://codeload.github.com/typesense/typesense/tar.gz/refs/tags/v30.2"
+}

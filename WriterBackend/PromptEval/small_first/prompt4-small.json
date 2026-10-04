@@ -1,0 +1,9 @@
+{
+ "name": "prompt4-small",
+ "description": "Small-model-first (recommended): numbered ITEMS view (view1), '{\"title\":\"' prefill, 2 tiny examples, validator6 (grouped bullets, per-bullet drop, coverage repair, derived title fallback), one fixed-text repair turn when the note fails, 512 output tokens. Needs the app changes in the design; not app-faithful until then.",
+ "instructionFile": "prompt4-small.txt",
+ "contract": "view1-v6",
+ "prefill": true,
+ "maxTokens": 512,
+ "repairTurn": true
+}

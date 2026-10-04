@@ -1,0 +1,148 @@
+{
+  "source": "De-identified fixture derived from observed interval/routing relationships; not a replay of user records. IDs and counts are anonymous tokens.",
+  "testEpoch": "2001-01-01T00:00:00Z",
+  "members": [
+    {
+      "id": "derived-member-01",
+      "startOffsetSeconds": 35769.828,
+      "endOffsetSeconds": 36393.828,
+      "channel": "messages",
+      "actionCount": 1,
+      "sites": [],
+      "bundles": [
+        "com.apple.MobileSMS"
+      ]
+    },
+    {
+      "id": "derived-member-02",
+      "startOffsetSeconds": 35307.828,
+      "endOffsetSeconds": 35768.828,
+      "channel": "messages",
+      "actionCount": 2,
+      "sites": [],
+      "bundles": [
+        "com.apple.MobileSMS"
+      ]
+    },
+    {
+      "id": "derived-member-03",
+      "startOffsetSeconds": 35303.828,
+      "endOffsetSeconds": 35303.828,
+      "channel": "messages",
+      "actionCount": 3,
+      "sites": [],
+      "bundles": [
+        "com.apple.MobileSMS"
+      ]
+    },
+    {
+      "id": "derived-member-04",
+      "startOffsetSeconds": 30781.828,
+      "endOffsetSeconds": 30781.828,
+      "channel": "messages",
+      "actionCount": 4,
+      "sites": [],
+      "bundles": [
+        "com.apple.MobileSMS"
+      ]
+    },
+    {
+      "id": "derived-member-05",
+      "startOffsetSeconds": 30749.828,
+      "endOffsetSeconds": 30780.828,
+      "channel": "messages",
+      "actionCount": 5,
+      "sites": [],
+      "bundles": [
+        "com.apple.MobileSMS"
+      ]
+    },
+    {
+      "id": "derived-member-06",
+      "startOffsetSeconds": 30744.828,
+      "endOffsetSeconds": 30744.828,
+      "channel": "messages",
+      "actionCount": 6,
+      "sites": [],
+      "bundles": [
+        "com.apple.MobileSMS"
+      ]
+    },
+    {
+      "id": "derived-member-07",
+      "startOffsetSeconds": 30744.828,
+      "endOffsetSeconds": 30744.828,
+      "channel": "messages",
+      "actionCount": 7,
+      "sites": [],
+      "bundles": [
+        "com.apple.MobileSMS"
+      ]
+    },
+    {
+      "id": "derived-member-08",
+      "startOffsetSeconds": 1578.722,
+      "endOffsetSeconds": 1578.722,
+      "channel": "x",
+      "actionCount": 8,
+      "sites": [
+        "x.com"
+      ],
+      "bundles": [
+        "com.google.Chrome"
+      ]
+    },
+    {
+      "id": "derived-member-09",
+      "startOffsetSeconds": 112.933,
+      "endOffsetSeconds": 242.035,
+      "channel": "instagram",
+      "actionCount": 9,
+      "sites": [
+        "www.instagram.com"
+      ],
+      "bundles": [
+        "com.google.Chrome"
+      ]
+    },
+    {
+      "id": "derived-member-10",
+      "startOffsetSeconds": 109.815,
+      "endOffsetSeconds": 109.815,
+      "channel": "instagram",
+      "actionCount": 10,
+      "sites": [
+        "www.instagram.com"
+      ],
+      "bundles": [
+        "com.google.Chrome"
+      ]
+    },
+    {
+      "id": "derived-member-11",
+      "startOffsetSeconds": 16.913,
+      "endOffsetSeconds": 16.913,
+      "channel": "x",
+      "actionCount": 11,
+      "sites": [
+        "x.com"
+      ],
+      "bundles": [
+        "com.google.Chrome"
+      ]
+    },
+    {
+      "id": "derived-member-12",
+      "startOffsetSeconds": 0.0,
+      "endOffsetSeconds": 2670.1,
+      "channel": "x",
+      "actionCount": 12,
+      "sites": [
+        "x.com"
+      ],
+      "bundles": [
+        "com.google.Chrome"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "source": "De-identified fixture derived from observed X-title and embedded-site patterns. All author and title tokens invented; offsets mechanically translated.",
+  "testEpoch": "2001-01-01T00:00:00Z",
+  "actions": [
+    {
+      "id": "derived-page-01",
+      "fixtureOffsetSeconds": 0.0,
+      "kind": "window.changed",
+      "app": "Google Chrome",
+      "site": "x.com",
+      "title": "Example Author on X: \"A paper lantern beside the garden gate marks the start of this fictional sample sentence, which continues across a long title to exercise a bounded attributed excerpt without copying any observed post words.\" / X",
+      "description": "Observed page surface; no reading, typing or publication established.",
+      "state": "observed",
+      "revision": "fixture-policy",
+      "typing": "on"
+    },
+    {
+      "id": "derived-page-02",
+      "fixtureOffsetSeconds": 1561.809,
+      "kind": "window.changed",
+      "app": "Google Chrome",
+      "site": "x.com",
+      "title": "Sample Writer on X: \"The fictional sample describes a blue ceramic cup beside a small window, with another invented sentence that extends beyond the excerpt boundary for a clean truncation check.\" / X",
+      "description": "Observed page surface; no reading, typing or publication established.",
+      "state": "observed",
+      "revision": "fixture-policy",
+      "typing": "on"
+    },
+    {
+      "id": "derived-page-03",
+      "fixtureOffsetSeconds": 546.915,
+      "kind": "window.changed",
+      "app": "ChatGPT",
+      "site": "chrome.com",
+      "title": "chrome.com",
+      "description": "Observed page surface; no reading, typing or publication established.",
+      "state": "observed",
+      "revision": "fixture-policy",
+      "typing": "on"
+    },
+    {
+      "id": "derived-page-04",
+      "fixtureOffsetSeconds": 546.915,
+      "kind": "window.changed",
+      "app": "ChatGPT",
+      "site": "google.com",
+      "title": "google.com/chrome",
+      "description": "Observed page surface; no reading, typing or publication established.",
+      "state": "observed",
+      "revision": "fixture-policy",
+      "typing": "on"
+    }
+  ]
+}

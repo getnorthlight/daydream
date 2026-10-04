@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: "Read first: never paste your captured history"
+    url: https://github.com/getnorthlight/daydream/blob/main/CONTRIBUTING.md#never-share-captured-history
+    about: >-
+      Issues are public and copied permanently. NEVER paste captured history, window titles,
+      web addresses, typed text, database or backup files, or screenshots of your timeline
+      into an issue. Use made-up examples or demo data instead.
+  - name: Report a security vulnerability
+    url: https://github.com/getnorthlight/daydream/security/advisories/new
+    about: Report security problems privately here, not in a public issue.
+  - name: Questions and ideas
+    url: https://github.com/getnorthlight/daydream/discussions
+    about: Ask a question or talk about an idea. Never paste your captured history there either.

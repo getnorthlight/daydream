@@ -1,0 +1,11 @@
+{
+ "name": "TEMPLATE-grouped",
+ "disabled": true,
+ "description": "Copy to a new file, write the instruction, drop 'disabled'. contract 'grouped' scores merged bullets with the PROPOSED validator in eval_writer.py (validate_grouped); it is not what the app enforces today. presentation keys change the evidence JSON and therefore need matching app changes: idAlias (A01.. instead of native-<UUID>-<n> IDs), friendlyAppNames (Mail instead of com.apple.mail), omitFields (e.g. [\"revision\"]). jsonSchema constrains decoding through llama.cpp and is not app-faithful unless the bridge adds a grammar sampler.",
+ "instruction": "REPLACE WITH THE CANDIDATE INSTRUCTION",
+ "contract": "grouped",
+ "maxBullets": 5,
+ "coverage": "all",
+ "presentation": {"idAlias": true, "friendlyAppNames": true, "omitFields": ["revision"]},
+ "maxTokens": 1024
+}

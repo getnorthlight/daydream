@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "DayDream Browser Metadata",
+  "version": "0.0.0",
+  "description": "Metadata-only integration source. Requires reviewed native enrollment and recording consent.",
+  "permissions": ["nativeMessaging", "scripting", "webNavigation"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "incognito": "not_allowed",
+  "background": {"service_worker": "safari-background.js", "type": "module"},
+  "options_ui": {"page":"setup.html","open_in_tab":true},
+  "action": {"default_title": "Connect DayDream"}
+}

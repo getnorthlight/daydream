@@ -1,0 +1,67 @@
+DAYDREAM CHROME TEST - READ ME FIRST
+
+WHAT IT IS
+A one-time test on this MacBook. It checks whether DayDream can tell which
+Chrome window and which box you are typing in, from outside Chrome and
+without an extension. It uses a separate, empty "throwaway" Chrome and a
+test page that only this Mac can see. It takes about 50 minutes.
+
+SAFETY RULES
+- Type made-up words only, for example: purple lamp sings over quiet hills.
+- The only password you type is the dummy one already on the test page.
+  Never type a real password, card number or code.
+- Quit DayDream (menu bar icon > Quit) and your own Chrome (Cmd+Q) first.
+  The script waits until both have quit. It never touches your own Chrome.
+- Don't sign in to Google in the test Chrome.
+
+HOW TO START
+1. Open Terminal: press Cmd+Space, type Terminal, press Return.
+2. Paste this line and press Return:
+
+   bash "/Volumes/DayDream Chrome Test/run.sh"
+
+   If it says "No such file": type bash and a space, drag run.sh from the
+   "DayDream Chrome Test" window into Terminal, then press Return.
+3. Follow the steps on screen. Turn the sound up: Tink means "go",
+   Glass means "done".
+
+macOS will ask for two permissions for Terminal (Accessibility and
+"control Google Chrome"); the script shows you where to click. It may also
+ask whether Terminal can use files on a removable volume (this disk image):
+click Allow.
+
+You can stop at any time with Ctrl+C and run the same line again later.
+The script cleans up after itself: it closes the test Chrome, deletes its
+throwaway profile, stops the test page, and tells you which permissions to
+switch off again.
+
+WHAT TO SEND BACK
+At the end a Finder window shows one file, chrome-device-test-report.json,
+in your home folder (the folder with your name). Attach that one file to
+a GitHub issue. It holds no typed text, no window titles and no full web
+addresses: only pass/fail results, timings and short site names like
+http://127.0.0.1:8765.
+
+IF SOMETHING GOES WRONG
+- Terminal says "Operation not permitted": macOS is blocking Terminal from
+  this disk image. Open System Settings > Privacy & Security > Files &
+  Folders, click Terminal, switch on "Removable Volumes", then paste the
+  line again. (Switch it off again after the test.)
+- "Chrome never came to the front": after pressing Return in Terminal,
+  click the test Chrome window within 45 seconds.
+- Box 8 on the test page shows an error: at step 12, type s and press
+  Return to skip that step, and mention it when you send the report.
+- Step 23 closed the window without asking "Leave site?": answer n. Chrome
+  asks only after a click on the page. Later, run the Incognito steps again
+  (see the last point).
+- F11 in the results says NOT RUN: the two windows did not sit exactly on
+  top of each other. Use Window > Zoom in both windows, not full screen.
+- The results say G4 failed: run the test again with --settle 5 at the end:
+    bash "/Volumes/DayDream Chrome Test/run.sh" --settle 5
+- To run some steps again, add --only and the step names, for example the
+  three Incognito steps:
+    bash "/Volumes/DayDream Chrome Test/run.sh" --only incognito-race,incognito-background,incognito-closing
+  Steps that need an earlier step's windows get that step added for you.
+  Not sure which steps? Send the report: Claude will tell you.
+- Anything else: copy the last lines from Terminal into your chat with
+  Claude.

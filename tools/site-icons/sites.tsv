@@ -1,0 +1,183 @@
+# icon	official page whose declared icon is bundled	[optional direct icon URL when the page blocks scripted requests]
+youtube	https://www.youtube.com/
+youtube-music	https://music.youtube.com/
+google	https://www.google.com/
+gmail	https://mail.google.com/	https://ssl.gstatic.com/images/branding/product/2x/gmail_2020q4_48dp.png
+google-docs	https://docs.google.com/document/	https://ssl.gstatic.com/images/branding/product/2x/docs_2020q4_48dp.png
+google-sheets	https://docs.google.com/spreadsheets/	https://ssl.gstatic.com/images/branding/product/2x/sheets_2020q4_48dp.png
+google-slides	https://docs.google.com/presentation/	https://ssl.gstatic.com/images/branding/product/2x/slides_2020q4_48dp.png
+google-forms	https://docs.google.com/forms/	https://ssl.gstatic.com/images/branding/product/2x/forms_2020q4_48dp.png
+google-drive	https://drive.google.com/	https://ssl.gstatic.com/images/branding/product/2x/drive_2020q4_48dp.png
+google-calendar	https://calendar.google.com/	https://ssl.gstatic.com/images/branding/product/2x/calendar_2020q4_48dp.png
+google-meet	https://meet.google.com/	https://ssl.gstatic.com/images/branding/product/2x/meet_2020q4_48dp.png
+google-maps	https://www.google.com/maps
+google-photos	https://photos.google.com/
+google-classroom	https://classroom.google.com/	https://ssl.gstatic.com/images/branding/product/2x/classroom_48dp.png
+google-keep	https://keep.google.com/	https://ssl.gstatic.com/images/branding/product/2x/keep_2020q4_48dp.png
+google-translate	https://translate.google.com/
+google-news	https://news.google.com/
+gemini	https://gemini.google.com/
+notebooklm	https://notebooklm.google.com/
+colab	https://colab.research.google.com/
+firebase	https://firebase.google.com/
+x	https://x.com/
+reddit	https://www.reddit.com/
+github	https://github.com/
+gitlab	https://gitlab.com/
+chatgpt	https://chatgpt.com/	https://web.archive.org/web/2026id_/https://chatgpt.com/favicon.ico
+openai	https://openai.com/
+claude	https://claude.ai/
+anthropic	https://www.anthropic.com/
+perplexity	https://www.perplexity.ai/
+copilot	https://copilot.microsoft.com/
+grok	https://grok.com/
+mistral	https://chat.mistral.ai/	https://mistral.ai/favicon.ico
+deepseek	https://chat.deepseek.com/	https://www.deepseek.com/favicon.ico
+poe	https://poe.com/
+characterai	https://character.ai/
+huggingface	https://huggingface.co/
+meta-ai	https://www.meta.ai/
+outlook	https://outlook.live.com/
+microsoft365	https://www.microsoft365.com/
+onedrive	https://onedrive.live.com/	https://res-1.cdn.office.net/files/fabric-cdn-prod_20230815.002/assets/brand-icons/product/svg/onedrive_48x1.svg
+sharepoint	https://www.microsoft.com/microsoft-365/sharepoint/collaboration	https://res-1.cdn.office.net/files/fabric-cdn-prod_20230815.002/assets/brand-icons/product/svg/sharepoint_48x1.svg
+teams	https://teams.microsoft.com/
+microsoft	https://www.microsoft.com/
+bing	https://www.bing.com/
+azure	https://azure.microsoft.com/
+linkedin	https://www.linkedin.com/
+instagram	https://www.instagram.com/
+facebook	https://www.facebook.com/
+whatsapp	https://web.whatsapp.com/
+threads	https://www.threads.com/
+tiktok	https://www.tiktok.com/
+snapchat	https://www.snapchat.com/
+pinterest	https://www.pinterest.com/
+tumblr	https://www.tumblr.com/
+bluesky	https://bsky.app/
+mastodon	https://mastodon.social/
+discord	https://discord.com/
+slack	https://slack.com/
+telegram	https://web.telegram.org/
+zoom	https://zoom.us/
+netflix	https://www.netflix.com/
+hulu	https://www.hulu.com/
+disneyplus	https://www.disneyplus.com/
+max	https://www.max.com/
+primevideo	https://www.primevideo.com/
+spotify	https://open.spotify.com/
+twitch	https://www.twitch.tv/
+soundcloud	https://soundcloud.com/
+apple	https://www.apple.com/
+icloud	https://www.icloud.com/
+apple-music	https://music.apple.com/
+amazon	https://www.amazon.com/
+aws	https://aws.amazon.com/
+ebay	https://www.ebay.com/
+etsy	https://www.etsy.com/
+walmart	https://www.walmart.com/
+target	https://www.target.com/
+bestbuy	https://www.bestbuy.com/
+costco	https://www.costco.com/
+aliexpress	https://www.aliexpress.com/
+temu	https://www.temu.com/
+shopify	https://www.shopify.com/
+ikea	https://www.ikea.com/
+wikipedia	https://www.wikipedia.org/
+stackoverflow	https://stackoverflow.com/
+stackexchange	https://stackexchange.com/
+notion	https://www.notion.so/
+figma	https://www.figma.com/
+canva	https://www.canva.com/
+miro	https://miro.com/
+trello	https://trello.com/
+asana	https://asana.com/
+linear	https://linear.app/
+atlassian	https://www.atlassian.com/
+monday	https://monday.com/
+clickup	https://clickup.com/
+airtable	https://www.airtable.com/
+dropbox	https://www.dropbox.com/
+box	https://www.box.com/
+yahoo	https://www.yahoo.com/
+duckduckgo	https://duckduckgo.com/
+proton	https://proton.me/
+canvas	https://canvas.instructure.com/login/canvas	https://du11hjcvx0uqb.cloudfront.net/dist/images/apple-touch-icon-585e5d997d.png
+blackboard	https://www.blackboard.com/
+brightspace	https://www.d2l.com/
+moodle	https://moodle.org/
+khanacademy	https://www.khanacademy.org/
+quizlet	https://quizlet.com/
+coursera	https://www.coursera.org/
+edx	https://www.edx.org/
+duolingo	https://www.duolingo.com/	https://d35aaqx5ub95lt.cloudfront.net/images/duolingo-touch-icon2.png
+chegg	https://www.chegg.com/
+desmos	https://www.desmos.com/
+overleaf	https://www.overleaf.com/
+grammarly	https://www.grammarly.com/
+nytimes	https://www.nytimes.com/
+wsj	https://www.wsj.com/
+washingtonpost	https://www.washingtonpost.com/
+cnn	https://www.cnn.com/
+bbc	https://www.bbc.com/
+guardian	https://www.theguardian.com/
+reuters	https://www.reuters.com/
+apnews	https://apnews.com/	https://web.archive.org/web/2026id_/https://apnews.com/favicon.ico
+bloomberg	https://www.bloomberg.com/
+npr	https://www.npr.org/
+foxnews	https://www.foxnews.com/
+nbcnews	https://www.nbcnews.com/
+cnbc	https://www.cnbc.com/
+forbes	https://www.forbes.com/
+theverge	https://www.theverge.com/
+techcrunch	https://techcrunch.com/
+wired	https://www.wired.com/
+arstechnica	https://arstechnica.com/
+theatlantic	https://www.theatlantic.com/
+axios	https://www.axios.com/
+politico	https://www.politico.com/	https://web.archive.org/web/2026id_/https://www.politico.com/favicon.ico
+usatoday	https://www.usatoday.com/
+economist	https://www.economist.com/
+ft	https://www.ft.com/
+businessinsider	https://www.businessinsider.com/
+espn	https://www.espn.com/
+hackernews	https://news.ycombinator.com/
+substack	https://substack.com/
+vercel	https://vercel.com/
+netlify	https://www.netlify.com/
+cloudflare	https://www.cloudflare.com/
+pypi	https://pypi.org/	https://pypi.org/static/images/favicon.35549fe8.ico
+python	https://www.python.org/
+mdn	https://developer.mozilla.org/
+kaggle	https://www.kaggle.com/
+replit	https://replit.com/
+leetcode	https://leetcode.com/
+docker	https://hub.docker.com/
+stripe	https://stripe.com/
+supabase	https://supabase.com/
+paypal	https://www.paypal.com/
+venmo	https://venmo.com/
+chase	https://www.chase.com/
+bankofamerica	https://www.bankofamerica.com/
+wellsfargo	https://www.wellsfargo.com/
+capitalone	https://www.capitalone.com/
+amex	https://www.americanexpress.com/
+robinhood	https://robinhood.com/
+coinbase	https://www.coinbase.com/
+fidelity	https://www.fidelity.com/
+schwab	https://www.schwab.com/
+imdb	https://www.imdb.com/
+yelp	https://www.yelp.com/
+tripadvisor	https://www.tripadvisor.com/
+airbnb	https://www.airbnb.com/
+booking	https://www.booking.com/
+expedia	https://www.expedia.com/
+uber	https://www.uber.com/
+instacart	https://www.instacart.com/
+craigslist	https://www.craigslist.org/
+zillow	https://www.zillow.com/
+indeed	https://www.indeed.com/
+glassdoor	https://www.glassdoor.com/
+quora	https://www.quora.com/
+archive	https://archive.org/
+weather	https://weather.com/

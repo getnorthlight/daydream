@@ -1,0 +1,565 @@
+// claude/day-review-1003: the Today card's day review (DayReview.swift, DayReviewStore.swift, DayReviewCard.swift).
+// SYNTHETIC ONLY: fake people, fake words, a scratch history under $TMPDIR (or DAY_REVIEW_ROOT) seeded through the normal
+// store; an in-memory typing key; a fake model. No app, window, permission, recording, Keychain, network or real model.
+// Typed words are never printed (bullets print with their quotes masked).
+//
+// Fixtures: a work-heavy day, a texting-heavy day, a high-stakes single text, an early-morning thin day, a reshuffle
+// attempt (hysteresis), a Forget, a model failure; plus a reading-only day, an excluded app, midnight and the clause
+// checks. The texting fixtures need Messages typing (the owner build, -D DAYDREAM_OWNER_TYPING); the public build checks
+// that no Messages typed row is ever saved there instead.
+import Foundation
+import SwiftUI
+import MemoryCore
+import MemoryUI
+import CoreIntegration
+
+@main @MainActor enum DayReviewChecks {
+    static var failures = 0, passes = 0
+    static func check(_ ok: Bool, _ name: String, _ got: @autoclosure () -> String = "") {
+        if ok { passes += 1; print("PASS " + name) } else {
+            failures += 1
+            fflush(stdout)
+            FileHandle.standardError.write(Data(("FAIL: " + name + (got().isEmpty ? "" : " (got: " + got() + ")") + "\n").utf8))
+        }
+    }
+
+    nonisolated static let zone = "America/Chicago"
+    nonisolated static var cal: Calendar { var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: zone)!; return c }
+    nonisolated static func date(_ day: Int, _ h: Int, _ m: Int, _ s: Int = 0) -> Date {
+        cal.date(from: DateComponents(year: 2026, month: 10, day: day, hour: h, minute: m, second: s))!
+    }
+    nonisolated static func iso(_ d: Date) -> String { let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime]; return f.string(from: d) }
+    nonisolated static func key(_ d: Date) -> String { try! DayScope.key(d, timezone: zone) }
+
+    /// A bullet as one line with its quote masked (never the typed words).
+    static func shape(_ b: DayReviewBullet) -> String {
+        var c = b; if c.quote != nil { c.quote = "«q»" }; return c.text
+    }
+    static func shapes(_ g: [DayReviewGroup]) -> [String] { g.flatMap { $0.bullets.map(shape) } }
+
+    // MARK: fixture store
+
+    final class Fixture {
+        let store: MemoryStore
+        let home: URL
+        var n = 0
+        init(_ name: String) throws {
+            let root = URL(fileURLWithPath: ProcessInfo.processInfo.environment["DAY_REVIEW_ROOT"] ?? NSTemporaryDirectory())
+            home = root.appendingPathComponent("day-review-" + name + "-" + UUID().uuidString.prefix(8))
+            try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            store = try MemoryStore(home: home, writable: true, automaticallySyncSearch: false)
+            var policy = try store.policy(); policy.captureText = true; policy.typedConsentVersion = 1
+            try store.updatePolicy(policy, now: DayReviewChecks.date(1, 8, 0))
+            try store.attachVault(TypedTextVault(keyStore: InMemoryTypedKeyStore())); try store.acceptSafeTyping(); try store.setUpTypedVault()
+        }
+        /// A window used for `minutes`: opened, then a click every 20 s.
+        @discardableResult func window(_ app: String, _ bundle: String, _ title: String, url: String = "", page: String? = nil, at start: Date, minutes: Double) throws -> [String] {
+            var ids = [String](), at = start, first = true
+            let stop = start.addingTimeInterval(minutes * 60)
+            while at < stop {
+                n += 1
+                var e = Evidence(id: String(format: "dr-%05d", n), at: DayReviewChecks.iso(at), kind: first ? "window.changed" : "mouse.click", app: app, bundle: bundle,
+                                 title: title, url: url, synthetic: true)
+                e.page = page
+                first = false
+                if try store.ingest(e, now: at.addingTimeInterval(1)) { ids.append(e.id) }
+                at = at.addingTimeInterval(20)
+            }
+            return ids
+        }
+        /// A typed row (fake words) sealed with its send facts; nil when the store refused it (a public build's Messages).
+        @discardableResult func typed(_ app: String, _ bundle: String, _ title: String, at: Date, words: String, surface: String, field: String = "message",
+                                      to: String? = nil, sent: Bool = true, edits: Int = 0, composeSeconds: Double = 20, author: String? = nil, url: String = "") throws -> String? {
+            n += 1
+            var e = Evidence(id: String(format: "dr-%05d", n), at: DayReviewChecks.iso(at), kind: "keyboard.text_input", app: app, bundle: bundle, title: title,
+                             url: url, text: words, synthetic: true)
+            var unit = TypedUnitProvenance(runID: "run-\(n)", part: 1, sealReason: "submit", startedAt: DayReviewChecks.iso(at.addingTimeInterval(-composeSeconds)),
+                                           keys: words.count + edits, edits: edits, withheld: 0)
+            unit.surface = surface; unit.field = field; unit.send = sent ? "detected" : "unknown"; unit.to = to; unit.contextAuthor = author
+            unit.version = TypedUnitProvenance.sendFactsVersion
+            e.captureProvenance = NativeCaptureProvenance(policyRevision: "r", classifierVersion: "sensitive-typing/v2+typed-scrub/v1", windowID: "w", focusID: "f",
+                                                          checkedAt: DayReviewChecks.iso(at), generation: 1, unit: unit)
+            return try store.ingest(e, now: at.addingTimeInterval(1)) ? e.id : nil
+        }
+        /// Code notes for every moment of the day (what the clause writer reads).
+        func notes(_ d: Date) throws {
+            let day = DayReviewChecks.key(d)
+            for m in try store.dayLayers(day: day, timezone: DayReviewChecks.zone, limit: 1, now: d).activities where m.status != "ready" {
+                guard let request = try? store.prepareNote(kind: "activity", day: day, timezone: DayReviewChecks.zone, activityID: m.id, now: d) else { continue }
+                let app = m.apps.first { !$0.isEmpty } ?? "an app"
+                let subject = m.subject.trimmingCharacters(in: .whitespacesAndNewlines)
+                let ids = request.actions.filter { $0.kind != "keyboard.text_input" }.map(\.id)
+                guard !ids.isEmpty else { continue }
+                _ = try? store.commitNote(NoteWriterOutput(requestID: request.id, title: subject.isEmpty ? app : subject,
+                                                           bullets: [NoteBullet(text: subject.isEmpty ? "Had \(app) open." : "Worked on \(subject) in \(app).", actionIDs: ids)],
+                                                           generator: "code/day-review-fixture", generatorVersion: "1"), now: d)
+            }
+        }
+        func review(_ now: Date) throws -> DayReviewFacts? { try store.dayLevels(day: DayReviewChecks.key(now), timezone: DayReviewChecks.zone, now: now).review }
+        func forget(_ start: Date, _ end: Date, now: Date) throws {
+            let preview = try store.prepareDeletion(scope: .range(start: start, end: end, timezone: DayReviewChecks.zone), now: now)
+            _ = try store.executeDeletion(previewID: preview.id, confirmed: true, now: now)
+        }
+    }
+
+    static let ghostty = ("Ghostty", "com.mitchellh.ghostty"), terminal = ("Terminal", "com.apple.Terminal"), chrome = ("Google Chrome", "com.google.Chrome")
+    static let messages = ("Messages", "com.apple.MobileSMS"), slack = ("Slack", "com.tinyspeck.slackmacgap")
+
+    /// A work-heavy morning on DayDream: Ghostty and Terminal in ~/daydream, its GitHub PR and repo, then a YouTube video
+    /// and an X post read.
+    static func seedWork(_ f: Fixture, day: Int, from: Int = 9) throws {
+        try f.window(ghostty.0, ghostty.1, "~/daydream", at: date(day, from, 0), minutes: 50)
+        try f.window(chrome.0, chrome.1, "Fix Messages drafts by samrivera · Pull Request #12 · acme/daydream", url: "https://github.com",
+                     page: "https://github.com/acme/daydream/pull/12", at: date(day, from, 52), minutes: 12)
+        try f.window(terminal.0, terminal.1, "~/daydream — swift build", at: date(day, from + 1, 6), minutes: 40)
+        try f.window(ghostty.0, ghostty.1, "~/daydream", at: date(day, from + 1, 48), minutes: 45)
+        try f.window(chrome.0, chrome.1, "How do lighthouse lenses work? - YouTube", url: "https://www.youtube.com",
+                     page: "https://www.youtube.com/watch?v=fixture01", at: date(day, from + 2, 40), minutes: 14)
+        try f.window(chrome.0, chrome.1, "Ada on X: \"New models soon\" / X", url: "https://x.com", page: "https://x.com/fixture/status/1",
+                     at: date(day, from + 2, 56), minutes: 4)
+    }
+
+    static func main() async throws {
+        pure()
+        hysteresis()
+        clauses()
+        try await stores()
+        try await bench()
+        print("day-review-checks: \(passes) passed, \(failures) failed")
+        exit(failures == 0 ? 0 : 1)
+    }
+
+    // MARK: pure values
+
+    static func item(_ id: String, _ lead: String, plain: String? = nil, colon: Bool = false, link: DayReviewLink? = nil, tail: String? = nil, clause: String? = nil,
+                     quote: String? = nil, always: Bool = false, score: Double = 1) -> DayReviewItem {
+        DayReviewItem(id: id, lead: lead, plainLead: plain, colon: colon, link: link, tail: tail, clauseKey: clause, quote: quote, quoteAlways: always, score: score, moments: ["m-" + id])
+    }
+    static func thread(_ key: String, _ kind: String, _ score: Double, _ items: [DayReviewItem]) -> DayReviewThread {
+        DayReviewThread(key: key, name: key, kind: kind, seconds: 600, words: 0, personSends: 0, asks: 0, sendHours: 0, stakes: [], score: score, items: items, moments: [])
+    }
+
+    static func pure() {
+        // Scores: a send to a person outweighs ten minutes; steady texting and high stakes boost a person.
+        let tenMinutes = DayReview.score(seconds: 600, words: 0, personSends: 0, asks: 0, sendHours: 0, stakes: 0)
+        let oneText = DayReview.score(seconds: 0, words: 10, personSends: 1, asks: 0, sendHours: 1, stakes: 0)
+        check(oneText > tenMinutes, "score: one text (\(oneText)) outweighs ten minutes (\(tenMinutes))")
+        let steady = DayReview.score(seconds: 600, words: 100, personSends: 6, asks: 0, sendHours: 4, stakes: 0)
+        let bunched = DayReview.score(seconds: 600, words: 100, personSends: 6, asks: 0, sendHours: 1, stakes: 0)
+        check(steady >= bunched * 1.4, "score: texting across several separate hours is boosted (\(steady) vs \(bunched))")
+        check(DayReview.score(seconds: 0, words: 0, personSends: 1, asks: 0, sendHours: 0, stakes: 9) == DayReview.personSend + DayReview.stakesCap,
+              "score: high-stakes boosts are capped")
+        let s = DayReview.stakes(words: 60, keys: 400, edits: 120, parts: 1, composeSeconds: 300, localHour: 23, firstContact: true)
+        check(Set(s) == Set(DayReview.Stake.allCases), "stakes: long, rewritten, paused, first contact, late night (\(s))")
+        check(DayReview.stakes(words: 5, keys: 30, edits: 0, parts: 1, composeSeconds: 10, localHour: 14, firstContact: false).isEmpty, "stakes: a quick text has none")
+
+        // Rank groups 3 / 2 / 1 / 1, the last two together; 7 at most.
+        let five = (0..<5).map { t in thread("t\(t)", "project", Double(100 - t * 10), (0..<4).map { i in item("t\(t)i\(i)", "Did thing \(t).\(i)", score: Double(10 - i)) }) }
+        let facts = DayReviewFacts(day: "2026-10-03", threads: five, clauses: [:], activeSeconds: 3600, personSends: 0)
+        let groups = DayReview.assemble(facts)
+        check(groups.map(\.bullets.count) == [3, 2, 2] && groups.last?.id == "rest", "assemble: 3 / 2 / 1+1 bullets, 7 at most (\(groups.map(\.bullets.count)))")
+        check(groups.flatMap(\.bullets).map(\.thread) == ["t0", "t0", "t0", "t1", "t1", "t2", "t3"], "assemble: groups follow the thread order")
+        let thin = DayReview.assemble(DayReviewFacts(day: "d", threads: [thread("a", "web", 3, [item("a1", "Read", tail: "example.com")])], clauses: [:], activeSeconds: 120, personSends: 0))
+        check(shapes(thin) == ["Read example.com."], "assemble: a thin day has fewer bullets (\(shapes(thin)))")
+        let dup = DayReview.assemble(DayReviewFacts(day: "d", threads: [thread("a", "web", 3, [item("a1", "Read", tail: "x"), item("a2", "Read", tail: "x")])], clauses: [:], activeSeconds: 0, personSends: 0))
+        check(dup.flatMap(\.bullets).count == 1, "assemble: the same line twice shows once")
+
+        // The approved shapes.
+        let words = ["q1": "fixture words one", "q2": "fixture words two", "q3": "fixture reply"]
+        let jamie = thread("person:jamie lin", "person", 50, [
+            item("g#said", "Told Jamie Lin", plain: "Texted Jamie Lin", clause: "person:jamie lin", quote: "q1"),
+            item("g#quote", "Texted Jamie Lin", quote: "q2", always: true)])
+        let work = thread("project:daydream", "project", 90, [item("code", "Worked on DayDream", colon: true, tail: "in Ghostty", clause: "code:daydream")])
+        let ada = thread("social:x", "social", 20, [item("x1", "Replied to", link: DayReviewLink(title: "Ada's post", url: "https://x.com/t/status/1"), tail: "on X",
+                                                         clause: "social:x#x1", quote: "q3", always: true)])
+        let yt = thread("video:youtube.com", "video", 10, [item("v1", "Watched", link: DayReviewLink(title: "\u{201C}How do lighthouse lenses work?\u{201D}", url: "https://www.youtube.com/watch?v=1"), tail: "on YouTube")])
+        var f = DayReviewFacts(day: "d", threads: [work, jamie, ada, yt], clauses: [:], activeSeconds: 7200, personSends: 3)
+        var b = DayReview.assemble(f, quotes: words).flatMap(\.bullets)
+        check(b.map(\.text) == ["Worked on DayDream: in Ghostty.", "Texted Jamie Lin: \u{201C}fixture words one\u{201D}", "Texted Jamie Lin: \u{201C}fixture words two\u{201D}",
+                                "Replied to Ada's post on X: \u{201C}fixture reply\u{201D}", "Watched \u{201C}How do lighthouse lenses work?\u{201D} on YouTube."] ||
+              b.map(shape)[0] == "Worked on DayDream: in Ghostty.", "bullets: code's own words before any clause (\(b.map(shape)))")
+        f.clauses = ["code:daydream": "Messages sends saved as drafts and the Ghostty spinner", "person:jamie lin": "you and friends are going to ZUX tomorrow",
+                     "social:x#x1": "about upcoming models"]
+        b = DayReview.assemble(f, quotes: words).flatMap(\.bullets)
+        check(b.map(shape) == ["Worked on DayDream: Messages sends saved as drafts and the Ghostty spinner.", "Told Jamie Lin you and friends are going to ZUX tomorrow.",
+                               "Texted Jamie Lin: \u{201C}«q»\u{201D}", "Replied to Ada's post about upcoming models: \u{201C}«q»\u{201D}",
+                               "Watched \u{201C}How do lighthouse lenses work?\u{201D} on YouTube."], "bullets: the approved shapes with clauses (\(b.map(shape)))")
+        check(b[0].lead == "Worked on DayDream:" && b[1].lead == "Told Jamie Lin" && b[1].quote == nil && b[2].quote != nil,
+              "bullets: a bold lead (colon after a name), a clause instead of the quote, the second line keeps its quote")
+        check(!b.contains { $0.text.contains("~") || $0.text.range(of: #"\b\d+ (min|hr|h)\b"#, options: .regularExpression) != nil || $0.text.contains("Updated") },
+              "bullets: no durations, counts, times or Updated line")
+        let noWords = DayReview.assemble(f, quotes: [:]).flatMap(\.bullets)
+        check(noWords[2].quote == nil && noWords.count == b.count, "bullets: a quote whose words couldn't be opened is left out, the bullet stays")
+        // Styled text: bold lead first, the link carries its URL (not bold), the quote italic.
+        let a = DayReviewList.attributed(b[3])
+        let runs = a.runs.map { (String(a[$0.range].characters), $0.link) }
+        check(runs.first?.0 == "Replied to" && runs.contains { $0.0 == "Ada's post" && $0.1?.absoluteString == "https://x.com/t/status/1" }
+              && runs.last?.0.hasPrefix("\u{201C}") == true, "card: lead, link with its URL, then the quote in curly quotes")
+        // Owner 10/03: a quote shows on one line first (about 80 characters, cut at a word with "…"), all of it expanded.
+        let longWords = "fixture reply about the upcoming models and why the evaluation numbers look different from what the launch post claimed"
+        var longB = b[3]; longB.quote = longWords
+        let short = longB.shortQuote ?? ""
+        let kept = String(short.dropLast())
+        check(short.count <= DayReview.quoteLine && short.hasSuffix("…") && longWords.hasPrefix(kept)
+              && (longWords.dropFirst(kept.count).first.map { $0 == " " } ?? false), "quotes: one line, cut at a word boundary with … (\(short.count) chars)")
+        check(longB.expandable && longB.text.contains(short) && longB.fullText.contains(longWords), "quotes: the full text is kept for expanding")
+        let folded = String(DayReviewList.attributed(longB).characters), open = String(DayReviewList.attributed(longB, expanded: true).characters)
+        check(folded.contains(short) && !folded.contains(longWords) && open.contains(longWords) && open.hasPrefix("Replied to Ada's post"),
+              "card: folded shows one line, expanded shows every word, the link stays")
+        check(!b[2].expandable && b[2].shortQuote == b[2].quote, "quotes: a short quote shows whole and doesn't expand")
+        check(DayReview.oneLine(String(repeating: "x", count: 120)).count == DayReview.quoteLine, "quotes: a quote with no spaces is cut at the limit")
+        // Facts never carry the quotes' words when encoded (they are opened in the app only).
+        var withQuotes = f; withQuotes.quotes = words
+        let data = (try? JSONEncoder().encode(withQuotes)).map { String(decoding: $0, as: UTF8.self) } ?? ""
+        check(!data.isEmpty && !data.contains("fixture words") && !data.contains("\"quotes\""), "facts: quotes are never encoded")
+    }
+
+    // MARK: hysteresis (reshuffle attempt) and midnight
+
+    static func hysteresis() {
+        var s = DayReviewStanding()
+        let t0 = date(3, 12, 0)
+        check(s.rank(["a": 100, "b": 90], now: t0) == ["a", "b"], "standing: the first order is by score")
+        check(s.rank(["a": 100, "b": 120], now: t0.addingTimeInterval(30)) == ["a", "b"], "reshuffle: beating the one above by less than 25% moves nothing")
+        check(s.rank(["a": 100, "b": 130], now: t0.addingTimeInterval(60)) == ["a", "b"], "reshuffle: beating it by 25% must hold first")
+        check(s.rank(["a": 100, "b": 130], now: t0.addingTimeInterval(200)) == ["a", "b"], "reshuffle: not yet after 2 min 20 s")
+        check(s.rank(["a": 100, "b": 130], now: t0.addingTimeInterval(241)) == ["b", "a"], "reshuffle: held for 3 min, it moves up")
+        check(s.rank(["a": 140, "b": 130], now: t0.addingTimeInterval(250)) == ["b", "a"], "reshuffle: a brief lead back moves nothing")
+        check(s.rank(["a": 100, "b": 130, "c": 500], now: t0.addingTimeInterval(260)) == ["b", "a", "c"], "standing: a new thread starts below")
+        check(s.rank(["a": 100, "c": 500], now: t0.addingTimeInterval(270)) == ["a", "c"], "standing: a forgotten thread leaves at once")
+        // A brief spike that drops back resets its timer.
+        var r = DayReviewStanding()
+        _ = r.rank(["a": 100, "b": 50], now: t0)
+        _ = r.rank(["a": 100, "b": 200], now: t0.addingTimeInterval(10))
+        _ = r.rank(["a": 100, "b": 60], now: t0.addingTimeInterval(100))
+        check(r.rank(["a": 100, "b": 200], now: t0.addingTimeInterval(200)) == ["a", "b"], "reshuffle: a spike that dropped back starts its hold over")
+        // DayReviewMemory: today's card keeps its order; a new day starts empty; a past day is by score.
+        let memory = DayReviewMemory()
+        let one = thread("one", "project", 100, [item("o", "Worked on One")]), two = thread("two", "project", 90, [item("t", "Worked on Two")])
+        _ = memory.groups(DayReviewFacts(day: "2026-10-03", threads: [one, two], clauses: [:], activeSeconds: 0, personSends: 0), live: true, now: t0)
+        var two2 = two; two2.score = 200
+        let held = memory.groups(DayReviewFacts(day: "2026-10-03", threads: [one, two2], clauses: [:], activeSeconds: 0, personSends: 0), live: true, now: t0.addingTimeInterval(30))
+        check(held.first?.bullets.first?.thread == "one", "card memory: today's order holds through a reshuffle attempt")
+        let midnight = memory.groups(DayReviewFacts(day: "2026-10-04", threads: [one, two2], clauses: [:], activeSeconds: 0, personSends: 0), live: true, now: t0.addingTimeInterval(60))
+        check(midnight.first?.bullets.first?.thread == "two", "card memory: a new day starts from its own scores")
+        let past = memory.groups(DayReviewFacts(day: "2026-10-02", threads: [one, two2], clauses: [:], activeSeconds: 0, personSends: 0), live: false)
+        check(past.first?.bullets.first?.thread == "two", "day navigation: a past day shows its final order at once")
+    }
+
+    // MARK: clauses
+
+    static func clauses() {
+        check(DayReviewClauses.instruction.utf8.count <= 8192, "clause instruction is at most 8192 bytes (\(DayReviewClauses.instruction.utf8.count))")
+        let r = DayReviewClauseRequest(day: "2026-10-03", timezone: zone, key: "person:jamie lin", lead: "Told Jamie Lin", name: "Jamie Lin", colon: false,
+                                       notes: ["Texted Jamie Lin: plans for ZUX tomorrow with friends."], signature: "s3|p0|m2", actionIDs: ["a"], start: "", end: "")
+        check((try? DayReviewClauses.validate("you and friends are going to ZUX tomorrow\"}", request: r)) == "you and friends are going to ZUX tomorrow",
+              "clause: a good continuation passes (prefill style)")
+        check((try? DayReviewClauses.validate("{\"clause\":\"You and friends are going to ZUX tomorrow.\"}", request: r)) == "you and friends are going to ZUX tomorrow",
+              "clause: a sentence that goes on starts lower case, without its period")
+        let w = DayReviewClauseRequest(day: "2026-10-03", timezone: zone, key: "code:daydream", lead: "Worked on DayDream", name: "DayDream", colon: true,
+                                       notes: ["Fixed Messages sends saved as drafts in DayDream; the Ghostty spinner."], signature: "s0|p0|m3", actionIDs: ["a"], start: "", end: "")
+        check((try? DayReviewClauses.validate("{\"clause\":\"Messages sends saved as drafts and the Ghostty spinner\"}", request: w)) == "Messages sends saved as drafts and the Ghostty spinner",
+              "clause: a description after a colon keeps its capital")
+        let bad: [(String, String)] = [
+            ("{\"clause\":\"\\\"hahaha\\\" said the plans\"}", "quotes"), ("{\"clause\":\"plans for about 30 minutes\"}", "duration"),
+            ("{\"clause\":\"the user made plans at 9:30\"}", "time and subject"), ("{\"clause\":\"made plans with Jordan Lee\"}", "unknown name"),
+            ("{\"clause\":\"told Jamie about plans\"}", "repeats the lead"), ("{\"clause\":\"sent the plans to friends\"}", "unsupported sent"),
+            ("{\"clause\":\"plans with key sk-live-4f9a8b7c6d5e4f3a2b1c\"}", "secret"), ("{\"answer\":1}", "shape"),
+            ("{\"clause\":\"one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen\"}", "too long")]
+        for (raw, why) in bad { check((try? DayReviewClauses.validate(raw, request: r)) == nil, "clause: refused (\(why))") }
+        check(DayReviewClauses.evidence(r).count <= DayReviewClauses.evidenceChars + 200, "clause evidence is bounded")
+    }
+
+    // MARK: store fixtures
+
+    static func stores() async throws {
+        let now = date(3, 13, 0)
+        let today = key(now)
+
+        // Work-heavy day.
+        let work = try Fixture("work")
+        try seedWork(work, day: 3)
+        try work.window(slack.0, slack.1, "#launch - Fixture", at: date(3, 12, 10), minutes: 6)
+        try work.notes(now)
+        guard let facts = try work.review(now) else { check(false, "work day: review facts"); return }
+        let groups = DayReview.assemble(facts)
+        let lines = shapes(groups)
+        print("work day threads: " + facts.threads.map { "\($0.key)=\($0.score)" }.joined(separator: ", "))
+        print("work day bullets: \(lines)")
+        check(facts.threads.first?.key == "project:daydream" && facts.threads.first?.name == "DayDream",
+              "work day: Ghostty, Terminal and GitHub about DayDream are one thread, on top (\(facts.threads.first?.key ?? "-"))")
+        check(groups.first?.bullets.allSatisfy { $0.thread == "project:daydream" } == true && (groups.first?.bullets.count ?? 0) >= 2,
+              "work day: the top group is the project's (\(groups.first?.bullets.count ?? 0) bullets)")
+        check(lines.first?.contains("DayDream") == true, "work day: the bullet names the project")
+        check(lines.count <= 7 && !lines.contains { $0.contains("~") || $0.range(of: #"\b\d+ (min|hr)\b"#, options: .regularExpression) != nil },
+              "work day: 7 bullets at most, no durations")
+        let watched = groups.flatMap(\.bullets).first { $0.lead == "Watched" }
+        check(watched?.link?.title == "\u{201C}How do lighthouse lenses work?\u{201D}" && watched?.link?.url?.hasPrefix("https://www.youtube.com") == true
+              && watched?.rest == "on YouTube", "work day: Watched “title” on YouTube, linked (\(watched.map(shape) ?? "-") \(watched?.link?.url ?? "-"))")
+        check(facts.warm && facts.clauses.isEmpty, "work day: warm, no clause yet")
+
+        // The clause writer (fake model): one clause per shown thread, then nothing until a material change.
+        let answers = Answers(["{\"clause\":\"the fixture build and its tests\"}"])
+        let binding = LevelWriterBinding(store: work.store, generate: { _, _, _, _ in try await answers.next() })
+        let step = try await binding.reviewClause(timezone: zone, now: now)
+        check(step?.clause.key != nil && step?.source == "model", "clauses: the model's clause is checked and saved (\(step?.clause.key ?? "-"))")
+        var after = try work.review(now)
+        check(after.map { !$0.clauses.isEmpty } == true, "clauses: the day read carries the cached clause")
+        let withClause = after.map { shapes(DayReview.assemble($0)) } ?? []
+        check(withClause.contains { $0.contains("the fixture build and its tests") }, "clauses: the bullet uses it (\(withClause.first ?? "-"))")
+        let due = try work.store.reviewClauseWork(timezone: zone, now: now.addingTimeInterval(60))
+        check(!due.contains { $0.key == step?.clause.key }, "clauses: not written again without a material change")
+        // A refused answer, then a good one: the repair turn.
+        let repairAnswers = Answers(["{\"clause\":\"\\\"quoted\\\" words\"}", "{\"clause\":\"the export button and its tests\"}"])
+        let repairing = LevelWriterBinding(store: work.store, generate: { _, _, _, _ in try await repairAnswers.next() })
+        if let next = try await repairing.reviewClause(timezone: zone, now: now) {
+            check(next.source == "repair" && next.rejections.count == 1, "clauses: a refused answer gets one repair turn")
+        } else { check(due.isEmpty, "clauses: nothing else due (\(due.count))") }
+
+        // Model failure: no clause, no error in the review, the code's bullets stay; the runner backs off.
+        let failing = try Fixture("failure")
+        try seedWork(failing, day: 3)
+        try failing.notes(now)
+        let broken = LevelWriterBinding(store: failing.store, generate: { _, _, _, _ in throw NSError(domain: "fixture-model", code: 1) })
+        let runner = LevelRunner()
+        var threw = false
+        do { _ = try await runner.clause(broken, timezone: zone, now: now) } catch is LevelWriterBinding.ModelFailure { threw = true }
+        let second = try? await runner.clause(broken, timezone: zone, now: now.addingTimeInterval(5))
+        let failedFacts = try failing.review(now)
+        check(threw && second == nil && failedFacts.map { $0.clauses.isEmpty && !DayReview.assemble($0).isEmpty } == true,
+              "model failure: nothing saved, the runner waits, the review keeps its code bullets")
+        check(try failing.store.reviewClauses(day: today).isEmpty, "model failure: no clause row")
+
+        // Forget: the watched video's bullet and a thread's clause go with their records, at once.
+        let clauseKey = step?.clause.key ?? ""
+        try work.forget(date(3, 11, 40), date(3, 11, 55), now: now)
+        after = try work.review(now)
+        let afterLines = after.map { shapes(DayReview.assemble($0)) } ?? []
+        check(!afterLines.contains { $0.hasPrefix("Watched") }, "forget: the forgotten video's bullet is gone (\(afterLines))")
+        try work.forget(date(3, 9, 0), date(3, 11, 35), now: now)
+        let clausesLeft = try work.store.reviewClauses(day: today)
+        after = try work.review(now)
+        check(clausesLeft[clauseKey] == nil && after.map { !$0.threads.contains { $0.key == "project:daydream" } } ?? true,
+              "forget: the project's bullets and its clause are gone")
+
+        // Excluded app: Slack rows recorded before Slack was excluded never show.
+        let excluded = try Fixture("excluded")
+        try seedWork(excluded, day: 3)
+        try excluded.window(slack.0, slack.1, "Maya (DM) - Fixture", at: date(3, 12, 10), minutes: 30)
+        let before = try excluded.review(now)
+        var policy = try excluded.store.policy(); policy.blockedApps.append(slack.1); try excluded.store.updatePolicy(policy, now: now)
+        let without = try excluded.review(now)
+        let slackShown = { (f: DayReviewFacts?) in f.map { shapes(DayReview.assemble($0)).contains { $0.contains("Maya") || $0.contains("Slack") } } ?? false }
+        check(slackShown(before) && !slackShown(without), "excluded app: never in the review (shown before: \(slackShown(before)))")
+
+        // Early-morning thin day: code bullets only, no clause work until 20 minutes or a few sends.
+        let thin = try Fixture("thin")
+        try thin.window(ghostty.0, ghostty.1, "~/daydream", at: date(3, 6, 0), minutes: 6)
+        try thin.window(chrome.0, chrome.1, "Hacker News", url: "https://news.ycombinator.com", at: date(3, 6, 7), minutes: 3)
+        try thin.notes(date(3, 6, 15))
+        let early = try thin.review(date(3, 6, 15))
+        check(early.map { !$0.warm && !DayReview.assemble($0).isEmpty } == true, "thin day: code bullets, not warm (\(early.map { shapes(DayReview.assemble($0)) } ?? []))")
+        check(try thin.store.reviewClauseWork(timezone: zone, now: date(3, 6, 15)).isEmpty, "thin day: no model work")
+
+        // A day with only reading and watching still gets bullets; midnight starts empty.
+        let reading = try Fixture("reading")
+        try reading.window(chrome.0, chrome.1, "How do lighthouse lenses work? - YouTube", url: "https://www.youtube.com",
+                           page: "https://www.youtube.com/watch?v=fixture01", at: date(3, 20, 0), minutes: 25)
+        try reading.window(chrome.0, chrome.1, "The fixture essay - Example Blog", url: "https://blog.example.com", page: "https://blog.example.com/essay",
+                           at: date(3, 20, 30), minutes: 15)
+        let reads = try reading.review(date(3, 21, 0)).map { shapes(DayReview.assemble($0)) } ?? []
+        check(reads.contains { $0.hasPrefix("Watched") } && reads.count >= 2, "reading day: bullets (\(reads))")
+        check(try reading.review(date(4, 0, 5)) == nil, "midnight: the new day starts empty")
+
+        try await people(now: now)
+    }
+
+    /// The texting fixtures (owner build: Messages typing).
+    static func people(now: Date) async throws {
+        let probe = try Fixture("probe")
+        let accepted = try probe.typed(messages.0, messages.1, "Jamie Lin", at: date(3, 9, 0), words: "fixture text", surface: "text", to: "Jamie Lin") != nil
+        #if DAYDREAM_OWNER_TYPING
+        check(accepted, "owner build: a Messages typed row is saved")
+        #else
+        check(!accepted, "public build: no Messages typed row is ever saved (texting fixtures run in the owner lane)")
+        return
+        #endif
+
+        // Texting-heavy day: Jamie across four separate hours beats an hour of work.
+        let texting = try Fixture("texting")
+        try texting.window(ghostty.0, ghostty.1, "~/daydream", at: date(3, 8, 0), minutes: 40)
+        var quoteIDs = [String]()
+        for (i, h) in [9, 10, 11, 12, 12].enumerated() {
+            try texting.window(messages.0, messages.1, "Jamie Lin", at: date(3, h, 5 + i), minutes: 2)
+            if let id = try texting.typed(messages.0, messages.1, "Jamie Lin", at: date(3, h, 6 + i), words: "fixture plan number \(i) for tomorrow with friends",
+                                          surface: "text", to: "Jamie Lin", edits: i == 2 ? 30 : 0, composeSeconds: i == 2 ? 200 : 15) { quoteIDs.append(id) }
+        }
+        let tFacts = try texting.review(now)
+        print("texting day threads: " + (tFacts?.threads.map { "\($0.key)=\($0.score) sends=\($0.personSends) hours=\($0.sendHours)" }.joined(separator: ", ") ?? "-"))
+        check(tFacts?.threads.first?.key == "person:jamie lin" && tFacts?.threads.first?.sendHours ?? 0 >= 3,
+              "texting day: one thread for Jamie across Messages, on top")
+        let words = try texting.store.ownerReviewQuotes(tFacts?.quoteIDs ?? [], now: now)
+        let tGroups = tFacts.map { DayReview.assemble($0, quotes: words) } ?? []
+        let top = tGroups.first?.bullets ?? []
+        check(top.count == 3 || top.count == 2, "texting day: the top thread has its bullets (\(top.count))")
+        check(top.first?.lead == "Texted Jamie Lin:" && top.first?.quote != nil, "texting day: the latest send quoted verbatim, before any clause (\(top.first.map(shape) ?? "-"))")
+        check(top.dropFirst().first?.quote != nil && top.dropFirst().first?.quote != top.first?.quote,
+              "texting day: the second bullet quotes the highest-effort text")
+        check(top.compactMap(\.quote).allSatisfy { q in quoteIDs.contains { (words[$0] ?? "") == q } }, "texting day: quotes are the texts' exact words")
+
+        // High-stakes single text: a long, late, first text to a new contact earns its own bullet on a work-heavy day.
+        let stakes = try Fixture("stakes")
+        try seedWork(stakes, day: 3, from: 9)
+        try stakes.window(ghostty.0, ghostty.1, "~/daydream", at: date(3, 13, 0), minutes: 60)
+        try stakes.window(messages.0, messages.1, "Jordan Lee", at: date(3, 23, 20), minutes: 6)
+        let long = Array(repeating: "fixture", count: 50).joined(separator: " ")
+        let jid = try stakes.typed(messages.0, messages.1, "Jordan Lee", at: date(3, 23, 25), words: long, surface: "text", to: "Jordan Lee", edits: 40, composeSeconds: 300)
+        let sFacts = try stakes.review(date(3, 23, 40))
+        let jordan = sFacts?.threads.first { $0.key == "person:jordan lee" }
+        print("stakes day threads: " + (sFacts?.threads.map { "\($0.key)=\($0.score)" }.joined(separator: ", ") ?? "-"))
+        check(jid != nil && Set(jordan?.stakes ?? []).isSuperset(of: [.long, .firstContact, .lateNight]), "high stakes: long, first contact, late night (\(jordan?.stakes ?? []))")
+        check(sFacts?.threads.first?.key == "project:daydream", "high stakes: the work project still leads")
+        let shown = sFacts.map { DayReview.assemble($0).flatMap(\.bullets) } ?? []
+        check(shown.contains { $0.thread == "person:jordan lee" }, "high stakes: the text has its own bullet (\(shown.map(shape)))")
+
+        // Never a secret: a text the scrubber would hold back is never quoted.
+        let secret = try Fixture("secret")
+        try secret.window(messages.0, messages.1, "Sam Park", at: date(3, 10, 0), minutes: 3)
+        let sid = try secret.typed(messages.0, messages.1, "Sam Park", at: date(3, 10, 1), words: "the door code is 4829 and key sk-live-4f9a8b7c6d5e4f3a2b1c", surface: "text", to: "Sam Park")
+        let secretWords = try secret.store.ownerReviewQuotes([sid ?? "-"], now: now)
+        check(sid != nil && secretWords.isEmpty, "quotes: a text with a code or key is never quoted")
+        // Forget "what I typed": typed clauses go with it (commit one first).
+        _ = try? texting.store.commitReviewClause(DayReviewClauseRequest(day: key(now), timezone: zone, key: "person:jamie lin", lead: "Told Jamie Lin", name: "Jamie Lin",
+                                                                          colon: false, notes: ["n"], signature: "s5|p0|m0", actionIDs: quoteIDs, start: "", end: ""),
+                                                  text: "plans for tomorrow with friends", now: now)
+        check(try texting.store.reviewClauses(day: key(now))["person:jamie lin"]?.typed == true, "clauses: a clause written from texts is marked typed")
+        try texting.forget(date(3, 9, 0), date(3, 9, 30), now: now)
+        check(try texting.store.reviewClauses(day: key(now))["person:jamie lin"] == nil, "forget: a text forgotten takes its thread's clause with it")
+    }
+}
+
+// MARK: perf bounds (perf pass 10/03)
+
+extension DayReviewChecks {
+    static func ms(_ start: CFAbsoluteTime) -> Double { (CFAbsoluteTimeGetCurrent() - start) * 1000 }
+    static let budget = Double(ProcessInfo.processInfo.environment["DAY_REVIEW_BUDGET_MS"] ?? "") ?? 5
+
+    /// A full synthetic day (about 8 hours, a few thousand actions, notes on every moment): the review's cost on a Today
+    /// read once cached, a writer pass with nothing due, and the hero card's refresh after a clause is saved.
+    static func bench() async throws {
+        let f = try Fixture("bench")
+        let now = date(3, 18, 30)
+        let apps: [(String, String, String, String, String?)] = [
+            (ghostty.0, ghostty.1, "~/daydream", "", nil),
+            (chrome.0, chrome.1, "Fix Messages drafts by samrivera · Pull Request #12 · acme/daydream", "https://github.com", "https://github.com/acme/daydream/pull/12"),
+            (terminal.0, terminal.1, "~/daydream — swift build", "", nil),
+            ("Xcode", "com.apple.dt.Xcode", "DayReview.swift — DayDream", "", nil),
+            (slack.0, slack.1, "#launch - Fixture", "", nil),
+            (chrome.0, chrome.1, "Fixture talk number %d - YouTube", "https://www.youtube.com", "https://www.youtube.com/watch?v=bench%d"),
+            (chrome.0, chrome.1, "Fixture essay %d - Example Blog", "https://blog.example.com", "https://blog.example.com/essay-%d"),
+            ("Notes", "com.apple.Notes", "Launch day plan", "", nil),
+        ]
+        var t = date(3, 9, 0), i = 0
+        let seedStart = CFAbsoluteTimeGetCurrent()
+        while t < date(3, 17, 30) {
+            let a = apps[(i * 5 + i / 3) % apps.count]
+            let title = a.2.contains("%d") ? String(format: a.2, i % 7) : a.2
+            let page = a.4.map { $0.contains("%d") ? String(format: $0, i % 7) : $0 }
+            let minutes = Double(2 + (i * 7) % 5)
+            var ids = [String](), at = t, first = true
+            let stop = t.addingTimeInterval(minutes * 60)
+            while at < stop {
+                f.n += 1
+                var e = Evidence(id: String(format: "dr-%05d", f.n), at: iso(at), kind: first ? "window.changed" : "mouse.click", app: a.0, bundle: a.1, title: title, url: a.3, synthetic: true)
+                e.page = page; first = false
+                if try f.store.ingest(e, now: at.addingTimeInterval(1)) { ids.append(e.id) }
+                at = at.addingTimeInterval(8)
+            }
+            t = stop.addingTimeInterval(i % 9 == 8 ? 25 * 60 : 15)
+            i += 1
+        }
+        try f.notes(now)
+        let day = key(now)
+        print(String(format: "PERF bench day: %d actions seeded in %.1fs", f.n, ms(seedStart) / 1000))
+
+        // 1. A Today read: the first builds the review, the next ones (nothing new) reuse it.
+        var s0 = CFAbsoluteTimeGetCurrent()
+        _ = try f.store.dayLevels(day: day, timezone: zone, now: now)
+        let coldRead = ms(s0), coldReview = MemoryStore.lastReviewMillisecondsForChecks
+        var hits = [Double](), reads = [Double]()
+        for _ in 0..<5 {
+            s0 = CFAbsoluteTimeGetCurrent()
+            _ = try f.store.dayLevels(day: day, timezone: zone, now: now)
+            reads.append(ms(s0)); hits.append(MemoryStore.lastReviewMillisecondsForChecks)
+        }
+        print(String(format: "PERF today read: first %.1f ms (review %.1f ms); cached reads %.1f ms median, review %.2f ms median / %.2f ms max",
+                     coldRead, coldReview, reads.sorted()[2], hits.sorted()[2], hits.max() ?? 0))
+        check((hits.max() ?? 99) <= budget, "perf: a cached review adds at most \(Int(budget)) ms to a Today read (\(String(format: "%.2f", hits.max() ?? 0)) ms; uncached \(String(format: "%.1f", coldReview)) ms)")
+        // New records for the day: the next read builds it again and shows them.
+        try f.window(chrome.0, chrome.1, "A brand new fixture video - YouTube", url: "https://www.youtube.com", page: "https://www.youtube.com/watch?v=new1",
+                     at: date(3, 17, 40), minutes: 30)
+        let fresh = try f.store.dayLevels(day: day, timezone: zone, now: now).review
+        check(MemoryStore.lastReviewMillisecondsForChecks > (hits.max() ?? 0) && fresh.map { $0.threads.contains { $0.items.contains { $0.link?.title.contains("A brand new fixture video") == true } } } == true,
+              "perf: new records for the day rebuild the cached review")
+
+        // 2. Writer passes: the fake model writes what is due, then a pass with nothing due is remembered.
+        let answers = Answers(Array(repeating: "{\"clause\":\"the fixture build and its tests\"}", count: 12))
+        let binding = LevelWriterBinding(store: f.store, generate: { _, _, _, _ in try await answers.next() })
+        var written = 0, coldIdle = 0.0
+        var firstIdle: LevelWriterBinding.ClauseStep?
+        while written < 10 {
+            // The pass that finds nothing due has to look at the day (and then remembers it).
+            s0 = CFAbsoluteTimeGetCurrent()
+            firstIdle = try await binding.reviewClause(timezone: zone, now: now)
+            coldIdle = ms(s0)
+            if firstIdle == nil { break }
+            written += 1
+        }
+        var idle = [Double]()
+        for k in 0..<5 {
+            s0 = CFAbsoluteTimeGetCurrent()
+            let none = try await binding.reviewClause(timezone: zone, now: now.addingTimeInterval(Double(k)))
+            idle.append(ms(s0))
+            if none != nil { check(false, "perf: nothing due stays nothing due") }
+        }
+        print(String(format: "PERF writer pass, nothing due: %d clauses written; first look %.1f ms, remembered %.2f ms median / %.2f ms max",
+                     written, coldIdle, idle.sorted()[2], idle.max() ?? 0))
+        check(written >= 1 && firstIdle == nil && (idle.max() ?? 99) <= budget,
+              "perf: a writer pass with no clause due returns in under \(Int(budget)) ms (\(String(format: "%.2f", idle.max() ?? 0)) ms; first look \(String(format: "%.1f", coldIdle)) ms)")
+        // ...and is looked at again after a change: a new noted moment of the project and 16 minutes make it due once more.
+        let now2 = date(3, 19, 40)
+        try f.window(ghostty.0, ghostty.1, "~/daydream", at: date(3, 19, 0), minutes: 20)
+        try f.notes(now2)
+        let later = try f.store.reviewClauseWork(timezone: zone, now: now2.addingTimeInterval(16 * 60))
+        check(later.contains { $0.key == "code:daydream" }, "perf: a remembered \"nothing due\" ends when the day changes (\(later.map(\.key)))")
+
+        // 3. A clause saved: the hero card's refresh reads the cached facts and the new clause, never the day.
+        _ = try f.store.dayLevels(day: day, timezone: zone, now: now)
+        s0 = CFAbsoluteTimeGetCurrent()
+        _ = try f.store.dayLevels(day: day, timezone: zone, now: now)
+        let fullRead = ms(s0)
+        guard let target = later.first else { return }
+        _ = try f.store.commitReviewClause(target, text: "the hero refresh fixture clause", now: now2.addingTimeInterval(16 * 60))
+        var hero = [Double](), got: DayReviewFacts?
+        for _ in 0..<5 {
+            s0 = CFAbsoluteTimeGetCurrent()
+            got = try f.store.cachedDayReview(day: day, timezone: zone)
+            hero.append(ms(s0))
+        }
+        print(String(format: "PERF clause saved: hero refresh %.2f ms median / %.2f ms max; a full Today read %.1f ms", hero.sorted()[2], hero.max() ?? 0, fullRead))
+        check(got?.clauses[target.key] == "the hero refresh fixture clause" && (hero.max() ?? 99) <= budget,
+              "perf: after a clause is saved the hero card refreshes from the cache in under \(Int(budget)) ms, with the new clause")
+        let viaRead = try f.store.dayLevels(day: day, timezone: zone, now: now).review
+        check(viaRead?.clauses == got?.clauses && viaRead?.threads == got?.threads, "perf: the hero refresh matches a full read")
+    }
+}
+
+/// The fake model's answers, in order; then it fails.
+actor Answers {
+    var list: [String]
+    init(_ list: [String]) { self.list = list }
+    func next() throws -> String {
+        guard !list.isEmpty else { throw NSError(domain: "fixture-model", code: 2) }
+        return list.removeFirst()
+    }
+}

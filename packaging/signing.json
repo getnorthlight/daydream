@@ -1,0 +1,4 @@
+{
+  "_comment": "The one place the Apple Developer Team ID lives. scripts/release.py, scripts/signing_plan.py and WriterBackend/runtime_distribution.py read it. A fork that signs its own builds replaces it with its own 10-character team ID. The team ID is public (it is in every signed app); certificates and keys stay in the Keychain.",
+  "apple_team_id": "L76C3ZC66J"
+}

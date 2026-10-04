@@ -1,0 +1,171 @@
+{
+  "schema": 1,
+  "site": "Reddit",
+  "captureReady": false,
+  "bootstrap": {
+    "implementation": "implemented",
+    "commit": "2cd80744d7f9669d2b96ed87623f5974928d4bd1",
+    "mode": "reddit-bootstrap",
+    "declaration": "reddit-native-bootstrap-v1\n",
+    "scenarios": [
+      "reddit-search",
+      "reddit-post-title"
+    ],
+    "source": "Sources/MacMemApp/RedditNativeBootstrap.swift",
+    "actualLiveRun": false
+  },
+  "cases": [
+    {
+      "id": "reddit-search-v1",
+      "pattern": "single_visit",
+      "implementation": "implemented",
+      "protocol": "chrome-source-selected-actual-v1",
+      "fixture": "chrome",
+      "mode": "reddit-capture",
+      "declaration": "reddit-owned-bootstrap-capture-v1\n",
+      "texts": [
+        "chess club service event ideas"
+      ],
+      "documents": [
+        "search"
+      ],
+      "story": "Open a fresh real Reddit window, focus its empty search field, type an unsent search query, verify exact sealed records and readback. No Return or executed-search claim.",
+      "summary_support_quotes": [
+        "chess club service event ideas"
+      ],
+      "expected": {
+        "search": "chess club service event ideas"
+      },
+      "surface": "search",
+      "outcome": "draft",
+      "actualLiveRun": false
+    },
+    {
+      "id": "reddit-executed-search-v1",
+      "pattern": "single_visit",
+      "implementation": "not_implemented",
+      "protocol": "chrome-real-workflow-v1",
+      "fixture": "chrome",
+      "texts": [
+        "chess club service event ideas"
+      ],
+      "documents": [
+        "search"
+      ],
+      "story": "Type and execute a Reddit search. A completed search needs observed navigation; a typed query alone stays a search draft.",
+      "summary_support_quotes": [
+        "chess club service event ideas"
+      ],
+      "expected": {
+        "search": "chess club service event ideas"
+      },
+      "surface": "search",
+      "outcome": "searched"
+    },
+    {
+      "id": "reddit-post-complete-v1",
+      "pattern": "single_visit",
+      "implementation": "not_implemented",
+      "protocol": "chrome-real-workflow-v1",
+      "fixture": "chrome",
+      "texts": [
+        "chess club service event",
+        "i am planning a chess club service event on monday"
+      ],
+      "documents": [
+        "post-title",
+        "post-body"
+      ],
+      "story": "Write title and body of one Reddit post and leave it unsent.",
+      "summary_support_quotes": [
+        "chess club service event on monday"
+      ],
+      "expected": {
+        "post-title": "chess club service event",
+        "post-body": "i am planning a chess club service event on monday"
+      },
+      "surface": "social",
+      "outcome": "draft"
+    },
+    {
+      "id": "reddit-post-interrupted-v1",
+      "pattern": "interrupted",
+      "implementation": "not_implemented",
+      "protocol": "chrome-real-workflow-v1",
+      "fixture": "chrome",
+      "texts": [
+        "i am planning a chess club service event",
+        "my calculus study plan",
+        " on monday with our club"
+      ],
+      "documents": [
+        "A",
+        "B",
+        "A"
+      ],
+      "story": "Start a Chess Club post, draft an unrelated calculus post in another owned tab, return and finish the first. Preserve two distinct subjects.",
+      "summary_support_quotes": [
+        "chess club service event on monday with our club",
+        "my calculus study plan"
+      ],
+      "expected": {
+        "A": "i am planning a chess club service event on monday with our club",
+        "B": "my calculus study plan"
+      },
+      "surface": "social",
+      "outcome": "draft"
+    },
+    {
+      "id": "reddit-comment-v1",
+      "pattern": "single_visit",
+      "implementation": "not_implemented",
+      "protocol": "chrome-real-workflow-v1",
+      "fixture": "chrome",
+      "texts": [
+        "the chess club service event could start on monday"
+      ],
+      "documents": [
+        "comment"
+      ],
+      "story": "Draft an unsent comment beneath an explicitly declared controlled public post. Never activate Comment.",
+      "summary_support_quotes": [
+        "chess club service event could start on monday"
+      ],
+      "expected": {
+        "comment": "the chess club service event could start on monday"
+      },
+      "surface": "social",
+      "outcome": "draft",
+      "requires": "controlled-public-post"
+    },
+    {
+      "id": "reddit-reply-interrupted-v1",
+      "pattern": "interrupted",
+      "implementation": "not_implemented",
+      "protocol": "chrome-real-workflow-v1",
+      "fixture": "chrome",
+      "texts": [
+        "we can help at the chess club event",
+        "the calculus review starts tomorrow",
+        " after class on monday"
+      ],
+      "documents": [
+        "reply-A",
+        "reply-B",
+        "reply-A"
+      ],
+      "story": "Draft replies to two declared controlled public comments, return to the first and finish without publishing.",
+      "summary_support_quotes": [
+        "help at the chess club event after class on monday",
+        "calculus review starts tomorrow"
+      ],
+      "expected": {
+        "reply-A": "we can help at the chess club event after class on monday",
+        "reply-B": "the calculus review starts tomorrow"
+      },
+      "surface": "social",
+      "outcome": "draft",
+      "requires": "two-controlled-public-comments"
+    }
+  ]
+}

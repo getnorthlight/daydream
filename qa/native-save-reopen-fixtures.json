@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "caseID": "native-owned-save-reopen-v1",
+  "texts": [
+    "I started a chess club note",
+    "Write the morning plan",
+    " about the vote and support"
+  ],
+  "visits": [
+    "A",
+    "B",
+    "A"
+  ],
+  "controls": [
+    "owned-save-close-reopen"
+  ],
+  "actualSleep": false,
+  "externalSends": false,
+  "unimplemented": [
+    "fixture-app-relaunch",
+    "simulated-suspension",
+    "physical-system-sleep",
+    "cross-application-switch"
+  ],
+  "coverage": [
+    "owned-document-save-close-reopen"
+  ],
+  "crossApplicationRequired": false
+}
