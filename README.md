@@ -1,137 +1,230 @@
 # DayDream
 
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/readme/today-dark.png">
-    <img src="docs/images/readme/today-light.png" width="860" alt="DayDream's Today view for a made-up founder: a short list of the day's work (a Claude chat about pricing page copy, writing the pricing page in Pages, tests and a site build in Terminal), one YouTube video and one text, over a timeline of the day.">
-  </picture>
-</p>
-
-<h3 align="center">Never lose your place again.</h3>
-
-<p align="center">DayDream remembers what you did on your Mac.<br>Ask it, or an AI app you connect, "where was I?"</p>
-
-<p align="center"><a href="#download">Download</a> · <a href="#build-from-source">Build from source</a> · <a href="docs/guide.md">Guide</a> · <a href="PRIVACY.md">Privacy</a></p>
+DayDream remembers which app and window you were in on your Mac, and when. It keeps that history on your Mac, so you, or an AI app you connect, can later ask "where was I?".
 
 > [!IMPORTANT]
-> **DayDream is beta software (version 0.1).** Expect bugs. Your history is **not encrypted** yet, so turn on FileVault. Please read [what DayDream records](docs/guide.md#what-daydream-records) and its [known limits](docs/guide.md#known-limits) before you install it.
+> **DayDream is beta software (version 0.1).** The download is signed with its developer's Apple Developer ID and notarized by Apple. Expect bugs. Your history is **not encrypted** yet, so turn on FileVault. Please read [What DayDream records](#what-daydream-records) and [Known limits](#known-limits) before you install it.
 
-## What it does
+<p align="center"><img src="docs/images/menu-bar.png" width="320" alt="DayDream's menu bar panel while recording: Recording since 8:38 AM with the switch on, Pause, 4 moments remembered today, Search, Open DayDream, Settings and Quit."></p>
+<p align="center"><sub>The menu bar panel, drawn with sample data.</sub></p>
 
-### Your day, in a few lines
+## Contents
 
-Today puts your work first: the chats, documents and code you spent time on, then what you read and watched, then one line for the people you talked to. Every moment is on the timeline below it.
+- [What DayDream records](#what-daydream-records)
+- [What it doesn't record](#what-it-doesnt-record)
+- [Browser history (Google Chrome)](#browser-history-google-chrome)
+- [Use it on your own Mac](#use-it-on-your-own-mac)
+- [Install](#install)
+- [Permissions](#permissions)
+- [Using DayDream](#using-daydream)
+- [Summaries](#summaries)
+- [Connect an AI app](#connect-an-ai-app)
+- [Updates](#updates)
+- [Your data](#your-data)
+- [Uninstall](#uninstall)
+- [Network connections](#network-connections)
+- [Known limits](#known-limits)
+- [Report a problem](#report-a-problem)
+- [Build from source](#build-from-source)
+- [Project layout](#project-layout)
+- [Contributing and security](#contributing-and-security)
+- [License, trademarks and credits](#license-trademarks-and-credits)
 
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/readme/day-dark.png">
-    <img src="docs/images/readme/day-light.png" width="860" alt="The day as a list of moments: a YouTube video, a Hacker News post, and Export tests in Terminal opened to its summary and the folder it ran in.">
-  </picture>
-</p>
+## What DayDream records
 
-### Every moment, with what happened
+DayDream records only while recording is on. You turn it on with the switch in the menu bar panel, and it stays on until you pause or stop it. If it was on when DayDream quit or your Mac restarted, it starts again when DayDream opens. The menu bar icon shows whether it's recording.
 
-Open a moment to see its summary and what happened in it, in the words you typed: what you asked Claude, what you wrote, what you ran.
+While recording is on, DayDream saves:
 
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/readme/moment-dark.png">
-    <img src="docs/images/readme/moment-light.png" width="860" alt="A moment's details: Pricing page copy in Claude, 9:00 to 9:38 AM, with a two-line summary and What happened listing the two questions asked, word for word.">
-  </picture>
-</p>
+- **Which app is in front**, and when you switch apps.
+- **The title of the window you're using.** Window titles often contain document names, email subjects, chat names or page titles. A title that looks like a secret (a password, an API key or token, a long random string) is saved as "[sensitive title omitted]" instead.
+- **That you clicked**, and in which app and window. Not where you clicked or what you clicked on.
+- **Web addresses that apps show** (for example an app with a built-in web view), trimmed to the site and page. Everything after `?` is removed except search terms in `q`, `query` or `search_query`, and anything after `#` is removed.
+- **What you type, while typed text is on.** Setup shows it switched on, with one line. One click turns it off, then or any time in Settings. Nothing is recorded before you press Start Recording. See [Typed text](#typed-text).
+- **Page titles and sites in Google Chrome, while Web pages in Chrome is on.** Setup shows it switched on too, and one click turns it off. See [Browser history](#browser-history-google-chrome).
+- **Notes it writes** from the above, if you turn on [summaries](#summaries).
 
-### Search finds your own words
+### Typed text
 
-Search looks through window titles, pages, notes and what you typed. Each result shows the line that matched, and the right side shows where it came from.
+Setup shows typed text switched on, and one click turns it off, then or any time in Settings. When it's on, DayDream saves what you type in these apps, each kind with its own checkbox in Settings › Apps to remember:
 
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/readme/search-dark.png">
-    <img src="docs/images/readme/search-light.png" width="860" alt="Search for pricing: a best match in the Pages draft, then today's Claude chats, a YouTube video and the morning draft, with the matching draft words on the right.">
-  </picture>
-</p>
+| Kind | Apps | Websites in Google Chrome | On when you turn typing on? |
+| --- | --- | --- | --- |
+| Search boxes and AI prompts | Spotlight, Claude, ChatGPT | Search engines and AI chats | Yes |
+| Writing apps | Notes, TextEdit, Pages, Obsidian | Notion | Yes |
+| Code | Terminal, Ghostty, Xcode, Cursor | None | Yes |
+| Messages and email | Messages, Mail, WhatsApp (your own messages only) | Email and chat sites, and social sites with chat, like Facebook and LinkedIn | Yes |
+| Other websites | | Any other website, except blocked sites | Yes |
 
-### Pick up where you left off
+- **No other app's typing is recorded**, and no other browser's.
+- **Websites need two switches.** What you type on websites in Google Chrome is saved only while typed text **and** [Web pages in Chrome](#browser-history-google-chrome) are both on. DayDream saves the words, the site (like `wikipedia.org`), the page's title where Chrome page history saves it (webmail keeps the open email's subject; common search and chat sites keep the site only) and, when the message box shows it, who a message went to (a chat's channel or person, an email's To name), never the rest of the address. Cloud summaries, if you turn them on, get the words, the site, the page title (on webmail, the email's subject), cleaned of any address and unread count, and who it went to.
+- **Always skipped:** password fields and anything typed while macOS secure input is on; everything in Chrome while any Incognito or Guest window is open; blocked sites (common banking, password, sign-in, payment, health and government sites, web terminals and cloud consoles, sign-in and payment pages, Google Docs, and sites you add); web fields for card numbers, one-time codes, PINs and passwords; and passwords typed right after `sudo`, `ssh` and similar commands in a terminal (see [Known limits](#known-limits)). After you run `ssh`, DayDream stops recording in that terminal until you switch to another tab, window or app. If you come back to the remote session, what you type there can be recorded.
+- Text that looks like an API key, a card number, a one-time code or a `password: ...` line is dropped. DayDream can't reliably spot an ordinary password typed into a normal text box, so leave typed text off if you type secrets there.
+- In apps, DayDream also notes that you pressed Return or a keyboard shortcut, but not which one.
+- **Who it went to.** With a message, DayDream keeps who it went to when the app shows it: the Messages conversation's name, a chat's channel or person, an email's To name. Cloud summaries get it with the words.
+- **Encrypted on this Mac.** What you type is encrypted, with a key DayDream keeps in your Keychain. DayDream deletes the exact words after 7 days, unless you choose another time in Settings, and keeps a short note of where you typed.
+- **AI apps read the words only if you let them.** With **Let AI apps read what you typed** on (Settings › Connections; on by default), AI apps you connect can read the words you typed and sent, through the DayDream app while it is open: never passwords, secrets, private windows, excluded apps, blocked sites or words past their kept time. With it off, they see where and about how much you typed, and your summaries, never the words DayDream saves. A summary can say what a message was about ("Texted Mom about calling tonight"). If you choose cloud summaries, they get the words you type, to write your notes. Window titles can include words you typed, like an email subject or a shell command. Those are saved, read by AI apps and sent to cloud summaries like any other window title.
+- **Anyone typing on this Mac account while it's on is recorded as you.** Turn typed text off while they use it, or give them their own macOS user. The typing pause lasts only 10 minutes.
 
-Open search with nothing typed and your last moments are there. The draft you were in is one press away.
+## What it doesn't record
 
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/readme/recent-dark.png">
-    <img src="docs/images/readme/recent-light.png" width="860" alt="Search with nothing typed: the day's last three moments, with the Pricing page draft selected and the last words written in it on the right, next to Open Pages.">
-  </picture>
-</p>
+- **No screenshots, no screen recording, no reading text off the screen, no audio.**
+- **Password fields.** Nothing is read while a password field has focus or while macOS secure input is on.
+- **Selected text, what's already in text fields, and what Terminal shows.** Typed text, when it's on, saves only what you type.
+- **Known web browsers**, except Google Chrome when you turn it on. Safari, Arc, Edge, Brave, Firefox, Opera, Vivaldi, DuckDuckGo, Tor Browser and dozens of other browsers DayDream knows are skipped entirely, with their beta and developer editions. A browser DayDream doesn't know by name is skipped too if it opens web links; see [Known limits](#known-limits).
+- **Common password managers**, such as 1Password, Bitwarden and Apple Passwords. Add others to your excluded apps in Settings › Apps to remember.
+- **Apps you exclude** in Settings › Apps to remember. DayDream never records itself either.
+- **Windows whose title marks them as private or incognito.**
 
-### Your AI apps know your context
+Other apps, including messaging, mail, banking and health apps, **are** recorded unless you exclude them.
 
-Connect Claude, ChatGPT, Cursor or Windsurf with one click. Then ask "what did I get done today?" and the answer comes from your own history.
+## Browser history (Google Chrome)
 
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/readme/ai-dark.png">
-    <img src="docs/images/readme/ai-light.png" width="720" alt="A chat window asking What did I get done today, answered from DayDream: most of the day went to the pricing page, with a morning line, a 12:20 PM text and a 1:30 PM line.">
-  </picture>
-</p>
+Setup shows **Web pages in Chrome** switched on, with one line. One click turns it off, then or any time in Settings › Apps to remember. Nothing is saved from Chrome until macOS lets DayDream control Google Chrome. Setup's Google Chrome row asks: press **Allow** there, then Allow in the box macOS shows (if Chrome is closed, it opens in the background to ask). If you say no, the row and the menu bar say so, with **Ask again**: DayDream clears its own answer for Google Chrome and macOS asks again.
 
-### Kept on your Mac
+- When on, DayDream saves the title, site and link of the page in front in Google Chrome, and when. Links keep no search terms and stay on this Mac. It never saves what's on the page or your clicks. It saves what you type on websites only if [typed text](#typed-text) is on too.
+- While any Incognito or Guest window is open, DayDream saves nothing from Chrome.
+- Search engines save what you searched for, never the rest of the address. Common chat sites save the site only. Email sites save the folder or the open email's subject while Save email subjects is on (never codes, passwords, sign-ins or bank mail), and typing in webmail keeps the open email's subject.
+- Common banking, password, sign-in, payment, health and government sites are skipped. You can add your own, or use "Don't record this site".
+- Work and personal Chrome profiles are both saved. Pages are kept on this Mac, unencrypted. AI apps you connect can read them, and what they read goes to their AI provider. Cloud summaries, if you turn them on, send the titles and sites of the pages they summarize to OpenRouter. Page links stay on this Mac.
+- Safari, Arc, Edge, Brave, Firefox, Chrome Beta and Canary, and the other browsers DayDream knows, aren't recorded. A browser DayDream doesn't know by name is skipped too if it opens web links. One that doesn't is treated like any other app (its window titles are saved); exclude it in Settings › Apps to remember.
 
-Your history is kept on this Mac. Summaries can be written on this Mac too. DayDream has no account and no analytics, and you choose what an AI app or cloud summaries may read.
+| Browser history | |
+|---|---|
+| Saved | Page title, site (like `wikipedia.org`), link and time, for the Chrome page in front. The link keeps no search terms and stays on this Mac (Open Original opens it); AI apps and cloud summaries get the title and site only |
+| Typing | Saved only while typed text is on too: the words and the site. See [Typed text](#typed-text) |
+| Never saved | Page text, clicks, the rest of the address (a search engine's page keeps only what was searched for), background tabs, blocked sites, anything while an Incognito or Guest window is open |
+| Browsers | Google Chrome only. A browser DayDream doesn't know by name is skipped too if it opens web links. |
 
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/readme/settings-dark.png">
-    <img src="docs/images/readme/settings-light.png" width="620" alt="Settings: permissions both allowed, summaries On this Mac, one app excluded, Claude connected, and the line saying history is kept on this Mac and isn't encrypted by DayDream.">
-  </picture>
-</p>
+More in [PRIVACY.md](PRIVACY.md).
 
-### Set up in minutes
+## Use it on your own Mac
 
-Setup asks for two macOS permissions, one button each. After that DayDream lives in your menu bar, with one switch to pause or stop.
+Use DayDream only to record yourself, on your own Mac user account. Don't install it on anyone else's Mac or account. If someone else uses your account, stop recording (a pause ends on its own) or give them their own macOS user. If you use it at work, your employer's rules apply. DayDream isn't a monitoring tool: using it to watch other people can be illegal.
 
-<table>
-  <tr>
-    <td width="50%"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/readme/setup-dark.png"><img src="docs/images/readme/setup-light.png" alt="Setup's permission step: Accessibility and Input Monitoring, each with an Open System Settings button."></picture></td>
-    <td width="50%"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/readme/menu-dark.png"><img src="docs/images/readme/menu-light.png" alt="The menu bar panel: recording since 8:50 AM with the switch on, Pause, 9 moments remembered today, Search, Open DayDream, Settings and Quit."></picture></td>
-  </tr>
-</table>
+## Install
 
-Every picture here shows the app's own screens, drawn with sample data for a made-up person. The chat window above is a stand-in for an AI app. [scripts/readme-pictures](scripts/readme-pictures/render.sh) draws them again.
+You need a Mac with Apple silicon and macOS 15 or later. DayDream is tested on macOS 26.
 
-## Privacy
+1. Download `DayDream-<version>.dmg` from the [Releases page](https://github.com/getnorthlight/daydream/releases/latest).
+2. Open it and drag DayDream to Applications.
+3. Open DayDream from Applications. Setup walks you through the two permissions and your choices.
+4. Press **Start Recording**.
 
-- **Kept on this Mac.** Your history is in one folder in your user account. It isn't encrypted, only what you type is, so turn on FileVault.
-- **You choose what's recorded.** Typed text and Web pages in Chrome start on in setup, and one click turns either off. [Typed text](docs/guide.md#typed-text) lists every app and website it covers.
-- **What you type** is encrypted on this Mac. DayDream deletes the exact words after 7 days unless you choose another time.
-- **Never saved:** screenshots, audio, password fields, anything in Chrome while an Incognito or Guest window is open, blocked sites (banking, passwords, sign-in, payment, health and government), and apps you exclude.
-- **Summaries on this Mac** send nothing to write your notes. **Cloud summaries** are optional, use your own OpenRouter key and ask for hosts that don't keep your data (zero data retention). If you choose them, they get the words you type.
-- **AI apps you connect** can read your history, and what they read goes to their AI provider.
-- **No account, analytics or telemetry.** [Network connections](docs/guide.md#network-connections) lists every time DayDream goes online.
-- **Your own Mac only.** Use DayDream only to record yourself, on your own Mac user account.
+The [install guide](docs/install.md) has every step, with pictures, and how to check the download's fingerprint.
 
-The [guide](docs/guide.md) has every detail, and [PRIVACY.md](PRIVACY.md) is the privacy policy.
+## Permissions
 
-## Works with your AI apps
+DayDream needs two macOS permissions to record. Setup explains both and opens the right page of System Settings › Privacy & Security.
 
-DayDream includes a read-only [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server. Settings › Connections connects ChatGPT, Claude Desktop, Claude Code, Cursor or Windsurf with one button, or use Terminal:
+| Permission | Why DayDream needs it |
+| --- | --- |
+| **Accessibility** | To read which app is in front and its window title, and to check that a text field is safe to read before any typed text is saved. |
+| **Input Monitoring** | To notice clicks while recording, and, only if typed text is on, what you type in the apps and websites you turn typing on for. While typed text is off, key presses are ignored. DayDream only listens: it can't change or block what you type or click. |
+| **Automation: Google Chrome** (optional) | Only while Web pages in Chrome is on. It lets DayDream ask Chrome for the title and address of the tab in front, and whether any window is Incognito. If typed text is on too, it also asks where Chrome's windows are, to check which site you're typing on. It never runs scripts in Chrome or changes anything in it. |
 
-```sh
-mac-mem connect claude-desktop
-mac-mem disconnect claude-desktop
+Without Accessibility and Input Monitoring, recording won't start. If you turn either one off while recording, recording stops within about a second.
+
+DayDream doesn't use Screen Recording, the microphone or the camera.
+
+The first time you start recording, macOS also asks whether DayDream may show notifications. DayDream uses them only to tell you when recording stopped, or didn't start again, without you asking. You can say no; the menu bar panel says why too.
+
+## Using DayDream
+
+- **Record:** start, pause and stop recording from the menu bar. You can pause for 5, 15 or 30 minutes or 2 hours.
+- **Sleep and lock:** when your Mac wakes, unlocks or you switch back to your user, recording starts again by itself if it was on before. If it can't, DayDream shows a notice that says why and how to start again. If DayDream can't save for a moment, recording pauses and starts again by itself; you get a notice only if saving keeps failing for two minutes. If recording was on when DayDream quit or your Mac restarted, it starts again when DayDream opens, and DayDream says why if it can't. DayDream opens at login; Settings › Advanced has the switch.
+- **Look back:** the main window shows your day as moments on a timeline. Search finds past activity by app, window title, site or what you typed (typed words are searched on this Mac only, while they're kept).
+- **Forget:** "Forget This Moment" deletes a moment from your history.
+- **Exclude:** excluding an app stops new recording from it and hides what was already recorded. Excluding more keeps AI apps connected. A change that records more (an app or site no longer excluded, or typed text or Chrome pages turned on) disconnects AI apps until you reconnect them (Settings › Apps to remember then offers **Reconnect**). Recording pauses for the save and starts again by itself if it was on. The other typed text choices, like how long exact words are kept, apply at once and do neither.
+- **Back up and restore:** Settings › Advanced › Backup and restore saves your history to a folder you choose and can merge it back later. Backups are **not encrypted**, and they leave out your API key and AI app connections. If you save one to iCloud Drive or another synced folder, your whole history is uploaded there. See [docs/backup-restore.md](docs/backup-restore.md).
+
+## Summaries
+
+Summaries are short notes DayDream writes about your moments and days. Setup turns on summaries on this Mac unless you choose otherwise, and not every moment or day gets one (see [Known limits](#known-limits)). Your history is complete without them.
+
+There are two kinds, each a switch in setup and in Settings › Summarizer. Turning one on turns the other off; turning it off stops it at once. Recording never waits for either.
+
+**On this Mac.** Notes are written on your Mac, and nothing is sent to write them. The runtime that runs the model is inside the app (about 5 MB). The model itself, Qwen3.5-4B (2.74 GB), is downloaded from Hugging Face in the background when you press Continue in setup with **Summaries on this Mac** on (it's on by default on a Mac that can run it), or turn it on in Settings › Summarizer. Settings says how far the download is; closing setup doesn't stop it. It needs Apple silicon, macOS 15 or later and 8 GB of memory. If typed text is on, it can use the words DayDream saves from your typing, on your Mac, so a note can say what you asked or wrote. Cloud summaries get them too, if you turn cloud summaries on. When you turn it on, DayDream may also ask Apple about its signing certificate. If you quit during the download, it finishes after DayDream opens again (and may then ask Apple); otherwise neither happens by itself. If On this Mac was on when DayDream quit or your Mac restarted, it turns back on by itself, using only checks already on your Mac.
+
+**Cloud summaries** use your own OpenRouter key:
+
+- You turn on **Use an OpenRouter key instead**, in setup or Settings › Summarizer, and paste an [OpenRouter](https://openrouter.ai) API key. The line under the switch says what is sent. The key is tried when you press Continue (or Connect); if OpenRouter doesn't accept it, summaries stay off and setup says so. It's the default on a Mac that can't run summaries on this Mac.
+- DayDream then sends the activity being summarized to OpenRouter: app names, window titles, page titles and sites from Google Chrome (like wikipedia.org, never the full address), the words you type when typed text is on, who a message went to, and any corrections you wrote to notes about that activity. Only activity recorded after you turn them on is sent. OpenRouter is asked to use only model hosts that don't keep your data; it keeps the text only if logging is on in your OpenRouter account.
+- Each request asks OpenRouter for a model host that doesn't keep your data (zero data retention), with no fallback to other hosts. OpenRouter still keeps some details about each request, and it bills your account.
+- The switch stays on when you quit DayDream or change your privacy choices; your key stays in the Keychain. If a later version changes what is sent, the switch turns off until you turn it on again.
+
+How notes are written and checked, and exactly when On this Mac goes online, is in [docs/summaries.md](docs/summaries.md).
+
+## Connect an AI app
+
+DayDream includes a read-only [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server, so an AI app on your Mac can look things up in your history.
+
+**Before you connect anything:** whatever the AI app reads from DayDream, it can send to its own AI provider. Text in your history (a window title, a page title) could try to steer the AI. DayDream labels everything it returns as data, not instructions, but it can't control what the AI app does with it.
+
+- **In the app:** Settings › Connections lists the AI apps DayDream can connect for you, each with one button. **Connect** adds one `daydream` entry to that app's settings file and changes nothing else in it. If the AI app is open, the button says **Connect & Restart**: DayDream quits the app, adds the entry and opens the app again, so it picks DayDream up. Claude Desktop then opens on a new chat with a first question typed in, for you to send; for other apps DayDream copies the question instead. The question asks the AI app to explain what DayDream does, check that it's connected and ready, and suggest three questions to ask; it doesn't ask for a recap of your day. Before each change DayDream saves a copy of the AI app's settings file next to it, if the file exists, with `.daydream-backup` added to the name (for example `~/.cursor/mcp.json.daydream-backup`). That copy can hold keys for the app's other tools; delete it when you no longer need it. **Disconnect** removes DayDream's entry again and turns its key off.
+- **In Terminal:** `mac-mem connect <app>` and `mac-mem disconnect <app>` do the same. The tool is inside the app at `/Applications/DayDream.app/Contents/MacOS/mac-mem` (or under `~/Applications` if you installed DayDream there).
+- **Other MCP apps:** see [Connect an AI app by hand](docs/install.md#connect-an-ai-app-by-hand).
+
+The AI app starts `mac-mem mcp` itself and talks to it over standard input and output. The MCP server opens no network port. Its tools are `status`, `context`, `current-context`, `search`, `read`, `open`, `recall`, `recap` and `moment_details`. `status` is the setup check: whether this AI app's connection works, whether recording is on, off or paused, whether typed text is on and DayDream has saved typing in the last 24 hours (the time only, never the words), whether Web pages in Chrome is on, whether summaries run on this Mac, in the cloud or not at all, and example questions that fit those settings. An empty history on a new install reads as ready, not as a problem. `recap` gives a few days at a glance (a headline per day and a few time blocks, with what you sent, asked or worked on first; brief visits are only counted), so the AI app can answer "what have the past couple of days been like?" in a few lines. It reads DayDream's notes, never your typed words. `moment_details` reads one moment's real actions: with **Let AI apps read what you typed** on and DayDream open, the exact words you typed and sent (the DayDream app hands them over through a private local socket after checking the AI app's key), and `search` then matches typed words too; with it off, where and about how much you typed. The tools can't start or stop recording, change settings or delete anything.
+
+A connection records which AI apps you allowed, but it isn't a lock: any program running under your macOS account can read the history file directly (see [Known limits](#known-limits)).
+
+## Updates
+
+DayDream checks for updates once a day at getdaydream.app and downloads a new version quietly from its [GitHub Releases page](https://github.com/getnorthlight/daydream/releases). Nothing pops up: the update installs the next time DayDream quits, or right away if you choose **Restart to Update** in the menu bar menu. You can turn automatic updates off in Settings › Advanced › App updates. Every update is signed, and DayDream refuses one whose signature doesn't match. If you were recording, recording starts again after the update relaunches DayDream.
+
+## Your data
+
+Your history, and everything DayDream derives from it, is in one folder:
+
+```
+~/Library/Application Support/DayDream/
 ```
 
-The AI app starts `mac-mem mcp` itself and talks to it over standard input and output. It opens no network port. The tools are `status`, `context`, `current-context`, `search`, `read`, `open`, `recall`, `recap` and `moment_details`. They can't start or stop recording, change settings or delete anything. Other MCP apps: see [Connect an AI app by hand](docs/install.md#connect-an-ai-app-by-hand). More in the guide's [Connect an AI app](docs/guide.md#connect-an-ai-app).
+It holds your history (`memory.sqlite`) and your AI app connections. Only your macOS account can open the folder. Your cloud summary key, if you add one, is kept in your macOS Keychain, not in the folder. So is the key that encrypts what you type, while typed text is on. History is kept until you delete it.
 
-## Requirements
+DayDream was called Mac Mem while it was being built. The command-line tool is still called `mac-mem`. If you used a build from before the rename, DayDream moves your old folder here the first time it opens; see [docs/rename.md](docs/rename.md).
 
-- A Mac with Apple silicon and macOS 15 or later. DayDream is tested on macOS 26.
-- Summaries on this Mac need 8 GB of memory and a one-time 2.74 GB model download.
-- Web pages and typing on websites are recorded in Google Chrome only.
+## Uninstall
 
-## Download
+DayDream can remove itself, with or without your history: open Settings › Advanced and choose **Uninstall DayDream…**. [docs/uninstall.md](docs/uninstall.md) has the steps, including how to remove everything by hand and how to clean up a build from before the rename.
 
-The first download is coming soon at [getdaydream.app](https://getdaydream.app) and on the Releases page. Until then you can [build it from source](#build-from-source).
+## Network connections
 
-Releases are signed with DayDream's Apple Developer ID and notarized by Apple. DayDream then updates itself from GitHub Releases. The [install guide](docs/install.md) has every step, with pictures.
+DayDream has no account, analytics, telemetry or crash reporting. The developers receive nothing from your Mac. It connects to the internet only in these cases:
+
+| When | Where | What is sent |
+| --- | --- | --- |
+| It checks for updates (on by default; you can turn it off) | `getdaydream.app`, then `github.com` for a new version | A request for the list of versions, then the update itself. No history |
+| You turn on cloud summaries | `openrouter.ai` | The activity being summarized, with your API key |
+| You turn on Summaries on this Mac (in setup, it's on when you press Continue) | `huggingface.co` (it may hand the download to `us.aws.cdn.hf.co`) | A request for the 2.74 GB model file. No history |
+| You turn on Summaries on this Mac, and the certificate status macOS saved has run out | Apple | A check of DayDream's signing certificate. No history. Not after a restart |
+| DayDream opens after a quit that stopped a model download you started | Hugging Face, then maybe Apple | The rest of the model file, then the certificate check above. No history |
+| You use "Open Original" on a web link in your history | That website | One `HEAD` request (no cookies, no query string) to check the page still exists |
+| You connect an AI app | Wherever that AI app sends data | Whatever the AI app reads from DayDream |
+| You save a backup to a synced folder | That sync service | Your whole history |
+
+Web pages in Chrome doesn't use the network: DayDream asks the Chrome app on your Mac directly. Report a Problem never sends anything itself: it opens a new email in your own mail app, and nothing goes until you press Send there.
+
+## Known limits
+
+- **Beta.** Expect bugs. Please [report them](#report-a-problem).
+- **Apple silicon and macOS 15 or later only.** Intel Macs aren't supported. DayDream is tested on macOS 26.
+- **Your history isn't encrypted, only what you type.** It's a regular SQLite database in your user folder. Other macOS users can't open it without administrator rights, but **any app running under your macOS account can read it**, including DayDream's own command-line tool. Only your Mac login password and FileVault protect it, so turn on FileVault (System Settings › Privacy & Security › FileVault) and don't run software you don't trust.
+- **Browsers DayDream doesn't know.** A browser that isn't on DayDream's list (for example a new or rare one) is skipped if it tells macOS that it opens web links, as browsers normally do. One that doesn't is treated like any other app. Its window titles, usually page titles, are saved, and so are web addresses, including search terms, if it shows them to macOS. Exclude it in Settings › Apps to remember.
+- **Short skip lists.** The password manager and sensitive-site lists cover common ones. They are not complete. Exclude any other app, and add any other site, yourself.
+- **Typed text only in the apps listed in [Typed text](#typed-text) and on websites in Google Chrome**, and only while typed text is on (it starts on; one click turns it off). It works only with the US, ABC or British keyboard layout, and input methods (such as Chinese or Japanese input) aren't captured. Paste, autofill and dictation aren't captured.
+- **Terminal password prompts.** DayDream can't always tell when a terminal is asking for a password. Passwords typed right after `sudo`, `ssh` and similar commands are skipped, but a script or custom prompt can be missed. If you switch to another tab, window or app while a password prompt or a remote `ssh` session is open, what you type there after you come back can be recorded.
+- **Incognito or temporary chats in Claude and ChatGPT.** DayDream can't tell when Claude or ChatGPT is in an incognito or temporary chat, so what you type there is saved like any other prompt. Turn off Search boxes and AI prompts, or turn typed text off, before you use one.
+- **History is kept until you delete it.** There's no setting yet to expire old history automatically.
+- **Summaries are experimental, and many moments get none.** A note covers at most 400 recorded actions, so very long moments get none. Cloud summaries cover only activity recorded after you first turned them on (they stay on across a quit), so earlier moments are written on your Mac or by code, or stay without notes. Their actions stay as they are. Notes can still be wrong.
+- **Summaries on this Mac need memory.** They need 8 GB of memory, and the model uses several GB while it's loaded. They have been tested on macOS 26 only.
+
+## Report a problem
+
+In DayDream, choose **Report a Problem…** in the menu bar menu or the Help menu. It opens a new email to support@getdaydream.app in your mail app, with a "What happened?" section for you and a few details: app and macOS version, whether Accessibility, Input Monitoring and Chrome automation are on, whether recording is on, the summary mode, which AI apps are connected, recent error codes and a few counts. It never includes your history, typed words, window titles, web addresses, names, file paths or keys. Read it, write what happened, and press Send. With no mail app set up, the same text is copied for you to paste into an email.
+
+**Never paste your history, window titles, typed text, database files or screenshots of your timeline into an issue.** Issues are public.
 
 ## Build from source
 
@@ -166,13 +259,6 @@ demo="$(mktemp -d)/daydream-demo"
 
 Never point `demo` or other test commands at your real history folder. To run the checks, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Tools
-
-- **`mac-mem`**: the command-line tool and MCP server, inside the app at `DayDream.app/Contents/MacOS/mac-mem`. `status`, `search`, `day`, `read`, `connect`, `disconnect` and `connections` work on your history; `demo` fills a test folder with made-up data. Pass `--home <folder>` to point it at a test folder.
-- **`mac-mem-backup`**: the backup helper behind Settings › Advanced › Backup and restore. See [docs/backup-restore.md](docs/backup-restore.md).
-- **The checks**: `bash runner-1001/run-headless.sh` builds the package and runs every headless check with made-up data. [CONTRIBUTING.md](CONTRIBUTING.md) lists the quick ones, like `python3 scripts/docs-claims-checks.py`.
-- **Pictures**: `scripts/readme-pictures/render.sh` draws the pictures on this page, and `scripts/docs-install-render.swift` the ones in the install guide, from the app's own views and sample data.
-
 ## Project layout
 
 | Path | What's there |
@@ -190,13 +276,6 @@ Never point `demo` or other test commands at your real history folder. To run th
 | `Checks/`, `Tests/`, `scripts/*-checks.*` | Checks and tests |
 | `packaging/` | `Info.plist`, icons and dependency pins |
 | `docs/` | [How DayDream works](docs/README.md) |
-
-## Learn more
-
-- [Guide](docs/guide.md): what DayDream records and sends, permissions, summaries, updates and known limits.
-- [Install guide](docs/install.md), [Uninstall](docs/uninstall.md) and [From Mac Mem to DayDream](docs/rename.md).
-- [Privacy and security FAQ](docs/faq.md), [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md).
-- [All docs](docs/README.md).
 
 ## Contributing and security
 

@@ -249,7 +249,7 @@ final class FakeChrome:@unchecked Sendable {
         pass("sites: listed and changed only in Apps to remember › Web pages in Chrome")
 
         expect(BrowserHistoryLine.make(recording:true,pagesOn:true,access:.allowed).text == "Browser history on (Google Chrome)"
-               && BrowserHistoryLine.make(recording:true,pagesOn:true,access:.denied).text == "Browser history on, but Chrome access is off"
+               && BrowserHistoryLine.make(recording:true,pagesOn:true,access:.denied).text == "Chrome pages aren't being saved."
                && BrowserHistoryLine.make(recording:true,pagesOn:true,access:.notAsked) == .needsAccess
                && BrowserHistoryLine.make(recording:false,pagesOn:true,access:.allowed) == .off
                && BrowserHistoryLine.make(recording:true,pagesOn:false,access:.allowed) == .off && BrowserHistoryLine.symbol == "globe"
@@ -306,7 +306,8 @@ final class FakeChrome:@unchecked Sendable {
         window.contentView=nil
         pass("card: appears → reads access only while the saved switch is on, its Settings row open or closed; showing it never asks macOS, opens System Settings or edits sites")
 
-        // Off, the card is the title and the switch; on adds the site field, and Chrome access only while it needs a click.
+        // Off, the card is the title and the switch; on adds the site field and the Chrome access row (chromeask-1005:
+        // Allowed shows too, as everywhere else; before macOS asks, the primer line under it).
         func height(on:Bool,savedOn:Bool,access:ChromeAccessState = .allowed) -> CGFloat {
             let card=ChromePagesCard(on:.constant(on),savedOn:savedOn,access:access,sites:[],enabled:true,
                                      add:{_ in},remove:{_ in},allow:{},openSystemSettings:{},checkAccess:{})
@@ -314,9 +315,9 @@ final class FakeChrome:@unchecked Sendable {
         }
         let off=height(on:false,savedOn:false),on=height(on:true,savedOn:true),asking=height(on:true,savedOn:true,access:.notAsked)
         expect(off <= 60,"the off card is one row: \(off)")
-        expect(on > off + 40 && on < off + 110,"on, access allowed: the site field only: \(on) vs \(off)")
-        expect(asking > on + 20,"on, access not asked: the access row with Allow… too: \(asking) vs \(on)")
-        pass("card: off is one row (\(Int(off)) pt); on shows the site field, and Chrome access only while it needs a click")
+        expect(on > off + 40 && on < off + 160,"on, access allowed: the site field and the Allowed row: \(on) vs \(off)")
+        expect(asking > on + 8,"on, access not asked: the primer under Allow too: \(asking) vs \(on)")
+        pass("card: off is one row (\(Int(off)) pt); on shows the site field and Chrome access, with the primer before macOS asks")
 
         // Disabled, the card says why on its own, except where the page already does (unavailableNote: false).
         func disabled(note: Bool) -> CGFloat {
@@ -342,18 +343,21 @@ final class FakeChrome:@unchecked Sendable {
         expect(ChromeEventSender.noConsentPrompt.rawValue == UInt(kAEDoNotPromptForUserConsent),"SDK consent-suppression bit")
         expect(body(of:"static var live:ChromeAccessEnvironment",in:app).contains("signatureValid(pid:$0,refresh:true)"),
                "Try Again reruns dynamic verification instead of reusing a cached failure")
-        expect(card.contains("if access.offersSystemSettings") && card.contains("if let helper = access.helper"),
-               "card renders recovery settings and helper guidance")
+        expect(card.contains("if let button = Self.accessButton(access)") && card.contains("if let helper = Self.accessHelper(access)")
+               && !card.contains("access.offersSystemSettings"),
+               "card renders its one button (Allow, Ask again, Try Again) and the primer or what's wrong (chromeask-1005)")
         expect(app.components(separatedBy:"ChromeEventSender.askForChromeAccess(").count == 2,"MacMemApp.swift calls askForChromeAccess once")
         let allow=body(of:"func allowChromeAccess(",in:app)
         expect(allow.contains("ChromeEventSender.askForChromeAccess(pid:pid)") && allow.contains("env.background"),"the prompt call is in allowChromeAccess, in the background")
         let check=body(of:"func checkChromeAccess()",in:app)
         expect(!check.contains("ask?(") && !check.contains("askForChromeAccess") && check.contains("env.status(pid)"),"checkChromeAccess only reads the status")
         expect(body(of:"static var live:ChromeAccessEnvironment",in:app).contains("ask:nil"),"the live environment has no stand-in prompt")
-        // Owner, 10/2: two pressed routes in Settings, the Apps card and the Permissions row; both are allowChromeAccess.
-        expect(settings.components(separatedBy:"model.allowChromeAccess()").count == 3 && settings.contains("allow: { model.allowChromeAccess() }")
+        // Owner, 10/2: two pressed routes in Settings, the Apps card and the Permissions row. chromeask-1005: the card's
+        // Allow goes setup's way (askChromeAccessInSetup, which reaches allowChromeAccess), its Ask again the menu bar's.
+        expect(settings.components(separatedBy:"model.allowChromeAccess()").count == 2 && settings.contains("allow: { model.askChromeAccessInSetup() }")
+               && settings.contains("askAgain: { model.askChromeAgain() }, checkAccess: { model.checkChromeAccess() })")
                && settings.contains("allow: { pressed = true; model.allowChromeAccess() }"),
-               "Settings' only Allow routes are the card's and the Permissions row's allow closures")
+               "Settings' only Allow routes are the card's (setup's path) and the Permissions row's allow closures")
         expect(!card.contains("askForChromeAccess") && !card.contains("AEDetermine") && !card.contains("ChromeEventSender"),"the card never asks macOS itself")
         expect(settings.contains("enabled: model.preferencesAvailable && model.development == nil && !model.preferencesUnresolved,")
                && settings.contains("unavailableNote: false,") && card.contains("if !enabled && unavailableNote {"),
@@ -365,12 +369,11 @@ final class FakeChrome:@unchecked Sendable {
         // recording started, never before (consent audit 9/28).
         let onboarding=(try? String(contentsOfFile:"Sources/MacMemApp/DaydreamOnboarding.swift",encoding:.utf8)) ?? ""
         // fix/setup-status: Start Recording (once it started) and what's-new's Done (while recording) both end in finish().
-        // Owner, 10/2: finish() follows up only on the Chrome row's own press (askChromeAccessAfterSetup's guard).
+        // chromeask-1005 (owner 10/5): finish() never asks. macOS's question comes only from the Chrome row's Allow, in
+        // setup, never later (the after-setup follow-up is gone).
         let finish=onboarding.components(separatedBy:"private func finish() {").dropFirst().first?.components(separatedBy:"\n    }").first ?? ""
-        let afterSetup=body(of:"func askChromeAccessAfterSetup()",in:app)
-        expect(onboarding.components(separatedBy:"askChromeAccessAfterSetup()").count == 2 && finish.contains("model.askChromeAccessAfterSetup()")
-               && afterSetup.contains("guard chromeSetupAsked else {return}") && afterSetup.contains("allowChromeAccess()"),
-               "finishing setup asks only after the Chrome row's unanswered press, through allowChromeAccess")
+        expect(!finish.isEmpty && !finish.contains("Chrome") && !(onboarding+app).contains("askChromeAccessAfterSetup"),
+               "finishing setup asks nothing about Chrome; no ask follows setup")
         // Setup's Chrome row: its Allow is the only other route, through allowChromeAccess; the views never ask.
         let setupAsk=body(of:"func askChromeAccessInSetup()",in:app)
         let stepView=(try? String(contentsOfFile:"Sources/MemoryUI/OnboardingScreens.swift",encoding:.utf8)) ?? ""
@@ -603,17 +606,9 @@ final class FakeChrome:@unchecked Sendable {
         expect(try await waitUntil {model.chromeAccess == .unverified} && fake.count("ask") == 0,"Allow asked an unverified Chrome")
         pass("Allow…: asks exactly once, off main, only when Chrome is running and verified; the answer is the new state")
 
-        // Owner, 10/2: setup's Start Recording never asks by itself. Without a press of the Chrome row's Allow, nothing
-        // asks now or when Chrome next comes forward (Settings' Allow… stays the way).
+        // Owner, 10/2 (chromeask-1005: no follow-up at all): setup's Start Recording never asks; macOS's question only
+        // follows the Chrome row's Allow.
         expect(model.browserPagesSaved,"the fixture: Web pages in Chrome is saved on")
-        fake.reset();fake.set(status:-1744,answer:0)
-        model.askChromeAccessAfterSetup()
-        try await tick(0.2)
-        expect(fake.count("ask") == 0 && fake.waitingActivations == 0 && !model.chromeSetupAsked,
-               "setup without the row's press asks nothing: asks=\(fake.count("ask")) waiting=\(fake.waitingActivations)")
-        fake.reset();fake.set(pid:nil)
-        model.askChromeAccessAfterSetup()
-        expect(fake.count("ask") == 0 && fake.waitingActivations == 0,"setup without the press never waits for Chrome to ask")
         pass("setup's Start Recording asks nothing by itself: macOS's question only follows the Chrome row's Allow")
 
         // Setup's Chrome row (owner, 10/2; was its own page 10/1): its Allow asks now; with Chrome closed it opens Chrome
@@ -625,9 +620,8 @@ final class FakeChrome:@unchecked Sendable {
         model.askChromeAccessInSetup()
         expect(try await waitUntil {model.chromeAccess == .allowed} && fake.count("ask") == 1 && fake.opens == 0 && model.chromeSetupAsked,
                "setup step with Chrome running asks once and opens nothing: \(model.chromeAccess) asks=\(fake.count("ask")) opens=\(fake.opens)")
-        model.askChromeAccessAfterSetup()
         try await tick(0.2)
-        expect(fake.count("ask") == 1 && fake.waitingActivations == 0,"finishing setup after the step's answer asked again")
+        expect(fake.count("ask") == 1 && fake.waitingActivations == 0,"the step's answer: nothing more asks or waits")
         fake.reset();fake.set(pid:nil,status:-1744,answer:-1743);fake.set(installed:true,opensAs:4343)
         model.askChromeAccessInSetup();model.askChromeAccessInSetup()
         expect(try await waitUntil {model.chromeAccess == .denied} && fake.count("ask") == 1 && fake.opens == 1 && fake.mainThreadCalls.isEmpty,
@@ -636,18 +630,14 @@ final class FakeChrome:@unchecked Sendable {
         model.askChromeAccessInSetup()
         expect(try await waitUntil {model.chromeAccess == .chromeNotRunning} && fake.count("ask") == 0 && fake.opens == 1,
                "setup row: Chrome that doesn't open asks nothing: \(model.chromeAccess)")
-        expect(DaydreamChromeStepContent.line(access:.chromeNotRunning,asked:true) == DaydreamChromeStepContent.laterLine
+        expect(DaydreamChromeStepContent.line(access:.chromeNotRunning,asked:true) == ChromeAccessState.chromeNotRunning.helper
                && DaydreamChromeStepContent.line(access:.chromeNotRunning,asked:false) == nil
                && DaydreamChromeStepContent.line(access:.denied,asked:true) == nil && DaydreamChromeStepContent.line(access:.checking,asked:true) == nil
                && DaydreamChromeStepContent.line(access:.unverified,asked:true) == ChromeAccessState.unverified.helper,
                "setup step: no line before the press or after an answer; a press macOS couldn't answer says why")
-        // A press macOS couldn't answer (Chrome didn't open): finishing setup asks once, when Chrome next comes forward.
-        model.askChromeAccessAfterSetup();model.askChromeAccessAfterSetup()
-        expect(fake.count("ask") == 0 && fake.waitingActivations == 1,"pressed, unanswered: finishing setup waits once for Chrome")
-        fake.set(pid:4242,status:-1744,answer:0)
-        fake.activateChrome()
-        expect(try await waitUntil {model.chromeAccess == .allowed} && fake.count("ask") == 1,
-               "pressed, unanswered: Chrome's next activation asks once: \(model.chromeAccess) asks=\(fake.count("ask"))")
+        // A press macOS couldn't answer (Chrome didn't open): nothing waits to ask later (chromeask-1005); the row says to
+        // open Chrome, then press Allow again.
+        expect(fake.count("ask") == 0 && fake.waitingActivations == 0,"pressed, unanswered: nothing waits for Chrome to ask")
         fake.reset();fake.set(pid:nil);fake.set(installed:false,opensAs:4343)
         model.askChromeAccessInSetup()
         expect(model.chromeAccess == .chromeNotRunning && fake.opens == 0 && fake.count("ask") == 0 && !model.chromeInstalled,
@@ -659,13 +649,14 @@ final class FakeChrome:@unchecked Sendable {
                && Row.trailing(access:.denied) == .refused && Row.trailing(access:.askFailed) == .refused
                && [ChromeAccessState.unknown,.notAsked,.chromeNotRunning,.unverified,.twoCopies].allSatisfy {Row.trailing(access:$0) == .allow},
                "setup row: spinner while asking, Allowed, System Settings once refused, else Allow")
-        expect(Row.line(access:.notAsked,asked:false) == nil && Row.line(access:.chromeNotRunning,asked:true) == DaydreamChromeStepContent.laterLine
+        expect(Row.line(access:.notAsked,asked:false) == nil && Row.line(access:.chromeNotRunning,asked:true) == ChromeAccessState.chromeNotRunning.helper
                && Row.line(access:.unverified,asked:true) == ChromeAccessState.unverified.helper
-               && Row.line(access:.denied,asked:true) == ChromeAccessState.denied.helper && Row.line(access:.denied,asked:false) == nil
+               && Row.line(access:.denied,asked:true) == nil && Row.line(access:.denied,asked:false) == nil
+               && Row.subtitle(access:.denied,typing:true,opensChrome:false) == Row.offLine
                && Row.line(access:.allowed,asked:true) == nil,
-               "setup row: no line before the press; after it, why macOS gave no answer or where to allow it")
+               "setup row: no line before the press; after it, why macOS gave no answer; refused, the row's own line says where to allow it")
         expect(Row.title == "Google Chrome" && Row.allowTitle == "Allow" && Row.reason == ChromePagesCard.setupLine,"setup row: its words")
-        pass("setup's Chrome row asks once on its press (opening a closed Chrome first); finishing setup asks only after an unanswered press")
+        pass("setup's Chrome row asks once on its press (opening a closed Chrome first); nothing asks after setup")
 
         // A late read never overwrites a newer one.
         fake.reset();fake.set(status:-1743)
@@ -699,7 +690,7 @@ final class FakeChrome:@unchecked Sendable {
         expect(model.chromeAccess == .denied,"a check started before a page read overwrote it: \(model.chromeAccess)")
         let host=(try? String(contentsOfFile:"Sources/MacMemApp/MacMemApp.swift",encoding:.utf8)) ?? ""
         expect(host.contains("next.pages.onAccess = { [weak self] access in MainActor.assumeIsolated { self?.chromeAccessFromPages(access) } }")
-               && host.contains("access:chromeAccessShown,chromeExcluded:chromeExcluded)"),"the app wires page history's reads to the menu line")
+               && host.contains("access:chromeLineAccess,chromeExcluded:chromeExcluded)"),"the app wires page history's reads to the menu line (the last answer while Chrome is closed)")
         pass("menu line (G30): follows page history's reads, and keeps the last answer while a check runs")
 
         // Live test (build 7): two of the person's own Chromes (a headless one is never counted: ChromeProcesses) say
@@ -839,9 +830,11 @@ final class FakeChrome:@unchecked Sendable {
         try await tick(0.2)
         expect(!model.browserPages && !model.browserPagesSaved,"denied: the toggle stays off")
         expect(Row.trailing(access:.denied,pagesOn:false,canTurnOn:true) == .refused && ChromeAccessState.denied.offersSystemSettings
-               && Row.line(access:.denied,asked:false,pagesOn:false,settings:true) == ChromeAccessState.denied.helper
-               && Row.line(access:.askFailed,asked:false,pagesOn:true,settings:true) == ChromeAccessState.askFailed.helper,
-               "denied: System Settings and the line saying where to allow it")
+               && Row.line(access:.denied,asked:false,pagesOn:false,settings:true) == nil
+               && Row.line(access:.askFailed,asked:false,pagesOn:true,settings:true) == nil
+               && Row.subtitle(access:.denied,typing:false,opensChrome:false) == Row.offLine
+               && Row.subtitle(access:.askFailed,typing:true,opensChrome:false) == Row.offLine,
+               "denied: the row's own line says Chrome pages are off, beside Ask again (chromeask-1005: said once)")
         pass("denied: the toggle is unchanged; the row's way on is Open System Settings with its line")
         // Allowed (in System Settings), pages off: a read never turns it on; the row says so and offers Turn On.
         fake.reset();fake.set(status:0)

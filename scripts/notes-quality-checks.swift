@@ -244,7 +244,7 @@ func alias(_ v: ModelView, _ id: String) -> String { v.items.first { $0.actions.
             ("Zoom chat", zoom, { v in [json("Weekly product sync", [(alias(v, "zoom-2"), "Messaged Everyone in the Weekly product sync to reshare the roadmap slide.")])] },
              ["Messaged Everyone in the Weekly product sync to reshare the roadmap slide."]),
             ("PR comment", pr, { v in [json("PR #418 review", [(alias(v, "pr-6"), "Drafted a review comment on PR #418 about the CSV header naming.")])] },
-             ["Drafted a review comment on PR #418 about the CSV header naming."]),
+             ["Wrote a review comment on PR #418 about the CSV header naming."]),   // a model's "Drafted" is shown as "Wrote"
             ("wrong lead", mail, { v in [json("Team plan pricing", [(alias(v, "mail-1"), "Texted Sam about Team plan pricing.")]),
                                         json("Team plan pricing", [(alias(v, "mail-1"), "Emailed Sam about Team plan pricing.")])] }, ["Emailed Sam about Team plan pricing."]),
         ]
@@ -278,7 +278,7 @@ func alias(_ v: ModelView, _ id: String) -> String { v.items.first { $0.actions.
             check(n?.bullets.map(\.text) == [expect], "PR by sam, you are \(names[0]): \"\(expect)\" (got \(n?.bullets.map(\.text) ?? []))")
         }
         // Salvage when both answers fail: where it happened, never a bare lead or "Wrote in X about X".
-        for (r, bad, expect) in [(zoom, "Wrote a message in Zoom.", "Messaged Everyone in Weekly product sync."), (pr, "Wrote a message in Chrome.", "Drafted a comment on PR #418: Add weekly summaries export.")] {
+        for (r, bad, expect) in [(zoom, "Wrote a message in Zoom.", "Messaged Everyone in Weekly product sync."), (pr, "Wrote a message in Chrome.", "Wrote a comment on PR #418: Add weekly summaries export.")] {
             guard let v = try? ModelView(request: r, actions: r.actions) else { continue }
             let got = try? CanonicalGrounding.salvage(json("", [("i1", bad)]), request: r, view: v, provider: CanonicalLocalWriter.provider)
             check(got?.bullets.map(\.text) == [expect], "salvage: \"\(expect)\" (got \(got?.bullets.map(\.text) ?? []))")

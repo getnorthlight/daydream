@@ -216,6 +216,7 @@ actor FakeOpenRouter {
             ("a moment set aside by an earlier build", recoverSetAside),
             ("a revoked key across midnight", revokedAcrossMidnight),
             ("local overdue during typing", overdueDuringTyping), ("local overdue power guard", overduePowerGuard),
+            ("local open moment that grew while queued", grownWhileQueued),
             ("past rewrite cooldown", catchUpRewriteCooldown), ("empty catch-up quiet", catchUpEmptyQuiet),
             ("catch-up beside today's rewrites", catchUpBesideTodayRewrites), ("catch-up never while typing", catchUpNotWhileTyping),
             ("writer version refresh", writerVersionRefresh),
@@ -317,29 +318,36 @@ actor FakeOpenRouter {
         await finish(rig)
     }
 
-    /// A past-day moment due after the rewrite cooldown is not an empty history. The REAL source discovers
-    /// its deadline and the REAL writer must revisit it, preserving the power/load gates and single-write rule.
-    /// Real integration, continuous activity (zero idle), no model/network or app lifecycle.
+    /// A closed moment with no note during continuous activity (zero idle). 96f4cf0 held it behind the 20-minute batch
+    /// cadence for at most five minutes (`overdueAfter`); 03beb17 made it first-note service work ("First eligible closed
+    /// work runs promptly at closure"), so it is written on the pass that finds it, with the warm model and no extra load,
+    /// and once only. Real integration, no model/network or app lifecycle.
     @MainActor static func overdueDuringTyping() async throws {
         let r = try await rig("overdue-typing")
         defer { r.defaults.removePersistentDomain(forName: r.suite) }
         try await on(r)
         _ = try moment(r, "overdue-first", "First draft")
         await r.writer.pass(.explicit)
-        let before = await r.model.answers
+        let before = await r.model.answers, loads = await r.model.loads
         r.clock.advance(60)
-        _ = try moment(r, "overdue-second", "Second draft", ago: 601)
+        let second = try moment(r, "overdue-second", "Second draft", ago: 601)
         r.idle.value = 0
         await r.writer.pass(.power)
-        check(await r.model.answers == before, "overdue: cadence holds a newly queued closed moment during typing")
-        let queuedAt = r.clock.now
-        check(r.writer.nextWake == queuedAt.addingTimeInterval(WriterIntegration.overdueAfter), "overdue: one timer targets bounded deadline")
+        let served = await r.model.answers, loadsAfter = await r.model.loads
+        let status = try r.store.dayLayers(day: second.day, timezone: zone, now: r.clock.now).activities.first { $0.id == second.id }?.status
+        check(served > before && status == "ready" && loadsAfter == loads,
+              "overdue: a newly closed moment with no note is written at once during typing, with the warm model (no batch-cadence hold)",
+              "answers \(before)->\(served), status \(status ?? "?"), loads \(loads)->\(loadsAfter)")
+        let servedAt = r.clock.now
+        check(r.writer.nextWake == servedAt.addingTimeInterval(WriterIntegration.quietWake),
+              "overdue: nothing waits, so the one timer is the ordinary quiet wake (no short deadline)",
+              "\(r.writer.nextWake.map { $0.timeIntervalSince(servedAt) } ?? -1)s")
         r.clock.advance(WriterIntegration.overdueAfter - 1)
         await r.writer.pass(.power)
-        check(await r.model.answers == before, "overdue: no inference before deadline")
+        check(await r.model.answers == served, "overdue: no second inference before the old five-minute deadline")
         r.clock.advance(1)
         await r.writer.pass(.timer)
-        check(await r.model.answers > before, "overdue: closed queued moment runs at five minutes with zero idle")
+        check(await r.model.answers == served, "overdue: and none at it with zero idle (the moment was written once)")
         await finish(r)
     }
     @MainActor static func overduePowerGuard() async throws {
@@ -357,6 +365,49 @@ actor FakeOpenRouter {
         check(await r.model.answers > 0, "overdue: power recovery runs waiting closed moment without idle")
         await finish(r)
     }
+    /// 03beb17's first-note service queues an OPEN moment that has no note three minutes after its last action. When its
+    /// batch can't run then (low battery here) and the person carries on in the moment, the queued entry is at a revision
+    /// core no longer has, and discovery doesn't route the moment again until it is due again. The entry's turn comes with
+    /// the next batch: the writer finds it stale, runs nothing (no model load, no answer, no note) and drops it, and the
+    /// moment's current revision gets its first note when that is due. (writer-cadence's oracle proves the same turn on
+    /// the busy day: `staleErrors`.)
+    @MainActor static func grownWhileQueued() async throws {
+        let r = try await rig("grown-queued")
+        defer { r.defaults.removePersistentDomain(forName: r.suite) }
+        try await on(r)
+        r.power.value = ModelPower(onPower: false, lowPowerMode: false, thermal: 0, battery: 15)
+        let m = try moment(r, "grown", "Growing note", ago: 200)
+        await r.writer.pass(.power)
+        let queued = try entries(r).compactMap { ($0["item"] as? [String: Any])?["inputRevision"] as? String }
+        let loads = await r.model.loads, held = try statuses(r)
+        check(queued.count == 1 && held == ["queued"] && r.writer.counters.noteRuns == 0,
+              "grown: an open moment due its first note is queued while low battery holds the batch", "\(held)")
+        // The person carries on in the same moment: one more action, so core has a new revision and a later first-note time.
+        r.clock.advance(30)
+        let at = r.clock.now.addingTimeInterval(-1)
+        _ = try r.store.ingest(Evidence(id: "grown-more", at: iso(at), kind: "mouse.click", app: "TextEdit", bundle: "com.apple.TextEdit", title: "Growing note", synthetic: true), now: at.addingTimeInterval(0.5))
+        let grown = try r.store.dayLayers(day: m.day, timezone: zone, now: r.clock.now).activities.first { $0.id == m.id }
+        check(grown?.actionIDs.contains("grown-more") == true && grown.map { [$0.inputRevision] } != queued,
+              "grown: the action joined the same open moment at a new revision")
+        r.power.value = .ac
+        await r.writer.pass(.power)
+        let loadsAfter = await r.model.loads, answersAfter = await r.model.answers, left = try statuses(r)
+        let pending = try r.store.dayLayers(day: m.day, timezone: zone, now: r.clock.now).activities.first { $0.id == m.id }?.status
+        check(loadsAfter == loads && answersAfter == 0 && left.isEmpty && pending == "pending" && r.writer.counters.committedNotes == 0 && r.writer.counters.noteRuns <= 1,
+              "grown: power back, the entry of the revision core no longer has is dropped at its turn: no model load, no answer, no note",
+              "loads \(loads)->\(loadsAfter), answers \(answersAfter), entries \(left), status \(pending ?? "?"), committed \(r.writer.counters.committedNotes), turns \(r.writer.counters.noteRuns)")
+        let turns = r.writer.counters.noteRuns
+        r.clock.advance(WriterQueueSource.summaryStartAfter + 1)
+        await r.writer.pass(.timer)
+        let status = try r.store.dayLayers(day: m.day, timezone: zone, now: r.clock.now).activities.first { $0.id == m.id }?.status
+        let answers = await r.model.answers
+        check(answers > 0 && status == "ready" && r.writer.counters.noteRuns == turns + 1,
+              "grown: three minutes after its last action the moment's current revision gets its first note, once",
+              "answers \(answers), status \(status ?? "?"), runs \(turns)->\(r.writer.counters.noteRuns)")
+        await finish(r)
+    }
+    /// A past-day moment due after the rewrite cooldown is not an empty history. The REAL source discovers
+    /// its deadline and the REAL writer must revisit it, preserving the power/load gates and single-write rule.
     @MainActor static func catchUpRewriteCooldown() async throws {
         // Keep the simulated deadline before wall time: CoreWriterBinding prepares real five-minute expiries.
         let now = Date().addingTimeInterval(-3600)

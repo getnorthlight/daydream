@@ -24,13 +24,17 @@ FLAG = "DAYDREAM_CHROME_TYPING"
 # Types that exist only in the private build.
 PRIVATE_SYMBOLS = ["BrowserTypingJoin", "ChromeTypingWitness", "ChromeJoinRequest", "BrowserTypingBlockList", "BrowserTypingBurst", "JoinSession",
                    "ChromeTargetPolicy", "BrowserTypingSites", "ChromeAXAccess", "ChromeBounds", "BrowserTypingTiming", "BrowserTypingInput",
-                   "BrowserTypingFieldRules", "ChromeWindowMatching", "ChromeModeReader"]
+                   "BrowserTypingFieldRules", "ChromeWindowMatching", "ChromeModeReader",
+                   # claude/axjoin-1005: the Accessibility join's private-window check and version gate.
+                   "ChromePrivateWindow", "ChromeAXJoinPolicy"]
 # Strings that only the private Chrome typing code carries (typing-only
 # block-list and field-rule entries, the witness's extra AX attribute names).
 # The shared site list (turbotax.intuit.com and the rest) and Google's team ID
 # (EQHXZ8M8AV, ChromePageTarget) are public now: Chrome page history uses them.
 PRIVATE_STRINGS = ["shell.cloud.google.com", "inputarea", "AXDOMClassList", "AXPlaceholderValue",
-                   "Google Chrome Framework.framework"]
+                   "Google Chrome Framework.framework",
+                   # claude/axjoin-1005: the Accessibility join's window number, profile button and its description.
+                   "_AXUIElementGetWindow", "AvatarToolbarButton", "AXCustomContent"]
 # Website typing (typing-all SPEC-LATER 4.2): compiled only into Chrome typing
 # builds, and live only in the owner build. Every public binary is free of these
 # names and strings (the scan below); the private build carries the first two
@@ -45,6 +49,13 @@ PUBLIC_REQUIRED_SYMBOLS = ["ChromePageProbe", "ChromeEventSender", "BrowserSites
 PUBLIC_REQUIRED_STRINGS = ["EQHXZ8M8AV", "plannedparenthood.org", "chrome-appleevents-page-v1"]
 # A sample of the private build's synthetic checks that must run there, and only there.
 PRIVATE_CHECKS = ["incognito window front: zero titles, URLs, bounds or AX content read",
+                  # claude/axjoin-1005: the Accessibility join (Chrome 154).
+                  "AX join: 4 Apple Events, the window list and every mode, twice",
+                  "AX join: a Guest label on a described button refuses (modes all normal), no fallback, no field or page read",
+                  "AX join: a description alone: the Apple Events mode decides (incognito refuses)",
+                  "AX join: an Incognito window on another Space refuses before any content",
+                  "AX join: a mode that changed during the page reads refuses (closing re-read)",
+                  "AX join: Chrome 153: the full Apple Events join, unchanged",
                   "lagging AX and AE: the save-time strict check discards the burst",
                   "Spotlight query never saved as Chrome typing",
                   "unsigned 'Chrome' bundle does not satisfy the Chrome requirement",

@@ -67,9 +67,25 @@ OWNER_FLAG_PASSERS = {'scripts/package.sh', 'scripts/developer-id-release.py', '
                       # launch/candidate: the DayDream Preview builder (separate bundle id) passes the release stage's flags.
                       'scripts/preview/build-preview-app.sh',
                       # claude/scrub-1004: README's Build from source shows the release's swift build line with both flags.
-                      'README.md',
-                      # readme-1005: the README pictures are drawn from a build with the release's two typing flags.
-                      'scripts/readme-pictures/render.sh'}
+                      'README.md'}
+# Check recipes, QA-harness build scripts and docs that compile or describe the owner lane (never a shipping build:
+# Package.swift, packaging/ and the app's sources still never define the flag). Each with the commit that added it.
+CHECK_AND_QA_PASSERS = {
+    'runner-1001/run-checks.sh', 'runner-1001/owner-lane.sh', 'runner-1001/ui-checks.sh',  # 858ec32: the owner lane
+    'scripts/agent-tools-evals.py',            # f2e15e7: agent-tools evals, owner lane
+    'scripts/check-ui-revision.sh',            # 5a02623: UI revision check build (QA harness)
+    'scripts/compile-legacy-qa-boundary.py',   # c92de61: asserts the QA stage's flags
+    'scripts/day-review-checks.swift',         # ba46541: its compile line in a comment
+    'scripts/reddit-combined-capture-checks.swift',  # 4a5a188: standalone QA check, compile line in a comment
+    'scripts/run-messages-moment-checks.sh',   # d252cbf: Messages moment checks, owner flags
+    'scripts/sig-modern-repro-build.py',       # d5f82ae: QA repro build
+    'scripts/sig-note-prepare-build.py',       # d586301: QA note-prepare build
+    'scripts/typing-public-lane-checks.py',    # 079c36d: asserts the release passes the flag
+    'docs/agent-tools/ownership.md',           # 5a74d76: the owner lane's build line
+    'docs/private-capture-qa.md',              # 0184887: QA fixture compiles
+    'tools/capture-fixture-empty/README.md',   # 451b171: QA helper compile line
+    'evidence-0930/CODEX-B-1001-REPORT.md',    # 630af14: a QA run's recorded command
+}
 
 DECLARED_FALSE = re.compile(r'public\s+static\s+let\s+expandedApproved\s*=\s*false\b')
 ANY_ASSIGN = re.compile(r'expandedApproved\s*(?::\s*Bool\s*)?=(?!=)')
@@ -193,10 +209,40 @@ APP_FILES = ['Sources/MacMemApp/NativeFocusWitness.swift', 'Sources/MacMemApp/Na
 POLLING = re.compile(r'\b(?:Timer|asyncAfter|DispatchSource|RunLoop|usleep|sleep)\b|while\s+true')
 
 
+QA_IF = re.compile(r'^\s*#if DAYDREAM_QA_HARNESS && !?DAYDREAM_OWNER_TYPING( && DAYDREAM_CHROME_TYPING)?\s*$')
+
+
+def without_qa(text):
+    """`text` as a build without DAYDREAM_QA_HARNESS compiles it (as check_browser_boundary.py's): each
+    `#if DAYDREAM_QA_HARNESS && ...` branch is dropped (nesting-aware); its `#else`/`#elseif` branch stays."""
+    out, depth, skipping = [], 0, False
+    for line in text.splitlines(keepends=True):
+        st = line.strip()
+        if skipping:
+            if st.startswith('#if'):
+                depth += 1
+            elif st.startswith('#endif'):
+                depth -= 1
+                if depth == 0:
+                    skipping = False
+            elif depth == 1 and (st.startswith('#else') or st.startswith('#elseif')):
+                skipping = False
+            continue
+        if QA_IF.match(line):
+            skipping, depth = True, 1
+            continue
+        out.append(line)
+    return ''.join(out)
+
+
+assert without_qa('a\n#if DAYDREAM_QA_HARNESS && DAYDREAM_OWNER_TYPING\nqa\n#if X\nqa2\n#endif\n#else\nkept\n#endif\nb\n') == 'a\nkept\n#endif\nb\n'
+
+
 def app_proof_problems(files):
-    """files: (relative path, text). The web-content proof's source rules."""
+    """files: (relative path, text). The web-content proof's source rules, over what a shipping (non-QA) build
+    compiles: the QA harness's own bootstraps (e01b406, aaeab02) focus a fresh test field and never ship."""
     found = []
-    code = {rel: strip_comments(text) for rel, text in files}
+    code = {rel: strip_comments(without_qa(text)) for rel, text in files}
     for rel, text in code.items():
         if 'AXEnhancedUserInterface' in text:
             found.append(('enhanced-user-interface', rel))
@@ -240,6 +286,11 @@ class GateChecks(unittest.TestCase):
             return app_proof_problems([(r, text if r == rel else t) for r, t in good])
         self.assertIn('enhanced-user-interface', [k for k, _ in app_proof_problems(good + [('Sources/X.swift', 'let a="AXEnhancedUserInterface"')])])
         self.assertIn('attribute-write-not-only-the-manual-switch', [k for k, _ in app_proof_problems(good + [('Sources/X.swift', 'AXUIElementSetAttributeValue(x,y,z)')])])
+        # A write inside a QA-harness-only branch is not compiled into a shipping build; one outside it still is.
+        qa = '#if DAYDREAM_QA_HARNESS && DAYDREAM_OWNER_TYPING && DAYDREAM_CHROME_TYPING\nAXUIElementSetAttributeValue(f,k,v)\n#endif\n'
+        self.assertEqual(app_proof_problems(good + [('Sources/QA.swift', qa)]), [])
+        self.assertIn('attribute-write-not-only-the-manual-switch',
+                      [k for k, _ in app_proof_problems(good + [('Sources/QA.swift', qa + 'AXUIElementSetAttributeValue(f,k,v)\n')])])
         self.assertIn('polling-in-app-proof', [k for k, _ in bad('Sources/MacMemApp/NativeFocusWitness.swift', 'Timer.scheduledTimer(withTimeInterval:1,repeats:true){_ in}')])
         self.assertIn('polling-in-app-proof', [k for k, _ in bad('Sources/MacMemApp/NativeTypingRoute.swift', 'DispatchQueue.main.asyncAfter(deadline:.now()){}')])
         self.assertIn('fixed-signer-in-trusted-process', [k for k, _ in bad('Sources/MacMemApp/AccessibilitySnapshot.swift',
@@ -302,7 +353,10 @@ class GateChecks(unittest.TestCase):
                 except OSError:
                     pass
         definers = set(flag_definers(files))
-        self.assertLessEqual(definers, OWNER_FLAG_PASSERS)
+        self.assertLessEqual(definers, OWNER_FLAG_PASSERS | CHECK_AND_QA_PASSERS)
+        # What builds the app itself never turns the switch on: the manifests, packaging and the sources.
+        self.assertFalse({d for d in definers if d.endswith('Package.swift') or d.startswith(('packaging/', 'Sources/', 'PrivacyPolicy/',
+                          'WriterBackend/Sources', 'BrowserBridge/Sources'))})
         self.assertIn('scripts/package.sh', definers)
         package = (ROOT / 'scripts/package.sh').read_text()
         # package.sh passes it only when DAYDREAM_OWNER_TYPING=1, with CHROME_TYPING too.
@@ -321,8 +375,24 @@ class GateChecks(unittest.TestCase):
         lines = [l for l in script.splitlines() if DEFINES_FLAG.search(l)]
         self.assertEqual(lines, ["OWNER_SWIFT_FLAGS = ('-Xswiftc', '-DDAYDREAM_OWNER_TYPING', '-Xswiftc', '-DDAYDREAM_CHROME_TYPING')"])
         self.assertEqual(script.count('-DDAYDREAM_CHROME_TYPING'), 1)
-        self.assertEqual(re.findall(r'.*swift_flags = OWNER_SWIFT_FLAGS.*', script), ['    swift_flags = OWNER_SWIFT_FLAGS'])
+        # 0184887 (QA harness out of normal builds): the stage's flags come from stage_swift_flags, which always
+        # starts with OWNER_SWIFT_FLAGS and adds the QA flags only for an explicit --qa-harness owner stage.
+        self.assertEqual(re.findall(r'.*swift_flags = .*', script), ['    swift_flags = stage_swift_flags(owner, args.updates, qa_harness)'])
+        self.assertIn("    return OWNER_SWIFT_FLAGS + (QA_SWIFT_FLAGS if qa_harness else ())", script)
+        self.assertIn('bin_dir = Path(builder(source, scratch, runner, swift_flags=swift_flags))', script)
         self.assertIn("owner = bool(getattr(args, 'owner_build', False))", script)
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('developer_id_release_gate', ROOT / 'scripts/developer-id-release.py')
+        dr = importlib.util.module_from_spec(spec)
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        spec.loader.exec_module(dr)
+        both = ('-Xswiftc', '-DDAYDREAM_OWNER_TYPING', '-Xswiftc', '-DDAYDREAM_CHROME_TYPING')
+        for owner, updates in [(False, 'configured'), (False, 'off'), (True, 'off')]:
+            self.assertEqual(dr.stage_swift_flags(owner, updates), both, (owner, updates))
+        self.assertEqual(dr.stage_swift_flags(True, 'off', True), both + ('-Xswiftc', '-DDAYDREAM_QA_HARNESS'))
+        for owner, updates in [(False, 'configured'), (False, 'off'), (True, 'configured')]:
+            with self.assertRaises(dr.ReleaseError):
+                dr.stage_swift_flags(owner, updates, True)
 
     def test_owner_flag_alone_does_not_compile(self):
         if RELEASE_TMP is None:

@@ -780,16 +780,16 @@ REASONS = {
     "leak": 'bullet {n} repeats internal wording, an app ID or text addressed to AI tools. Leave it out.',
     "sentences": 'bullet {n} has more than one sentence. Write one sentence.',
     "alias": 'bullet {n} writes an item id in its text. Put ids only in "ids".',
-    "send": 'bullet {n} says "{w}", but only SENT items may use that word, even to retell a draft ("will send", not "will be sent"). Write "drafted" or "typed", and "sending isn\'t confirmed" when the item says so.',
+    "send": 'bullet {n} says "{w}", but only SENT items may use that word, even to retell typed words ("will send", not "will be sent"). Write "wrote" or "typed".',
     "sendword": 'bullet {n} has the word "{w}", which DayDream allows only for SENT items, even inside a name or title. Leave the word out, like "had a mailbox open in Mail".',
-    "claim": 'bullet {n} says "{w}", which none of its items shows. Say only what the items show, or whose words it is ("the draft says ...", "... reported ...").',
+    "claim": 'bullet {n} says "{w}", which none of its items shows. Say only what the items show, or whose words it is ("the text says ...", "... reported ...").',
     "attention": 'bullet {n} says "{w}", but an open window proves only that it was open. Write "had ... open".',
-    "unframed": 'bullet {n} says "{w}" as a fact, but those are words from a title, draft, page or report. Say whose words they are right before them, with no ";" in between: "the draft says ...", "the subject says ...", "... reported ...".',
+    "unframed": 'bullet {n} says "{w}" as a fact, but those are words from a title, typed text, page or report. Say whose words they are right before them, with no ";" in between: "the text says ...", "the subject says ...", "... reported ...".',
     "return": 'bullet {n} says "{w}" next to a Return press. Write "came back to" or "pressed Return".',
     "duration": 'bullet {n} states a time or a duration. Leave it out.',
     "worked": 'bullet {n} says "{w}" about an item that was only open. Write "had ... open" for it.',
     "wrote": 'bullet {n} says "{w}", but its items have no typed text.',
-    "typedframe": 'bullet {n} states typed text as fact. Say that it was drafted or typed, or write "the draft says ...".',
+    "typedframe": 'bullet {n} states typed text as fact. Say that it was written or typed, or write "the text says ...".',
     "screenframe": 'bullet {n} states text from the screen or a search as fact. Write "the page says ...", "had ... open" or "search results for ...".',
     "attribution": 'bullet {n} uses a {w} item without saying whose words they are ({cue}).',
     "notverified": 'bullet {n} relays a REPORT. End it with "; not verified".',
@@ -798,7 +798,7 @@ REASONS = {
     "name": 'bullet {n} names "{w}", which is not in its items. Use only names the items show, written as they are there.',
     "user": 'bullet {n} says "{w}". Write to the person with an implied "you".',
     "secret": 'bullet {n} looks like a password or a key. Leave it out.',
-    "lead": 'bullet {n} starts with "{w}". Start a bullet about an item marked "Start with:" with one of those words, or "Drafted" or "Wrote"; about typing with "sending unknown", start with "Drafted", "Wrote" or "Typed".',
+    "lead": 'bullet {n} starts with "{w}". Start a bullet about an item marked "Start with:" with one of those words, or "Wrote"; about typing with "sending unknown", start with "Wrote" or "Typed".',
     "recipient": 'bullet {n} says it went to "{w}". Use only the name in the item\'s to "..." or in "..." part, the app for an AI app, or "someone"; never a name from the typed words.',
     "copy": 'bullet {n} repeats {w} of your words in a row; say it in your own words.',
     "they": 'bullet {n} says "{w}". Write to the person with an implied "you".',
@@ -1381,9 +1381,9 @@ def finish(request, view, title, bullets, provider):
     by_id = {a["id"]: a for it in view.by_alias.values() for a in it.actions}
     for n, b in enumerate(stored):
         if core_claim_problem(title, b, [by_id[i] for i in b["actionIDs"] if i in by_id]):
-            raise Reject("send", "Bullet %d says something was sent or posted, but not everything it cites was sent. Say it was drafted or typed, or cite only what was sent." % (n + 1))
+            raise Reject("send", "Bullet %d says something was sent or posted, but not everything it cites was sent. Say it was written or typed, or cite only what was sent." % (n + 1))
         if under_claim(b, [by_id[i] for i in b["actionIDs"] if i in by_id]):
-            raise Reject("send", 'Bullet %d says drafted, but it cites a message sent with the send key. Say what was sent ("Asked ...", "Texted ..."), or give the drafts their own bullet.' % (n + 1))
+            raise Reject("send", 'Bullet %d says it was only written, but it cites a message sent with the send key. Say what was sent ("Asked ...", "Texted ..."), or give the unsent words their own bullet.' % (n + 1))
     note = {"requestID": request["id"], "title": title, "bullets": stored, "generator": provider,
             "generatorVersion": FALLBACK_VERSION if provider == FALLBACK_PROVIDER else VERSION["local" if provider.startswith("local/") else "cloud"]}
     if len(json.dumps(note, ensure_ascii=False, separators=(",", ":")).encode()) > ew.APP["output_max"]:

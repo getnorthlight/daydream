@@ -92,4 +92,13 @@ public enum MainQueue {
     private static let key = DispatchSpecificKey<UInt8>()
     private static let marked: Void = DispatchQueue.main.setSpecific(key: key, value: 1)
     public static var isCurrent: Bool { _ = marked; return DispatchQueue.getSpecific(key: key) == 1 }
+    /// claude/crashguard-015: the entry guard of every function that calls an API asserting the main queue (Text Input
+    /// Sources, TSM, `NSEvent.characters`, Carbon hot keys). Debug and check builds (-Onone) trap here at once, on any
+    /// macOS, with the caller on the stack; macOS 26 itself doesn't trap, so without this only a macOS 15 Mac found
+    /// out. Release builds check nothing here: each such function is reached only through a main-queue test
+    /// (`isCurrent`) or from main-only code, and scripts/check_main_thread_apis.py keeps these APIs inside the
+    /// functions that call this.
+    @inline(__always) public static func require() {
+        if _isDebugAssertConfiguration() { dispatchPrecondition(condition: .onQueue(.main)) }
+    }
 }

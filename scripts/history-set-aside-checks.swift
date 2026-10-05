@@ -205,7 +205,7 @@ import MemoryUI
         // gold/r2-store-perf: launch may have repaired it already, off the main thread before the model (HistoryPreparation);
         // then the model says that repair the same way and doesn't look again (store-main-thread-source-checks.py).
         let launch = app.components(separatedBy: "store = try Self.openHistory(MemPaths.home(),repairs:prepared?.prepared != true,kept:{ [backups] in backups.noteHistorySetAside() }) {")
-        check(launch.count == 2 && launch[1].prefix(250).contains("try MemoryStore(home:MemPaths.home(),writable:true,automaticallySyncSearch:syncSearch,launchWork:prepared?.prepared == true ? .prepared : .here)")
+        check(launch.count == 2 && launch[1].prefix(250).contains("try MemoryStore(home:MemPaths.home(),writable:true,automaticallySyncSearch:syncSearch,launchWork:prepared?.prepared == true ? .prepared : .here,liveHistory:development == nil)")
               && !app.contains("StoreIntegrity.health("), "launch opens the history through the repair (no whole-file check on a usual launch), and notes a kept file for the menu")
         check(app.contains("var shownIssue:String? { operationalIssue }")
               && app.contains("operationalIssue:shownIssue ?? (resumeUnavailable == nil ? historySetAsideIssue : nil)")

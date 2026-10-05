@@ -221,7 +221,7 @@ struct RecallPreview: View {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Text(DaydreamFormat.time(row.time, model.timeZone)).font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
                         .frame(width: 56, alignment: .leading)
-                    let line = hit.summary
+                    let line = DisplayWords.undraft(hit.summary)
                     Text(RecallText.highlighted(line.isEmpty ? row.title : line, terms: model.terms))
                         .font(.system(size: 12.5)).lineLimit(3)
                 }

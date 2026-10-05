@@ -120,7 +120,7 @@ public actor CompatibleInstallation {
     static func privateDirectory(_ url: URL) throws {
         let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
         guard values.isDirectory == true, values.isSymbolicLink != true,
-              url.standardizedFileURL.path == url.resolvingSymlinksInPath().path else { throw WriterFailure.denied }
+              WriterPaths.unlinked(url) else { throw WriterFailure.denied }
     }
     public static func verify(_ url: URL, asset: PinnedAsset) throws { try verify(url, bytes: asset.bytes, hash: asset.sha256) }
     static func verify(_ url: URL, bytes: Int64, hash: String, checkCancellation: () throws -> Void = {try Task.checkCancellation()}) throws {

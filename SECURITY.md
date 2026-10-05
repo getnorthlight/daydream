@@ -25,7 +25,7 @@ DayDream is in beta. Only the latest release, and the `main` branch, get securit
 
 ## Threat model
 
-This section says what DayDream protects against today and what it doesn't. The [guide](docs/guide.md#what-daydream-records) lists exactly what is recorded.
+This section says what DayDream protects against today and what it doesn't. The [README](README.md#what-daydream-records) lists exactly what is recorded.
 
 ### What is stored, and where
 
@@ -46,14 +46,14 @@ This section says what DayDream protects against today and what it doesn't. The 
 
 ### Typed text
 
-- On by default: setup shows it switched on, and one click turns it off, then or any time in Settings. Nothing is recorded before Start Recording. When on, DayDream records what you type in a fixed list of apps, each checked by its code signature, and, only while Web pages in Chrome is on too, on websites in Google Chrome. The guide's [Typed text](docs/guide.md#typed-text) section lists the apps, the websites and what is always skipped.
+- On by default: setup shows it switched on, and one click turns it off, then or any time in Settings. Nothing is recorded before Start Recording. When on, DayDream records what you type in a fixed list of apps, each checked by its code signature, and, only while Web pages in Chrome is on too, on websites in Google Chrome. The README's [Typed text](README.md#typed-text) section lists the apps, the websites and what is always skipped.
 - The words are encrypted with AES-GCM, one key per day, and the keys are kept in your macOS Keychain. Where and when you typed, and how much, are not encrypted. DayDream deletes the exact words after 7 days unless you choose another time. Time Machine backups of your Mac can keep older encrypted copies.
 - `mac-mem`, which AI apps start as the MCP server, has no typing key. While **Let AI apps read what you typed** is on, the DayDream app (which holds the key) hands it the words of the moments an AI app asks for, over a socket only this Mac account can open (mode 0600, same user checked), after checking that AI app's key; secrets, private windows, excluded apps, blocked sites and expired words are never handed over. While it is off, or DayDream isn't open, AI apps get where and about how much you typed, never the words DayDream saves. Cloud summaries, when you turn them on, get the words you type, who a message went to, and Chrome page titles and sites (never web addresses). Window titles, which can include words you typed, are read and sent like any other window title.
 - Anyone typing on your macOS account while typed text is on is recorded as you.
 
 ### Chrome page history
 
-- On by default: setup shows it switched on, and one click turns it off, then or any time in Settings. macOS asks for Chrome access right after setup starts recording (or the first time Chrome comes to the front, if it isn't running), and again only when the user presses Allow… in Settings. When on, DayDream sends Apple Events to Google Chrome, on this Mac only, to read the title and address of the tab in front and each window's mode. With typed text on too, it also reads where each Chrome window is and its title, to match the field you type in. It never runs scripts in Chrome.
+- On by default: setup shows it switched on, and one click turns it off, then or any time in Settings. macOS asks for Chrome access only when the user presses Allow on setup's Google Chrome row (which opens Chrome in the background first if it is closed) or Allow in Settings, never on its own later. If the user said no, **Ask again** runs `/usr/bin/tccutil reset AppleEvents com.getnorthlight.daydream` (DayDream's own Automation answer only, never another app or permission; no shell, no admin) and asks again. When on, DayDream sends Apple Events to Google Chrome, on this Mac only, to read the title and address of the tab in front and each window's mode. With typed text on too, it also reads where each Chrome window is and its title, to match the field you type in. It never runs scripts in Chrome.
 - It reads only a Chrome that is signed by Google, only when no Incognito or Guest window is open, and it keeps only the page title and site, plus, with typed text on, the words you type and the site. See [PRIVACY.md](PRIVACY.md#browser-history-google-chrome).
 
 ### Network

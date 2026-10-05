@@ -675,12 +675,8 @@ public struct PermissionPaneIcon: View {
     let size: CGFloat
     public init(_ kind: PermissionKind, size: CGFloat = 28) { self.kind = kind; self.size = size }
 
-    /// `accessibility` is SF Symbols 5 (macOS 14) and draws nothing on macOS 13, which gets
-    /// `figure.arms.open` (SF Symbols 4) instead.
-    public static var accessibilitySymbol: String {
-        if #available(macOS 14.0, *) { return "accessibility" }  // SF Symbols 5, gated
-        return "figure.arms.open"
-    }
+    /// `accessibility` (SF Symbols 5): DayDream needs macOS 15, where it always draws.
+    public static var accessibilitySymbol: String { "accessibility" }
 
     public var body: some View {
         let s = size * kitIconBody

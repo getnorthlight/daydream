@@ -1,6 +1,28 @@
 import Foundation
 import CSQLite
 
+/// claude/perf3-1005: the history used on the main thread. Every statement any `MemoryStore` runs on the main thread
+/// while `report` is set is reported to it, with the statement's first word only (never values), unless it runs inside
+/// `allowed`. The app's periodic work (the recorder's heartbeat, the status and typing refreshes, the day's reads while
+/// scrolling) runs no statement on the main thread; store-main-thread-guard-checks sets `report` and fails on any, and a
+/// debug build of the app logs each one (`StoreMainThreadLog`). Fixtures that set a scene up on the main thread wrap
+/// that in `allowed`.
+public enum StoreMainThread {
+    /// Set on the main thread only, before any store is used (a check, a debug build).
+    nonisolated(unsafe) public static var report: ((String) -> Void)?
+    nonisolated(unsafe) private static var exempt = 0
+    /// `body` may use the history on the main thread (a fixture's setup; an explicit person action a check exercises).
+    public static func allowed<T>(_ body: () throws -> T) rethrows -> T {
+        guard Thread.isMainThread else { return try body() }
+        exempt += 1; defer { exempt -= 1 }
+        return try body()
+    }
+    static func used(_ sql: String) {
+        guard exempt == 0, let report else { return }
+        report(String(sql.prefix { $0 != " " }).uppercased())
+    }
+}
+
 /// One SQLite transaction boundary shared by app, CLI and local readers.
 /// Never opens a legacy collector's home. Default files are private to this user.
 public final class MemoryStore {
@@ -62,13 +84,25 @@ public final class MemoryStore {
         case prepared
     }
     public let launchWork: LaunchWork
-    public init(home: URL, writable: Bool = false, automaticallySyncSearch: Bool = true, launchWork: LaunchWork = .here) throws {
+    /// wal-1005: the history file (`home`/memory.sqlite).
+    let file: String
+    /// wal-1005: the history is in SQLite's write-ahead log (HistoryJournal.swift), as its header said at the open or
+    /// after `useJournal`. Guarded by `lock`.
+    var walMode = false
+    /// wal-1005: a write since this connection last told HistoryJournal (the hook in `exec`). Guarded by `lock`.
+    private var unfolded = false
+    /// `liveHistory`: the app's own history (its model's open and launch's preparation), the one history that keeps
+    /// SQLite's write-ahead log (HistoryJournal.swift): a history this open makes new is made in it at once. Every other
+    /// open (the CLI, AI apps, backups, staging, a repair's new file, checks) follows the file as it is.
+    public init(home: URL, writable: Bool = false, automaticallySyncSearch: Bool = true, launchWork: LaunchWork = .here, liveHistory: Bool = false) throws {
         self.home = home; self.writable = writable; self.automaticallySyncSearch=automaticallySyncSearch; self.launchWork = launchWork
         if writable {
             try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         }
         let path = home.appendingPathComponent("memory.sqlite").path
+        file = path
         guard writable || FileManager.default.fileExists(atPath: path) else { throw MemError.missing }
+        let made = HistoryJournal.onDisk(path) == nil
         // A reader in a process that also writes this file opens READWRITE with PRAGMA query_only. Opened
         // SQLITE_OPEN_READONLY, a read in progress holds the process's lock on the file through a descriptor that can't
         // take the write lock, so the recorder's next write fails at once with SQLITE_IOERR_LOCK (3850) instead of
@@ -81,10 +115,23 @@ public final class MemoryStore {
                 reader = true
             } else { sqlite3_close(db); db = nil }
         }
+        // wal-1005: the system SQLite can't open a WAL history read-only while its log or the log's index is missing
+        // (SQLITE_CANTOPEN at the first read, and such a connection can stay broken): that reader opens read-write with
+        // query_only, as above, which makes them. It never writes either.
+        if !writable, !reader, HistoryJournal.onDisk(path) == .wal, HistoryJournal.companionsMissing(path) {
+            if sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK,
+               sqlite3_exec(db, "PRAGMA query_only=1", nil, nil, nil) == SQLITE_OK {
+                reader = true
+            } else { sqlite3_close(db); db = nil }
+        }
         inProcessReader = reader
         if !reader {
             guard sqlite3_open_v2(path, &db, writable ? SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX : SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK else { throw MemError.database("open failed") }
         }
+        // wal-1005: the WAL log and its index stay beside the history after the last close (emptied), so a read-only
+        // open always finds them (the system SQLite's default too).
+        var persist: Int32 = 1
+        _ = sqlite3_file_control(db, "main", SQLITE_FCNTL_PERSIST_WAL, &persist)
         // This process's readers know of a writer before its first write (gold r2-store-perf review round 1: registered
         // only at the end, a reader opened meanwhile, during launch's index build, read through SQLITE_OPEN_READONLY and
         // the build failed at once with SQLITE_IOERR_LOCK). An init that throws from here on unregisters it (deinit).
@@ -95,6 +142,7 @@ public final class MemoryStore {
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path)
             try exec("PRAGMA secure_delete=ON")
             try exec("PRAGMA synchronous=FULL")
+            try exec("PRAGMA journal_size_limit=\(HistoryJournal.sizeLimit)")
             try exec("CREATE TABLE IF NOT EXISTS records(id TEXT PRIMARY KEY, body TEXT NOT NULL, revision TEXT NOT NULL)")
             try exec("CREATE TABLE IF NOT EXISTS summaries(id TEXT PRIMARY KEY, body TEXT NOT NULL, revision TEXT NOT NULL)")
             try exec("CREATE TABLE IF NOT EXISTS tombstones(id TEXT PRIMARY KEY)")
@@ -114,7 +162,18 @@ public final class MemoryStore {
                     try exec("INSERT INTO metadata VALUES('native-typing-choice-pending-v1',?)", [initial.revision])
                 }
             }
+            // wal-1005: the app's history, made new by this open, starts in the write-ahead log (nothing else has it
+            // open yet). An existing one switches at launch's preparation, off the main thread (HistoryJournal.swift).
+            if liveHistory, made, HistoryJournal.wanted == .wal { _ = try? useJournal(.wal) }
         }
+        noteJournal()
+    }
+    /// wal-1005: this connection is inside a transaction now.
+    var inTransaction: Bool { lock.lock(); defer { lock.unlock() }; return sqlite3_get_autocommit(db) == 0 }
+    /// wal-1005: what the header says now (after the open and after `useJournal`).
+    func noteJournal() {
+        lock.lock(); defer { lock.unlock() }
+        walMode = HistoryJournal.onDisk(file) == .wal
     }
     deinit { if let writerKey { Self.unregisterWriter(writerKey) }; sqlite3_close(db) }
     /// Writable stores open in this process, by file (device and inode, so every spelling of a path is the same file).
@@ -163,6 +222,7 @@ public final class MemoryStore {
         return [3850, 2314, 3594, 5130].contains(code)
     }
     private func statement(_ sql: String, _ values: [String]) throws -> OpaquePointer {
+        if StoreMainThread.report != nil, Thread.isMainThread { StoreMainThread.used(sql) }
         if typedNarrativeMaintenanceActive { typedNarrativeMaintenanceStatement = sql }
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else { throw failure("statement failed") }
@@ -185,6 +245,12 @@ public final class MemoryStore {
             var status = sqlite3_step(stmt)
             while status == SQLITE_ROW { status = sqlite3_step(stmt) }
             guard status == SQLITE_DONE else { throw failure("write failed") }
+            // wal-1005: once a write is committed (outside a transaction, or this statement was the COMMIT), the log
+            // is folded into the history and emptied soon after (HistoryJournal.changed: one lock and a set lookup).
+            if walMode {
+                if sqlite3_stmt_readonly(stmt) == 0 { unfolded = true }
+                if unfolded, sqlite3_get_autocommit(db) != 0 { unfolded = false; HistoryJournal.changed(file) }
+            }
         } catch {discardTypedNarrativeCarry();throw error}
     }
     func rows(_ sql: String, _ values: [String] = []) throws -> [[String]] {
@@ -622,6 +688,7 @@ public final class MemoryStore {
             try invalidateDisclosure()
         }
         cleanupMigrationAttachmentsAfterCommit() // LegacyMigration.swift: tidying never fails the committed deletion (G62).
+        foldRemoved() // wal-1005: nothing deleted stays in the write-ahead log (HistoryJournal.swift).
     }
     public func updatePolicy(_ settings: PrivacySettings, now: Date = Date()) throws {
         defer { if automaticallySyncSearch { LocalSearchIndexer.schedule(store:self) } }

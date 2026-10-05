@@ -73,7 +73,7 @@ enum OwnerSourceMomentProjection {
                 let wording = captured[action.id]
                 let blocks = wording.map { words in [MomentTypedBlock(id: action.id, at: action.at,
                     app: app, bundle: action.bundle, host: host, title: title, text: words.0,
-                    send: words.1 == "submitted" ? "Submission observed" : "Drafted text")] }
+                    send: words.1 == "submitted" ? "Submission observed" : "Typed text")] }
                     ?? legacyBlocks[action.id].map { [$0] } ?? []
                 // page-links-1003 (owner 10/03): a page shows its short link ("youtube.com/watch…"), else its site, and a page
                 // view says nothing more: "Observed <title> on <site>" only said the title again.
@@ -162,7 +162,8 @@ enum MomentHistoryCondense {
         if text.hasPrefix("Observed ") {
             text = String(text.dropFirst(9)); text = text.prefix(1).uppercased() + text.dropFirst()
         }
-        return text.trimmingCharacters(in: .whitespaces)
+        // claude/dayeval-1005: never "draft" on screen ("Typed a draft in Notes" is "Typed in Notes").
+        return DisplayWords.undraft(text.trimmingCharacters(in: .whitespaces))
     }
 
     /// Apps whose Return runs a command.
@@ -400,12 +401,14 @@ enum CardTitle {
 
 /// The expanded card's Summary, only when it says something (owner 10/2: a Terminal card's Summary said only "~1 min").
 enum MomentSummaryWorth {
+    /// claude/perf3-1005: compiled once. It was compiled on every call, several times per card each time a card was
+    /// drawn (scrolling a day built a few a frame): about a tenth of the main thread's time scrolling a summarized day.
+    private static let fillerPattern = try? NSRegularExpression(pattern: "^" + #"(~|about|around|roughly|nearly|almost|over|under|less than|a few|few|an?|\d+(\.\d+)?|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s|and|open|had|in|for|[\s,.;:·•\-–—()])+"# + "$")
     /// A line that says only how long (and maybe which app): "~1 min", "Terminal, ~1 min", "About 5 minutes".
     static func isFiller(_ line: String, names: [String]) -> Bool {
         var text = line.lowercased()
         for name in names where !name.isEmpty { text = text.replacingOccurrences(of: name.lowercased(), with: " ") }
-        let pattern = #"(~|about|around|roughly|nearly|almost|over|under|less than|a few|few|an?|\d+(\.\d+)?|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s|and|open|had|in|for|[\s,.;:·•\-–—()])+"#
-        guard let regex = try? NSRegularExpression(pattern: "^" + pattern + "$") else { return false }
+        guard let regex = fillerPattern else { return false }
         let range = NSRange(text.startIndex..., in: text)
         return text.trimmingCharacters(in: .whitespaces).isEmpty || regex.firstMatch(in: text, range: range) != nil
     }

@@ -182,6 +182,7 @@ private struct DaydreamSettingsOverviewHost: View {
                 case .openApplications: model.openApplicationsAction?()
                 case .open(let page): select(page)
                 case .retry: model.retryIssue()
+                case .fixChrome: model.fixChromeAccess()
                 }
             },
             learnMore: { NSWorkspace.shared.open(PrivacyPromise.policyURL) },
@@ -194,7 +195,8 @@ private struct DaydreamSettingsOverviewHost: View {
         let connections = connection.phaseLabel
         return SettingsStatusSnapshot(state: presentation.state, issue: presentation.issue,
             permissions: presentation.permissions, summaries: activity.summaries, exclusions: activity.exclusions,
-            connections: connections == "Not connected" ? nil : connections, canResume: presentation.canResume)
+            connections: connections == "Not connected" ? nil : connections, canResume: presentation.canResume,
+            chromeOff: presentation.browserHistory == .needsAccess, chromeAskAgain: presentation.chromeAskAgain)
     }
 
     /// The Apps row counts only a policy that was read and saved: before the store's policy is
@@ -284,17 +286,18 @@ private struct DaydreamAppSettings: View {
         Task { for app in apps { await connection.connect(app) } }
     }
 
-    /// "Web pages in Chrome". Allow… is the only way to the macOS prompt (`allowChromeAccess`); the card
-    /// itself only reads access (`checkChromeAccess`, no prompt).
+    /// "Web pages in Chrome". Its Allow goes the way setup's does (`askChromeAccessInSetup`: a closed Chrome opens in
+    /// the background, then macOS asks), and Ask again the way the menu bar's does (`askChromeAgain`); the card itself
+    /// only reads access (`checkChromeAccess`, no prompt). chromeask-1005.
     private var chromePages: some View {
-        ChromePagesCard(on: model.browserPagesPreference, savedOn: model.browserPagesSaved, access: model.chromeAccess, chromeExcluded: model.chromeExcluded,
+        ChromePagesCard(on: model.browserPagesPreference, savedOn: model.browserPagesSaved, access: model.chromeRowAccess, chromeExcluded: model.chromeExcluded,
                         sites: model.savedSites,
                         enabled: model.preferencesAvailable && model.development == nil && !model.preferencesUnresolved,
                         // The page says why above (the problem line, or that choices are unavailable); the card adds no second reason.
                         unavailableNote: false, emailSubjects: model.emailSubjectsPreference, expanded: expansion.binding(.chromePages),
                         add: { try model.addSite($0) }, remove: { try model.removeSite($0) },
-                        allow: { model.allowChromeAccess() }, openSystemSettings: { model.openChromeAutomationSettings() },
-                        checkAccess: { model.checkChromeAccess() })
+                        allow: { model.askChromeAccessInSetup() }, openSystemSettings: { model.openChromeAutomationSettings() },
+                        askAgain: { model.askChromeAgain() }, checkAccess: { model.checkChromeAccess() })
     }
 
     private func toggleApp(_ id: String) {
@@ -379,16 +382,18 @@ struct DaydreamSettingsPermissions: View {
     @State private var pressed = false
 
     var body: some View {
-        PermissionGrantView(enabled: model.development == nil, embedded: true, style: .settings, chromeRow: chromeRow)
+        PermissionGrantView(enabled: model.development == nil, embedded: true, style: .settings,
+                            known: model.permissionSnapshot, allowedBefore: model.permissionsAllowedBefore, chromeRow: chromeRow)
             .onAppear(perform: read)
     }
 
     private var chromeRow: PermissionChromeRow? {
         guard model.development == nil, DaydreamChromeGrant.settingsRowShown(release: ReleaseFeatures.chromePageHistory, installed: installed) else { return nil }
-        return PermissionChromeRow(icon: icon, access: model.chromeAccess, asked: pressed,
+        return PermissionChromeRow(icon: icon, access: model.chromeRowAccess, asked: pressed,
                                    allow: { pressed = true; model.allowChromeAccess() },
                                    openSettings: { model.openChromeAutomationSettings() },
-                                   pagesOn: model.browserPages, turnOn: { model.setBrowserPages(true) }, settings: true)
+                                   pagesOn: model.browserPages, turnOn: { model.setBrowserPages(true) }, settings: true,
+                                   typing: model.captureText, askAgain: { pressed = true; model.askChromeAgain() })
     }
 
     /// Whether Chrome is installed (and its icon), and a read of its access: never a question.

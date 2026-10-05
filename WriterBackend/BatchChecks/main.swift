@@ -7,12 +7,13 @@ actor Source {
     let count:Int,mixed:Bool
     var commits=0,cancels=0,calls=0
     init(_ count:Int,mixed:Bool=false){self.count=count;self.mixed=mixed}
-    /// A Pages window with clicks; `mixed` adds a typed draft every twentieth action.
+    /// A Pages window with clicks; `mixed` adds a typed run every hundredth action (validator33: each typed run is its own
+    /// bullet, at most 5 in a day, so a day of 400 actions carries 4 runs).
     /// fix/sx-all: one action every 40 seconds, so the window is in use long enough for "Worked on" (fix/notes-quality).
     static func at(_ n:Int)->String {let f=ISO8601DateFormatter();return f.string(from:Date(timeIntervalSince1970:1_789_128_000+Double(n)*40))}
     func actions(_ range:Range<Int>)->[NoteAction] {range.map {n in
         if n==0 {return NoteAction(id:"a0",at:Self.at(0),kind:"window.changed",app:"com.apple.iWork.Pages",site:"",title:"Plan",description:"Observed Plan in Pages; reading is not established.",state:"observed",revision:"r")}
-        if mixed && n%20==5 {return NoteAction(id:"a\(n)",at:Self.at(n),kind:"keyboard.text_input",app:"com.apple.iWork.Pages",site:"",title:"Launch steps",description:"Typed a draft in Pages. step \(n/20)",state:"draft",revision:"r")}
+        if mixed && n%100==5 {return NoteAction(id:"a\(n)",at:Self.at(n),kind:"keyboard.text_input",app:"com.apple.iWork.Pages",site:"",title:"Launch steps",description:"Typed a draft in Pages. step \(n/100)",state:"draft",revision:"r")}
         return NoteAction(id:"a\(n)",at:Self.at(n),kind:"mouse.click",app:"com.apple.iWork.Pages",site:"",title:"Plan",description:"Recorded a mouse click in Pages.",state:"observed",revision:"r")
     }}
     func prepare(_ t:WriterTarget)throws->CanonicalNoteRequest {
@@ -27,16 +28,18 @@ actor Source {
 }
 @main struct BatchChecks {
     static let target=WriterTarget(kind:.day,day:"2026-09-11",timezone:"UTC")
-    /// A prompt4 answer from the ITEMS view: the typed drafts in one bullet, the window in another (fix/sx-all: in the
-    /// owner's words, which fix/notes-quality's validator requires; "Had ... open" is filler).
+    /// An answer from the ITEMS view: the window in one bullet, in the owner's words (fix/sx-all; "Had ... open" is filler),
+    /// and each typed run in its own bullet with its own words (validator33: "Separate typing items need separately cited
+    /// bullets", "Two bullets have the same text"; never "draft", claude/dayeval-1005).
     static func generate(_ r:CanonicalNoteRequest,_ a:[NoteAction])throws->CanonicalNoteOutput {
         let view=try ModelView(request:r,actions:a)
         let typed=view.items.filter {$0.kind == .typed}.map {"\"\($0.alias)\""},window=view.items.filter {$0.kind != .typed}.map {"\"\($0.alias)\""}
         // fix/notes-quality: with typed content the view leaves the window out (code covers it), so its bullet goes too.
         var bullets=window.isEmpty ? [] : [#"{"ids":[\#(window.joined(separator:","))],"text":"Worked on Plan in Pages."}"#]
-        if !typed.isEmpty {bullets.append(#"{"ids":[\#(typed.joined(separator:","))],"text":"Drafted Launch steps in Pages."}"#)}
+        for (k,alias) in typed.enumerated() {bullets.append(#"{"ids":[\#(alias)],"text":"\#(typedLine(k))"}"#)}
         return try CanonicalGrounding.validate(#"{"title":"Plan in Pages","bullets":["#+bullets.joined(separator:",")+"]}",request:r,view:view,provider:CanonicalLocalWriter.provider)
     }
+    static func typedLine(_ k:Int)->String {"Wrote the \(["first","second","third","fourth"][k]) launch step in Pages."}
     static func check(_ yes:Bool,_ text:String)throws{guard yes else{throw NSError(domain:text,code:1)};print("PASS \(text)")}
     static func run(_ source:Source,mode:String="normal")async throws->CoreWriterResult {
         let adapter=CoreWriterAdapter(core:source.port(),generate:{r,a in
@@ -56,10 +59,11 @@ actor Source {
             if case .committed(let receipt)=try await run(source) {
                 let ids=receipt.output.bullets.flatMap(\.actionIDs)
                 try check(ids.count==n && Set(ids).count==n,"\(n) actions: complete ID coverage, each cited once")
-                // fix/notes-quality: a moment with typed content is one typed bullet; the validator folds the window's
-                // clicks into it, and the label is derived from every cited state (window actions keep it "observed").
-                try check(receipt.output.bullets.count==1 && receipt.output.generatorVersion==CanonicalGrounding.localVersion,"\(n) actions: one grouped bullet, \(CanonicalGrounding.localVersion)")
-                try check(receipt.output.bullets[0].text==(mixed ? "Drafted Launch steps in Pages.":"Worked on Plan in Pages.") && receipt.output.bullets[0].assertion=="observed","\(n) \(mixed ? "mixed":"window"): the model's words kept, label derived from action states")
+                // fix/notes-quality: with typed content each typed run is a bullet; the validator folds the window's clicks
+                // into them, and the label is derived from every cited state (window actions keep it "observed").
+                let runs=mixed ? (0..<n).filter {$0%100==5}.count : 0
+                try check(receipt.output.bullets.count==max(1,runs) && receipt.output.generatorVersion==CanonicalGrounding.localVersion,"\(n) actions: \(max(1,runs)) bullet(s), one per typed run or the window, \(CanonicalGrounding.localVersion)")
+                try check(receipt.output.bullets.map(\.text)==(mixed ? (0..<runs).map(typedLine):["Worked on Plan in Pages."]) && receipt.output.bullets.allSatisfy {$0.assertion=="observed"},"\(n) \(mixed ? "mixed":"window"): the model's words kept, label derived from action states")
             } else {throw WriterFailure.invalidOutput}
             try check(await source.totals()==[1,1,0],"\(n) actions: one model call, one atomic commit")
         }

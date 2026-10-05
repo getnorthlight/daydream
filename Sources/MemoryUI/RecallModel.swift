@@ -104,7 +104,8 @@ enum RecallText {
         let app = appName(item)
         if contains(app, terms) { out.append(RecallMatch(source: .app, text: app)) }
         let action = indexedDescription(item)
-        if contains(actionOnly(action, item), terms) { out.append(RecallMatch(source: .action, text: action)) }
+        // claude/dayeval-1005: matched on the stored words, shown never saying "draft".
+        if contains(actionOnly(action, item), terms) { out.append(RecallMatch(source: .action, text: DisplayWords.undraft(action))) }
         return out
     }
 
@@ -1511,7 +1512,8 @@ public struct RecallRowLine: Equatable, Sendable {
 extension RecallModel {
     /// Who wrote the person's own words.
     public static let you = "You"
-    public static let yourDraft = "Your draft"
+    /// claude/dayeval-1005 (owner 10/05): never "draft"; most of them were sent.
+    public static let yourDraft = "You"
     /// What code says for a Messages moment it saw only being read. It is filler, never a result's line or title.
     static let readingLine = "Read texts with "
     /// The detail shows at most this many evidence lines (every matching one first).
@@ -1561,10 +1563,10 @@ extension RecallModel {
         if row.isTypedSearch { return RecallRowLine(text: "", at: lines.first?.at ?? row.time, count: 1) }
         if let l = lines.first(where: { $0.typed && $0.matched }) { return RecallRowLine(text: short(l), at: l.at, count: count) }
         if let l = lines.last(where: \.typed) { return RecallRowLine(text: short(l), at: l.at, count: count) }
-        if let l = lines.first(where: { !MomentSubtitle.same($0.text, row.title) }) { return RecallRowLine(text: l.text, at: l.at, count: count) }
+        if let l = lines.first(where: { !MomentSubtitle.same($0.text, row.title) }) { return RecallRowLine(text: l.typed ? l.text : DisplayWords.undraft(l.text), at: l.at, count: count) }
         if let n = row.note, row.conversation == nil {
             let text = n.level == "line" ? n.text : (n.lines.first { RecallText.contains($0, terms) } ?? "")
-            if !text.isEmpty, !MomentSubtitle.same(text, row.title) { return RecallRowLine(text: text, at: timestamp(n.at), count: max(count, 1)) }
+            if !text.isEmpty, !MomentSubtitle.same(text, row.title) { return RecallRowLine(text: DisplayWords.undraft(text), at: timestamp(n.at), count: max(count, 1)) }
         }
         return RecallRowLine(text: fallback(row), at: lines.first?.at ?? row.time, count: count)
     }
@@ -1584,7 +1586,7 @@ extension RecallModel {
             guard let site = row.site, !site.isEmpty, !row.title.localizedCaseInsensitiveContains(site) else { return "" }
             return site
         }
-        return row.anchor?.summary ?? ""
+        return DisplayWords.undraft(row.anchor?.summary ?? "")
     }
 
     /// The detail's evidence: the texts of the row's moment (read for the detail) and its matching lines, each once, in

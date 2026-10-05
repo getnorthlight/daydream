@@ -17693,7 +17693,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "claim",
-   "reason": "bullet 1 says \"Fixed\", which none of its items shows. Say only what the items show, or whose words it is (\"the draft says ...\", \"... reported ...\").",
+   "reason": "bullet 1 says \"Fixed\", which none of its items shows. Say only what the items show, or whose words it is (\"the text says ...\", \"... reported ...\").",
    "label": "reject-03-claim",
    "expectCode": "claim"
   },
@@ -17723,7 +17723,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "send",
-   "reason": "bullet 1 says \"Sent\", but only SENT items may use that word, even to retell a draft (\"will send\", not \"will be sent\"). Write \"drafted\" or \"typed\", and \"sending isn't confirmed\" when the item says so.",
+   "reason": "bullet 1 says \"Sent\", but only SENT items may use that word, even to retell typed words (\"will send\", not \"will be sent\"). Write \"wrote\" or \"typed\".",
    "label": "reject-06-send",
    "expectCode": "send"
   },
@@ -17733,7 +17733,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "send",
-   "reason": "bullet 1 says \"sent\", but only SENT items may use that word, even to retell a draft (\"will send\", not \"will be sent\"). Write \"drafted\" or \"typed\", and \"sending isn't confirmed\" when the item says so.",
+   "reason": "bullet 1 says \"sent\", but only SENT items may use that word, even to retell typed words (\"will send\", not \"will be sent\"). Write \"wrote\" or \"typed\".",
    "label": "reject-07-send",
    "expectCode": "send"
   },
@@ -17743,7 +17743,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "send",
-   "reason": "bullet 1 says \"Replied\", but only SENT items may use that word, even to retell a draft (\"will send\", not \"will be sent\"). Write \"drafted\" or \"typed\", and \"sending isn't confirmed\" when the item says so.",
+   "reason": "bullet 1 says \"Replied\", but only SENT items may use that word, even to retell typed words (\"will send\", not \"will be sent\"). Write \"wrote\" or \"typed\".",
    "label": "reject-08-send",
    "expectCode": "send"
   },
@@ -17773,7 +17773,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "send",
-   "reason": "bullet 1 says \"Told\", but only SENT items may use that word, even to retell a draft (\"will send\", not \"will be sent\"). Write \"drafted\" or \"typed\", and \"sending isn't confirmed\" when the item says so.",
+   "reason": "bullet 1 says \"Told\", but only SENT items may use that word, even to retell typed words (\"will send\", not \"will be sent\"). Write \"wrote\" or \"typed\".",
    "label": "reject-11-send",
    "expectCode": "send"
   },
@@ -17783,7 +17783,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "send",
-   "reason": "bullet 1 says \"Sent\", but only SENT items may use that word, even to retell a draft (\"will send\", not \"will be sent\"). Write \"drafted\" or \"typed\", and \"sending isn't confirmed\" when the item says so.",
+   "reason": "bullet 1 says \"Sent\", but only SENT items may use that word, even to retell typed words (\"will send\", not \"will be sent\"). Write \"wrote\" or \"typed\".",
    "label": "reject-12-send",
    "expectCode": "send"
   },
@@ -17793,7 +17793,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "send",
-   "reason": "bullet 1 says \"sent\", but only SENT items may use that word, even to retell a draft (\"will send\", not \"will be sent\"). Write \"drafted\" or \"typed\", and \"sending isn't confirmed\" when the item says so.",
+   "reason": "bullet 1 says \"sent\", but only SENT items may use that word, even to retell typed words (\"will send\", not \"will be sent\"). Write \"wrote\" or \"typed\".",
    "label": "reject-13-send",
    "expectCode": "send"
   },
@@ -17803,7 +17803,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "claim",
-   "reason": "bullet 1 says \"Created\", which none of its items shows. Say only what the items show, or whose words it is (\"the draft says ...\", \"... reported ...\").",
+   "reason": "bullet 1 says \"Created\", which none of its items shows. Say only what the items show, or whose words it is (\"the text says ...\", \"... reported ...\").",
    "label": "reject-14-claim",
    "expectCode": "claim"
   },
@@ -17813,7 +17813,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "unframed",
-   "reason": "bullet 1 says \"pass\" as a fact, but those are words from a title, draft, page or report. Say whose words they are right before them, with no \";\" in between: \"the draft says ...\", \"the subject says ...\", \"... reported ...\".",
+   "reason": "bullet 1 says \"pass\" as a fact, but those are words from a title, typed text, page or report. Say whose words they are right before them, with no \";\" in between: \"the text says ...\", \"the subject says ...\", \"... reported ...\".",
    "label": "reject-15-unframed",
    "expectCode": "unframed"
   },
@@ -17823,7 +17823,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "unframed",
-   "reason": "bullet 2 says \"passed\" as a fact, but those are words from a title, draft, page or report. Say whose words they are right before them, with no \";\" in between: \"the draft says ...\", \"the subject says ...\", \"... reported ...\".",
+   "reason": "bullet 2 says \"passed\" as a fact, but those are words from a title, typed text, page or report. Say whose words they are right before them, with no \";\" in between: \"the text says ...\", \"the subject says ...\", \"... reported ...\".",
    "label": "reject-16-unframed",
    "expectCode": "unframed"
   },
@@ -17833,7 +17833,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "claim",
-   "reason": "bullet 1 says \"Ran\", which none of its items shows. Say only what the items show, or whose words it is (\"the draft says ...\", \"... reported ...\").",
+   "reason": "bullet 1 says \"Ran\", which none of its items shows. Say only what the items show, or whose words it is (\"the text says ...\", \"... reported ...\").",
    "label": "reject-17-claim",
    "expectCode": "claim"
   },
@@ -17853,7 +17853,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "unframed",
-   "reason": "bullet 2 says \"pass\" as a fact, but those are words from a title, draft, page or report. Say whose words they are right before them, with no \";\" in between: \"the draft says ...\", \"the subject says ...\", \"... reported ...\".",
+   "reason": "bullet 2 says \"pass\" as a fact, but those are words from a title, typed text, page or report. Say whose words they are right before them, with no \";\" in between: \"the text says ...\", \"the subject says ...\", \"... reported ...\".",
    "label": "reject-19-unframed",
    "expectCode": "unframed"
   },
@@ -17893,7 +17893,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "claim",
-   "reason": "bullet 1 says \"finished\", which none of its items shows. Say only what the items show, or whose words it is (\"the draft says ...\", \"... reported ...\").",
+   "reason": "bullet 1 says \"finished\", which none of its items shows. Say only what the items show, or whose words it is (\"the text says ...\", \"... reported ...\").",
    "label": "reject-23-claim",
    "expectCode": "claim"
   },
@@ -17903,7 +17903,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "claim",
-   "reason": "bullet 1 says \"finished\", which none of its items shows. Say only what the items show, or whose words it is (\"the draft says ...\", \"... reported ...\").",
+   "reason": "bullet 1 says \"finished\", which none of its items shows. Say only what the items show, or whose words it is (\"the text says ...\", \"... reported ...\").",
    "label": "reject-24-claim",
    "expectCode": "claim"
   },
@@ -17973,7 +17973,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "typedframe",
-   "reason": "bullet 1 states typed text as fact. Say that it was drafted or typed, or write \"the draft says ...\".",
+   "reason": "bullet 1 states typed text as fact. Say that it was written or typed, or write \"the text says ...\".",
    "label": "reject-31-typedframe",
    "expectCode": "typedframe"
   },
@@ -17983,7 +17983,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "unframed",
-   "reason": "bullet 1 says \"fixed\" as a fact, but those are words from a title, draft, page or report. Say whose words they are right before them, with no \";\" in between: \"the draft says ...\", \"the subject says ...\", \"... reported ...\".",
+   "reason": "bullet 1 says \"fixed\" as a fact, but those are words from a title, typed text, page or report. Say whose words they are right before them, with no \";\" in between: \"the text says ...\", \"the subject says ...\", \"... reported ...\".",
    "label": "reject-32-unframed",
    "expectCode": "unframed"
   },
@@ -17993,7 +17993,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "unframed",
-   "reason": "bullet 1 says \"fixed\" as a fact, but those are words from a title, draft, page or report. Say whose words they are right before them, with no \";\" in between: \"the draft says ...\", \"the subject says ...\", \"... reported ...\".",
+   "reason": "bullet 1 says \"fixed\" as a fact, but those are words from a title, typed text, page or report. Say whose words they are right before them, with no \";\" in between: \"the text says ...\", \"the subject says ...\", \"... reported ...\".",
    "label": "reject-33-unframed",
    "expectCode": "unframed"
   },
@@ -18003,7 +18003,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "send",
-   "reason": "bullet 1 says \"sent\", but only SENT items may use that word, even to retell a draft (\"will send\", not \"will be sent\"). Write \"drafted\" or \"typed\", and \"sending isn't confirmed\" when the item says so.",
+   "reason": "bullet 1 says \"sent\", but only SENT items may use that word, even to retell typed words (\"will send\", not \"will be sent\"). Write \"wrote\" or \"typed\".",
    "label": "reject-34-send",
    "expectCode": "send"
   },
@@ -18043,7 +18043,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "unframed",
-   "reason": "bullet 1 says \"pass\" as a fact, but those are words from a title, draft, page or report. Say whose words they are right before them, with no \";\" in between: \"the draft says ...\", \"the subject says ...\", \"... reported ...\".",
+   "reason": "bullet 1 says \"pass\" as a fact, but those are words from a title, typed text, page or report. Say whose words they are right before them, with no \";\" in between: \"the text says ...\", \"the subject says ...\", \"... reported ...\".",
    "label": "reject-38-unframed",
    "expectCode": "unframed"
   },
@@ -18083,7 +18083,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "send",
-   "reason": "bullet 1 says \"Wrote back\", but only SENT items may use that word, even to retell a draft (\"will send\", not \"will be sent\"). Write \"drafted\" or \"typed\", and \"sending isn't confirmed\" when the item says so.",
+   "reason": "bullet 1 says \"Wrote back\", but only SENT items may use that word, even to retell typed words (\"will send\", not \"will be sent\"). Write \"wrote\" or \"typed\".",
    "label": "reject-42-send",
    "expectCode": "send"
   },
@@ -18093,7 +18093,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "send",
-   "reason": "bullet 1 says \"Answered\", but only SENT items may use that word, even to retell a draft (\"will send\", not \"will be sent\"). Write \"drafted\" or \"typed\", and \"sending isn't confirmed\" when the item says so.",
+   "reason": "bullet 1 says \"Answered\", but only SENT items may use that word, even to retell typed words (\"will send\", not \"will be sent\"). Write \"wrote\" or \"typed\".",
    "label": "reject-43-send",
    "expectCode": "send"
   },
@@ -18103,7 +18103,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "send",
-   "reason": "bullet 1 says \"hit Send\", but only SENT items may use that word, even to retell a draft (\"will send\", not \"will be sent\"). Write \"drafted\" or \"typed\", and \"sending isn't confirmed\" when the item says so.",
+   "reason": "bullet 1 says \"hit Send\", but only SENT items may use that word, even to retell typed words (\"will send\", not \"will be sent\"). Write \"wrote\" or \"typed\".",
    "label": "reject-44-send",
    "expectCode": "send"
   },
@@ -18113,7 +18113,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "claim",
-   "reason": "bullet 1 says \"sending\", which none of its items shows. Say only what the items show, or whose words it is (\"the draft says ...\", \"... reported ...\").",
+   "reason": "bullet 1 says \"sending\", which none of its items shows. Say only what the items show, or whose words it is (\"the text says ...\", \"... reported ...\").",
    "label": "reject-45-claim",
    "expectCode": "claim"
   },
@@ -18123,7 +18123,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "claim",
-   "reason": "bullet 1 says \"sending\", which none of its items shows. Say only what the items show, or whose words it is (\"the draft says ...\", \"... reported ...\").",
+   "reason": "bullet 1 says \"sending\", which none of its items shows. Say only what the items show, or whose words it is (\"the text says ...\", \"... reported ...\").",
    "label": "reject-46-claim",
    "expectCode": "claim"
   },
@@ -18133,7 +18133,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "send",
-   "reason": "bullet 1 says \"went out\", but only SENT items may use that word, even to retell a draft (\"will send\", not \"will be sent\"). Write \"drafted\" or \"typed\", and \"sending isn't confirmed\" when the item says so.",
+   "reason": "bullet 1 says \"went out\", but only SENT items may use that word, even to retell typed words (\"will send\", not \"will be sent\"). Write \"wrote\" or \"typed\".",
    "label": "reject-47-send",
    "expectCode": "send"
   },
@@ -18143,7 +18143,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "send",
-   "reason": "bullet 1 says \"mailed\", but only SENT items may use that word, even to retell a draft (\"will send\", not \"will be sent\"). Write \"drafted\" or \"typed\", and \"sending isn't confirmed\" when the item says so.",
+   "reason": "bullet 1 says \"mailed\", but only SENT items may use that word, even to retell typed words (\"will send\", not \"will be sent\"). Write \"wrote\" or \"typed\".",
    "label": "reject-48-send",
    "expectCode": "send"
   },
@@ -18153,7 +18153,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "send",
-   "reason": "bullet 1 says \"Return to send\", but only SENT items may use that word, even to retell a draft (\"will send\", not \"will be sent\"). Write \"drafted\" or \"typed\", and \"sending isn't confirmed\" when the item says so.",
+   "reason": "bullet 1 says \"Return to send\", but only SENT items may use that word, even to retell typed words (\"will send\", not \"will be sent\"). Write \"wrote\" or \"typed\".",
    "label": "reject-49-send",
    "expectCode": "send"
   },
@@ -18163,7 +18163,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "unframed",
-   "reason": "bullet 1 says \"fixed\" as a fact, but those are words from a title, draft, page or report. Say whose words they are right before them, with no \";\" in between: \"the draft says ...\", \"the subject says ...\", \"... reported ...\".",
+   "reason": "bullet 1 says \"fixed\" as a fact, but those are words from a title, typed text, page or report. Say whose words they are right before them, with no \";\" in between: \"the text says ...\", \"the subject says ...\", \"... reported ...\".",
    "label": "reject-50-unframed",
    "expectCode": "unframed"
   },
@@ -18173,7 +18173,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "claim",
-   "reason": "bullet 1 says \"because\", which none of its items shows. Say only what the items show, or whose words it is (\"the draft says ...\", \"... reported ...\").",
+   "reason": "bullet 1 says \"because\", which none of its items shows. Say only what the items show, or whose words it is (\"the text says ...\", \"... reported ...\").",
    "label": "reject-51-claim",
    "expectCode": "claim"
   },
@@ -18193,7 +18193,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "claim",
-   "reason": "bullet 1 says \"Ran\", which none of its items shows. Say only what the items show, or whose words it is (\"the draft says ...\", \"... reported ...\").",
+   "reason": "bullet 1 says \"Ran\", which none of its items shows. Say only what the items show, or whose words it is (\"the text says ...\", \"... reported ...\").",
    "label": "reject-53-claim",
    "expectCode": "claim"
   },
@@ -18203,7 +18203,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "claim",
-   "reason": "bullet 1 says \"run\", which none of its items shows. Say only what the items show, or whose words it is (\"the draft says ...\", \"... reported ...\").",
+   "reason": "bullet 1 says \"run\", which none of its items shows. Say only what the items show, or whose words it is (\"the text says ...\", \"... reported ...\").",
    "label": "reject-54-claim",
    "expectCode": "claim"
   },
@@ -18223,7 +18223,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "claim",
-   "reason": "bullet 2 says \"verified\", which none of its items shows. Say only what the items show, or whose words it is (\"the draft says ...\", \"... reported ...\").",
+   "reason": "bullet 2 says \"verified\", which none of its items shows. Say only what the items show, or whose words it is (\"the text says ...\", \"... reported ...\").",
    "label": "reject-56-claim",
    "expectCode": "claim"
   },
@@ -18233,7 +18233,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "unframed",
-   "reason": "bullet 2 says \"passed\" as a fact, but those are words from a title, draft, page or report. Say whose words they are right before them, with no \";\" in between: \"the draft says ...\", \"the subject says ...\", \"... reported ...\".",
+   "reason": "bullet 2 says \"passed\" as a fact, but those are words from a title, typed text, page or report. Say whose words they are right before them, with no \";\" in between: \"the text says ...\", \"the subject says ...\", \"... reported ...\".",
    "label": "reject-57-unframed",
    "expectCode": "unframed"
   },
@@ -18243,7 +18243,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "claim",
-   "reason": "bullet 2 says \"confirmed\", which none of its items shows. Say only what the items show, or whose words it is (\"the draft says ...\", \"... reported ...\").",
+   "reason": "bullet 2 says \"confirmed\", which none of its items shows. Say only what the items show, or whose words it is (\"the text says ...\", \"... reported ...\").",
    "label": "reject-58-claim",
    "expectCode": "claim"
   },
@@ -18263,7 +18263,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "claim",
-   "reason": "bullet 2 says \"verified\", which none of its items shows. Say only what the items show, or whose words it is (\"the draft says ...\", \"... reported ...\").",
+   "reason": "bullet 2 says \"verified\", which none of its items shows. Say only what the items show, or whose words it is (\"the text says ...\", \"... reported ...\").",
    "label": "reject-60-claim",
    "expectCode": "claim"
   },
@@ -18273,7 +18273,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "claim",
-   "reason": "bullet 1 says \"Met\", which none of its items shows. Say only what the items show, or whose words it is (\"the draft says ...\", \"... reported ...\").",
+   "reason": "bullet 1 says \"Met\", which none of its items shows. Say only what the items show, or whose words it is (\"the text says ...\", \"... reported ...\").",
    "label": "reject-61-claim",
    "expectCode": "claim"
   },
@@ -18283,7 +18283,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "claim",
-   "reason": "bullet 1 says \"call with\", which none of its items shows. Say only what the items show, or whose words it is (\"the draft says ...\", \"... reported ...\").",
+   "reason": "bullet 1 says \"call with\", which none of its items shows. Say only what the items show, or whose words it is (\"the text says ...\", \"... reported ...\").",
    "label": "reject-62-claim",
    "expectCode": "claim"
   },
@@ -18293,7 +18293,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "claim",
-   "reason": "bullet 2 says \"lunch\", which none of its items shows. Say only what the items show, or whose words it is (\"the draft says ...\", \"... reported ...\").",
+   "reason": "bullet 2 says \"lunch\", which none of its items shows. Say only what the items show, or whose words it is (\"the text says ...\", \"... reported ...\").",
    "label": "reject-63-claim",
    "expectCode": "claim"
   },
@@ -18323,7 +18323,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "claim",
-   "reason": "bullet 1 says \"Wired\", which none of its items shows. Say only what the items show, or whose words it is (\"the draft says ...\", \"... reported ...\").",
+   "reason": "bullet 1 says \"Wired\", which none of its items shows. Say only what the items show, or whose words it is (\"the text says ...\", \"... reported ...\").",
    "label": "reject-66-claim",
    "expectCode": "claim"
   },
@@ -18333,7 +18333,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "claim",
-   "reason": "bullet 1 says \"approved\", which none of its items shows. Say only what the items show, or whose words it is (\"the draft says ...\", \"... reported ...\").",
+   "reason": "bullet 1 says \"approved\", which none of its items shows. Say only what the items show, or whose words it is (\"the text says ...\", \"... reported ...\").",
    "label": "reject-67-claim",
    "expectCode": "claim"
   },
@@ -18353,7 +18353,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "claim",
-   "reason": "bullet 1 says \"closed\", which none of its items shows. Say only what the items show, or whose words it is (\"the draft says ...\", \"... reported ...\").",
+   "reason": "bullet 1 says \"closed\", which none of its items shows. Say only what the items show, or whose words it is (\"the text says ...\", \"... reported ...\").",
    "label": "reject-69-claim",
    "expectCode": "claim"
   },
@@ -18363,7 +18363,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "claim",
-   "reason": "bullet 1 says \"approved\", which none of its items shows. Say only what the items show, or whose words it is (\"the draft says ...\", \"... reported ...\").",
+   "reason": "bullet 1 says \"approved\", which none of its items shows. Say only what the items show, or whose words it is (\"the text says ...\", \"... reported ...\").",
    "label": "reject-70-claim",
    "expectCode": "claim"
   },
@@ -18403,7 +18403,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "claim",
-   "reason": "bullet 1 says \"confirmed\", which none of its items shows. Say only what the items show, or whose words it is (\"the draft says ...\", \"... reported ...\").",
+   "reason": "bullet 1 says \"confirmed\", which none of its items shows. Say only what the items show, or whose words it is (\"the text says ...\", \"... reported ...\").",
    "label": "reject-74-claim",
    "expectCode": "claim"
   },
@@ -18413,7 +18413,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "claim",
-   "reason": "bullet 1 says \"Researched\", which none of its items shows. Say only what the items show, or whose words it is (\"the draft says ...\", \"... reported ...\").",
+   "reason": "bullet 1 says \"Researched\", which none of its items shows. Say only what the items show, or whose words it is (\"the text says ...\", \"... reported ...\").",
    "label": "reject-75-claim",
    "expectCode": "claim"
   },
@@ -18463,7 +18463,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "claim",
-   "reason": "bullet 1 says \"finished\", which none of its items shows. Say only what the items show, or whose words it is (\"the draft says ...\", \"... reported ...\").",
+   "reason": "bullet 1 says \"finished\", which none of its items shows. Say only what the items show, or whose words it is (\"the text says ...\", \"... reported ...\").",
    "label": "reject-80-claim",
    "expectCode": "claim"
   },
@@ -18483,7 +18483,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "send",
-   "reason": "bullet 1 says \"sent\", but only SENT items may use that word, even to retell a draft (\"will send\", not \"will be sent\"). Write \"drafted\" or \"typed\", and \"sending isn't confirmed\" when the item says so.",
+   "reason": "bullet 1 says \"sent\", but only SENT items may use that word, even to retell typed words (\"will send\", not \"will be sent\"). Write \"wrote\" or \"typed\".",
    "label": "reject-82-send",
    "expectCode": "send"
   },
@@ -19666,7 +19666,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "unframed",
-   "reason": "bullet 2 says \"checking\" as a fact, but those are words from a title, draft, page or report. Say whose words they are right before them, with no \";\" in between: \"the draft says ...\", \"the subject says ...\", \"... reported ...\".",
+   "reason": "bullet 2 says \"checking\" as a fact, but those are words from a title, typed text, page or report. Say whose words they are right before them, with no \";\" in between: \"the text says ...\", \"the subject says ...\", \"... reported ...\".",
    "label": "E13-unframed"
   },
   {
@@ -20018,7 +20018,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "claim",
-   "reason": "bullet 1 says \"shipped\", which none of its items shows. Say only what the items show, or whose words it is (\"the draft says ...\", \"... reported ...\").",
+   "reason": "bullet 1 says \"shipped\", which none of its items shows. Say only what the items show, or whose words it is (\"the text says ...\", \"... reported ...\").",
    "label": "K2-F03-line4"
   },
   {
@@ -20115,7 +20115,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "send",
-   "reason": "bullet 1 says \"Replied\", but only SENT items may use that word, even to retell a draft (\"will send\", not \"will be sent\"). Write \"drafted\" or \"typed\", and \"sending isn't confirmed\" when the item says so.",
+   "reason": "bullet 1 says \"Replied\", but only SENT items may use that word, even to retell typed words (\"will send\", not \"will be sent\"). Write \"wrote\" or \"typed\".",
    "label": "K2-F05-line2"
   },
   {
@@ -20124,7 +20124,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "send",
-   "reason": "bullet 1 says \"Sent\", but only SENT items may use that word, even to retell a draft (\"will send\", not \"will be sent\"). Write \"drafted\" or \"typed\", and \"sending isn't confirmed\" when the item says so.",
+   "reason": "bullet 1 says \"Sent\", but only SENT items may use that word, even to retell typed words (\"will send\", not \"will be sent\"). Write \"wrote\" or \"typed\".",
    "label": "K2-F05-line3"
   },
   {
@@ -20209,7 +20209,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "claim",
-   "reason": "bullet 1 says \"fixed\", which none of its items shows. Say only what the items show, or whose words it is (\"the draft says ...\", \"... reported ...\").",
+   "reason": "bullet 1 says \"fixed\", which none of its items shows. Say only what the items show, or whose words it is (\"the text says ...\", \"... reported ...\").",
    "label": "K2-F08-line2"
   },
   {
@@ -20241,7 +20241,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "send",
-   "reason": "bullet 1 says \"Emailed\", but only SENT items may use that word, even to retell a draft (\"will send\", not \"will be sent\"). Write \"drafted\" or \"typed\", and \"sending isn't confirmed\" when the item says so.",
+   "reason": "bullet 1 says \"Emailed\", but only SENT items may use that word, even to retell typed words (\"will send\", not \"will be sent\"). Write \"wrote\" or \"typed\".",
    "label": "K2-F09-line2"
   },
   {
@@ -20498,7 +20498,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "send",
-   "reason": "bullet 1 says \"Messaged\", but only SENT items may use that word, even to retell a draft (\"will send\", not \"will be sent\"). Write \"drafted\" or \"typed\", and \"sending isn't confirmed\" when the item says so.",
+   "reason": "bullet 1 says \"Messaged\", but only SENT items may use that word, even to retell typed words (\"will send\", not \"will be sent\"). Write \"wrote\" or \"typed\".",
    "label": "K2-F19-line2"
   },
   {
@@ -20629,7 +20629,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "claim",
-   "reason": "bullet 1 says \"finished\", which none of its items shows. Say only what the items show, or whose words it is (\"the draft says ...\", \"... reported ...\").",
+   "reason": "bullet 1 says \"finished\", which none of its items shows. Say only what the items show, or whose words it is (\"the text says ...\", \"... reported ...\").",
    "label": "K2-F25-line2"
   },
   {
@@ -20682,7 +20682,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "lead",
-   "reason": "bullet 1 starts with \"Asked\". Start a bullet about an item marked \"Start with:\" with one of those words, or \"Drafted\" or \"Wrote\"; about typing with \"sending unknown\", start with \"Drafted\", \"Wrote\" or \"Typed\".",
+   "reason": "bullet 1 starts with \"Asked\". Start a bullet about an item marked \"Start with:\" with one of those words, or \"Wrote\"; about typing with \"sending unknown\", start with \"Wrote\" or \"Typed\".",
    "label": "K2-F27-line2"
   },
   {
@@ -20713,7 +20713,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "lead",
-   "reason": "bullet 1 starts with \"Asked\". Start a bullet about an item marked \"Start with:\" with one of those words, or \"Drafted\" or \"Wrote\"; about typing with \"sending unknown\", start with \"Drafted\", \"Wrote\" or \"Typed\".",
+   "reason": "bullet 1 starts with \"Asked\". Start a bullet about an item marked \"Start with:\" with one of those words, or \"Wrote\"; about typing with \"sending unknown\", start with \"Wrote\" or \"Typed\".",
    "label": "K2-F28-line2"
   },
   {
@@ -20744,7 +20744,7 @@
    "provider": "local/qwen3.5-4b-q4_k_m",
    "ok": false,
    "code": "send",
-   "reason": "bullet 1 says \"Texted\", but only SENT items may use that word, even to retell a draft (\"will send\", not \"will be sent\"). Write \"drafted\" or \"typed\", and \"sending isn't confirmed\" when the item says so.",
+   "reason": "bullet 1 says \"Texted\", but only SENT items may use that word, even to retell typed words (\"will send\", not \"will be sent\"). Write \"wrote\" or \"typed\".",
    "label": "K2-F29-line2"
   },
   {
@@ -22123,8 +22123,8 @@
   {
    "case": "E03",
    "previous": "{\"title\": \"Reply to Priya\", \"bullets\": [{\"ids\": [\"i1\", \"i2\", \"i3\"], \"text\": \"Sent a reply to Priya in Mail.\"}]}",
-   "problem": "bullet 1 says \"Sent\", but only SENT items may use that word, even to retell a draft (\"will send\", not \"will be sent\"). Write \"drafted\" or \"typed\", and \"sending isn't confirmed\" when the item says so.",
-   "evidence": "NOTE: moment\nITEMS:\ni1. Mail (email): typed \"Hi Priya, thanks for the detailed repro steps on the iPad streak reset.\"; sending unknown\ni2. Mail (email): typed \"I found the cause: check-ins from the offline device overwrite the newer ones. The fix will ship in 2.3 next week.\"; sending unknown\ni3. Mail (email): typed \"I'll send the TestFlight link once the build is up.\"; sending unknown\n\nYour previous answer was thrown away.\nPrevious answer: {\"title\": \"Reply to Priya\", \"bullets\": [{\"ids\": [\"i1\", \"i2\", \"i3\"], \"text\": \"Sent a reply to Priya in Mail.\"}]}\nProblem: bullet 1 says \"Sent\", but only SENT items may use that word, even to retell a draft (\"will send\", not \"will be sent\"). Write \"drafted\" or \"typed\", and \"sending isn't confirmed\" when the item says so.\nWrite the whole JSON object again. Fix that problem and keep everything else that was right."
+   "problem": "bullet 1 says \"Sent\", but only SENT items may use that word, even to retell typed words (\"will send\", not \"will be sent\"). Write \"wrote\" or \"typed\".",
+   "evidence": "NOTE: moment\nITEMS:\ni1. Mail (email): typed \"Hi Priya, thanks for the detailed repro steps on the iPad streak reset.\"; sending unknown\ni2. Mail (email): typed \"I found the cause: check-ins from the offline device overwrite the newer ones. The fix will ship in 2.3 next week.\"; sending unknown\ni3. Mail (email): typed \"I'll send the TestFlight link once the build is up.\"; sending unknown\n\nYour previous answer was thrown away.\nPrevious answer: {\"title\": \"Reply to Priya\", \"bullets\": [{\"ids\": [\"i1\", \"i2\", \"i3\"], \"text\": \"Sent a reply to Priya in Mail.\"}]}\nProblem: bullet 1 says \"Sent\", but only SENT items may use that word, even to retell typed words (\"will send\", not \"will be sent\"). Write \"wrote\" or \"typed\".\nWrite the whole JSON object again. Fix that problem and keep everything else that was right."
   },
   {
    "case": "E09",

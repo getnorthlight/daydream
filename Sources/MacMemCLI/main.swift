@@ -40,6 +40,9 @@ let confirmMigration = args.contains("--confirm-import"); args.removeAll { $0 ==
 let migrationBatchLimit = option("--batch-limit").flatMap(Int.init) ?? 100
 let acceptMigrationExclusions = args.contains("--accept-exclusions"); args.removeAll { $0 == "--accept-exclusions" }
 let searchReport = args.contains("--search-report"); args.removeAll { $0 == "--search-report" }
+// agent-tools v2: `agent-preview` only (local owner preview, plan §6.3): the owner's explicit flag, and a fixed "now".
+let ownerPreview = args.contains(AgentOwnerPreview.cliFlag); args.removeAll { $0 == AgentOwnerPreview.cliFlag }
+let previewNow = option("--now")
 let includeEventText = args.contains("--include-text"); args.removeAll { $0 == "--include-text" }
 let home = homeArgument.map { URL(fileURLWithPath:$0, isDirectory:true) } ?? MemPaths.home()
 let client = option("--client") ?? "", recipient = option("--recipient") ?? ""
@@ -141,6 +144,9 @@ enum ServerRenewal {
 enum ToolListState {
     static let listedKey = "DAYDREAM_MCP_LISTED"
     static let protocolKey = "DAYDREAM_MCP_PROTOCOL"
+    /// agent-tools v2: the toolset this server lists (`DAYDREAM_MCP_TOOLSET`: v2 by default, legacy, or both). Its
+    /// fingerprint is part of what was listed, so a renewal into another toolset sends list_changed.
+    static let toolset = ToolsetMode.current()
     /// Nothing was listed yet in this AI app session (a process from before this change leaves the key unset).
     static let nothingListed = "-"
     /// This process is a renewal: an earlier copy of DayDream started it.
@@ -157,24 +163,24 @@ enum ToolListState {
         if listed == nil && !renewed { record(nothingListed) }
         guard renewed, agreed != nil || listed == nil else { return false }
         guard let listed else { return true }
-        return listed != nothingListed && !listed.hasPrefix(AssistantCatalog.toolListFingerprint + ":")
+        return listed != nothingListed && !listed.hasPrefix(AssistantCatalog.toolListFingerprint(toolset) + ":")
     }
     /// tools/list answered with this build's list.
-    static func gaveList() { record(AssistantCatalog.toolListFingerprint + ":" + AssistantCatalog.toolNames.joined(separator:",")) }
+    static func gaveList() { record(AssistantCatalog.toolListFingerprint(toolset) + ":" + AssistantCatalog.toolNames(toolset).joined(separator:",")) }
     static func initialized(_ revision: String) { agreed = revision; setenv(protocolKey, revision, 1) }
     private static func record(_ value: String) { listed = value; setenv(listedKey, value, 1) }
     /// This build's tools the AI app doesn't have: [] when its list is current or nothing was listed yet, nil when not known.
     static var missing: [String]? {
         guard let listed else { return renewed ? nil : [] }
-        guard listed != nothingListed, !listed.hasPrefix(AssistantCatalog.toolListFingerprint + ":") else { return [] }
+        guard listed != nothingListed, !listed.hasPrefix(AssistantCatalog.toolListFingerprint(toolset) + ":") else { return [] }
         let names = Set((listed.split(separator:":", maxSplits:1).dropFirst().first ?? "").split(separator:",").map(String.init))
-        return AssistantCatalog.toolNames.filter { !names.contains($0) }
+        return AssistantCatalog.toolNames(toolset).filter { !names.contains($0) }
     }
     /// The note every tool reply starts with while the AI app's list lacks tools; nil when it doesn't.
     static var notice: String? {
         let lacking = missing
         if let lacking, lacking.isEmpty { return nil }
-        return AssistantCatalog.staleToolsNotice(client:client, missing:lacking)
+        return AssistantCatalog.staleToolsNotice(client:client, missing:lacking, mode:toolset)
     }
 }
 /// The history file as it is on disk now (device and inode); nil when there is none.
@@ -197,7 +203,7 @@ final class ServedHistory {
 /// (`AssistantTypedBridge`), which checks this AI app's key and the setting "Let AI apps read what you typed" itself.
 enum AssistantTypedAccess {
     static var reader: [String:Any] { ["client":client,"recipient":recipient,"capability":capability] }
-    static let typedCoverage = "Matches app names, window and document titles, website names, the person's own corrections and, in typed, the words the person typed and sent (the person allowed AI apps to read them). Pass a typed hit's id to moment_details for the whole moment."
+    static let typedCoverage = "Matches app names, window and document titles, website names, the person's own corrections and, in typed, the words the person typed (the person allowed AI apps to read them). Pass a typed hit's id to moment_details for the whole moment."
     static let offNote = "Exact typed words aren't shared: \"\(AIReadsTypedSetting.title)\" is off in DayDream. Each typed action says where and about how much was typed."
     static let closedNote = "Exact typed words come from the DayDream app, which isn't open (or typing is locked). Each typed action says where and about how much was typed."
     /// The words of these typed actions, and a note when there are none to give.
@@ -217,7 +223,7 @@ enum AssistantTypedAccess {
         var out: [[String:String]] = []
         for hit in hits {
             guard let id = hit["id"], let action = try? store.action(id) else { continue }
-            var row = ["id":id,"when":AssistantView.when(action.at),"app":AppNames.display(app:action.app,bundle:action.bundle),"snippet":hit["snippet"] ?? "","state":action.state]
+            var row = ["id":id,"when":AssistantView.when(action.at),"app":AppNames.display(app:action.app,bundle:action.bundle),"snippet":hit["snippet"] ?? "","state":AssistantView.shownState(action.state)]
             if !action.title.isEmpty { row["window"] = action.title }
             out.append(row)
         }
@@ -240,6 +246,10 @@ enum WriterFreshen {
     static var unansweredAt: Date?
     /// Whether this tool call reads today or the last two hours.
     static func covers(_ tool: String, _ input: [String:Any], now: Date = Date()) -> Bool {
+        // agent-tools v2: timeline and search reach today when their when does (no when: the whole history, today too).
+        if AssistantCatalog.answersV2(tool, ToolListState.toolset) {
+            return AgentTools.coversRecent(name: tool, arguments: input, now: now, timezone: TimeZone.current.identifier)
+        }
         let format = DateFormatter(); format.locale = Locale(identifier:"en_US_POSIX"); format.timeZone = .current; format.dateFormat = "yyyy-MM-dd"
         let today = format.string(from:now)
         switch tool {
@@ -285,6 +295,15 @@ enum WriterFreshen {
         return now.timeIntervalSince(last) >= quietAfterTimeout
     }
 }
+/// agent-tools v2: what a v2 tool call runs against. Typed words come only from the running DayDream app, through
+/// WP-A's bridge client (`AgentBridgeSource`), never from this process (it holds no typing key). `ownerPreview` is set
+/// only by `mac-mem --local agent-preview --owner-preview`, never by the MCP server.
+/// The owner preview carries no AI app's grant (WP-A's gate refuses one that does); an AI app's call carries its grant.
+func agentContext(_ store: MemoryStore, owner: Bool = false, now: Date = Date(), timezone: String = TimeZone.current.identifier) -> AgentToolContext {
+    let source = owner ? AgentBridgeSource(home: store.home, ownerPreview: true)
+        : AgentBridgeSource(home: store.home, client: client, recipient: recipient, capability: capability, ownerPreview: false)
+    return AgentToolContext(store: store, typed: source, headlines: store as? DayReviewHeadlineSource, timezone: timezone, now: now)
+}
 /// claude/mcp-prompts-1003: a JSON-RPC protocol error (an unknown tool or method), as opposed to a tool that ran and
 /// failed, which answers as a tool result with isError so the AI app's model reads what to do next.
 struct MCPProtocolError: Error { let code: Int; let message: String }
@@ -327,17 +346,45 @@ func mcp(_ served: ServedHistory) {
             case "initialize":
                 negotiated = AssistantCatalog.negotiatedVersion(params["protocolVersion"])
                 ToolListState.initialized(negotiated)
-                result = ["protocolVersion":negotiated,"capabilities":["tools":["listChanged":true],"resources":[:]],"serverInfo":["name":"DayDream","title":"DayDream","version":try companionIdentity.get().version],"instructions":AssistantCatalog.instructions] as [String:Any]
+                result = ["protocolVersion":negotiated,"capabilities":["tools":["listChanged":true],"resources":[:]],"serverInfo":["name":"DayDream","title":"DayDream","version":try companionIdentity.get().version],"instructions":AssistantCatalog.serverInstructions(ToolListState.toolset)] as [String:Any]
             case "ping": result = [:] as [String:String]
-            case "tools/list": result = ["tools":AssistantCatalog.toolList()]; ToolListState.gaveList()
+            case "tools/list": result = ["tools":AssistantCatalog.toolList(ToolListState.toolset)]; ToolListState.gaveList()
             case "resources/list": result = ["resources":AssistantCatalog.resources]
             case "resources/templates/list": result = ["resourceTemplates":AssistantCatalog.resourceTemplates]
             case "tools/call", "resources/read":
                 let resource = params["uri"] as? String
                 let name = resource == "macmem://status" ? "status" : resource == "macmem://context/current" ? "context" : resource == "macmem://current-context" ? "current-context" : resource != nil ? "open" : params["name"] as? String ?? ""
                 let input = params["arguments"] as? [String:Any] ?? [:]
-                if resource == nil, !AssistantCatalog.tools.contains(where: { $0.name == name }) {
-                    throw MCPProtocolError(code: -32602, message: AssistantCatalog.unknownToolMessage(name))
+                if resource == nil, !AssistantCatalog.answers(name, ToolListState.toolset) {
+                    throw MCPProtocolError(code: -32602, message: AssistantCatalog.unknownToolMessage(name, mode: ToolListState.toolset))
+                }
+                // agent-tools v2 (docs/agent-tools/plan.md §2): timeline, search, details and status. The seven 0.1.4 names
+                // still answer below, unlisted, so chats begun on 0.1.4 keep working.
+                if resource == nil, AssistantCatalog.answersV2(name, ToolListState.toolset) {
+                    do {
+                        if WriterFreshen.covers(name, input) { WriterFreshen.ask(store) }
+                        let scope: String? = name == "status" ? nil : name == "search" ? "search" : "detail"
+                        if let scope { try authorize(store, scope, mcp: true) }
+                        let access = name == "status" ? store.assistantAccess(client:client,recipient:recipient,capability:capability) : nil
+                        let output = AgentTools.run(name: name, arguments: input, context: agentContext(store), access: access)
+                        // Access is checked again after reading: a connection turned off meanwhile gets nothing.
+                        if let scope { try authorize(store, scope, mcp: true) }
+                        var reply: [String:Any] = ["content":[["type":"text","text":output.text]]]
+                        if output.isError { reply["isError"] = true }
+                        else if negotiated >= "2025-06-18", (try? AgentTools.format(input)) == .json,
+                                let object = try? JSONSerialization.jsonObject(with: Data(output.text.utf8)) as? [String:Any] { reply["structuredContent"] = object }
+                        result = reply
+                    } catch let failure where !(failure is MCPProtocolError) {
+                        result = ["content":[["type":"text","text":AssistantCatalog.errorMessage(failure)]],"isError":true]
+                    }
+                    if let notice = ToolListState.notice, var reply = result as? [String:Any], let content = reply["content"] as? [[String:Any]] {
+                        reply["content"] = [["type":"text","text":notice]] + content
+                        result = reply
+                    }
+                    let reply: [String:Any] = ["jsonrpc":"2.0","id":id,"result":result]
+                    print(String(decoding:try JSONSerialization.data(withJSONObject:reply,options:[.sortedKeys]),as:UTF8.self))
+                    fflush(stdout)
+                    continue
                 }
                 // claude/mcp-prompts-1003: tools answer in concise Markdown unless response_format is "detailed" (the JSON
                 // as before). Resources always answer JSON. AssistantMarkdown reads only the detailed reply.
@@ -402,6 +449,8 @@ func mcp(_ served: ServedHistory) {
                 case "read": try authorize(store,"detail",mcp:true); body = try json(store.assistantItem(input["id"] as? String ?? "",reader:TypedReader(client:client,recipient:recipient,capability:capability))); try authorize(store,"detail",mcp:true)
                 default: throw MCPProtocolError(code: -32602, message: AssistantCatalog.unknownToolMessage(name))
                 }
+                // agent-tools v2: the 0.1.4 tools never say whether a message was sent or is a draft either.
+                body = AgentLegacyFilter.clean(body)
                 if let resource {
                     result = ["contents":[["uri":resource,"mimeType":name == "context" ? "text/plain" : "application/json","text":body]]]
                 } else if format == .concise, AssistantMarkdown.tools.contains(name) {
@@ -551,8 +600,8 @@ do {
         }
         guard FileManager.default.fileExists(atPath:home.appendingPathComponent("memory.sqlite").path) else { throw MemError.missing }
         if command.hasPrefix("migration-stage-") || command.hasPrefix("migration-adoption-") {
-            guard local,home.standardizedFileURL==home.resolvingSymlinksInPath(),
-                  home.path != MemPaths.home().resolvingSymlinksInPath().path else {
+            guard local,FilePaths.unlinked(home),
+                  !FilePaths.same(home,MemPaths.home()) else {
                 throw MemError.invalid("Staged CLI import requires --local and a separate physical trial destination, not the default store")
             }
             let readOnly = command == "migration-stage-status"
@@ -630,7 +679,7 @@ do {
         guard local else { throw MemError.denied }
         let read = WebTypingRefusals.read()
         let value: [String: Any] = ["counts": read?.counts ?? [:], "since": read?.since ?? "never",
-                                    "note": "Episodes, not keys: each count is how many times that outcome began. join.privacy covers Incognito or Guest windows, sensitive fields and blocked sites without saying which."]
+                                    "note": "Episodes, not keys: each count is how many times that outcome began; a new typing session (burst: Chrome keys after 3 s without one) counts every outcome again. join.privacy covers Incognito or Guest windows, sensitive fields and blocked sites without saying which."]
         print(String(decoding: try JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]), as: UTF8.self))
         exit(0)
     }
@@ -698,6 +747,24 @@ do {
         guard local else { throw MemError.denied }
         try output(store.syncSearchIndex(rebuild:command == "search-rebuild"))
     case "read": try authorize(store,"detail"); guard args.count == 2 else { throw MemError.invalid("Expected source ID") }; try output(store.readerItem(args[1]))
+    // agent-tools v2 (plan §6.3): the four tools as an AI app would read them, for the owner and the evals. Local owner
+    // only and read-only: `mac-mem --local [--home DIR] [--timezone IANA] [--now ISO] agent-preview [--owner-preview]
+    // <tool> ['<json arguments>']`. Typed words come from the running app's bridge only with --owner-preview.
+    case "agent-preview":
+        guard local else { throw MemError.denied }
+        guard (2...3).contains(args.count) else { throw MemError.invalid("Use: mac-mem --local agent-preview [--owner-preview] <timeline|search|details|status> ['<json arguments>']") }
+        let input = try args.count == 3 ? (JSONSerialization.jsonObject(with: Data(args[2].utf8)) as? [String:Any]).map { $0 } ?? { throw MemError.invalid("Arguments must be a JSON object") }() : [:]
+        guard previewNow == nil || timestamp(previewNow!) != nil else { throw MemError.invalid("--now must be ISO-8601") }
+        if let zone = actionTimezone, TimeZone(identifier: zone) == nil { throw MemError.invalid("--timezone must be an IANA time zone") }
+        let started = Date()
+        let output = AgentTools.run(name: args[1], arguments: input,
+                                    context: agentContext(store, owner: ownerPreview, now: previewNow.flatMap(timestamp) ?? Date(), timezone: actionTimezone ?? TimeZone.current.identifier),
+                                    access: nil)
+        print(output.text)
+        if ProcessInfo.processInfo.environment["DAYDREAM_AGENT_TIMING"] == "1" {
+            FileHandle.standardError.write(Data(String(format: "agent-preview %@ %.1f ms\n", args[1], Date().timeIntervalSince(started) * 1000).utf8))
+        }
+        if output.isError { exit(1) }
     default: throw MemError.invalid("Unknown command. Use help.")
     }
 } catch { FileHandle.standardError.write(Data((String(describing:error)+"\n").utf8)); exit(1) }

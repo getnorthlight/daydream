@@ -18,7 +18,7 @@ public struct LocalSearchRuntime: Codable, Equatable {
     public static func bundled(in appBundle:URL)throws->LocalSearchRuntime? {
         let manifest=appBundle.appendingPathComponent("Contents/Resources/typesense-runtime-v1.json")
         guard FileManager.default.fileExists(atPath:manifest.path) else{return nil}
-        guard manifest.standardizedFileURL==manifest.resolvingSymlinksInPath() else{throw SearchFailure.configuration}
+        guard FilePaths.unlinked(manifest) else{throw SearchFailure.configuration}
         let fd=open(manifest.path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC);guard fd>=0 else{throw SearchFailure.configuration};defer{close(fd)}
         var st=stat();guard fstat(fd,&st)==0,st.st_mode&S_IFMT==S_IFREG,st.st_mode&0o022==0,(1...8192).contains(st.st_size) else{throw SearchFailure.configuration}
         var bytes=[UInt8](repeating:0,count:8193);let n=Darwin.read(fd,&bytes,bytes.count)
@@ -35,7 +35,7 @@ public struct LocalSearchRuntime: Codable, Equatable {
         try Self.validateExecutable(supervisor,hash:supervisorSHA256)
     }
     static func validateExecutable(_ file:URL,hash:String) throws {
-        guard file.isFileURL,file.standardizedFileURL==file.resolvingSymlinksInPath(),
+        guard file.isFileURL,FilePaths.unlinked(file),
               hash.range(of:"^[a-f0-9]{64}$",options:.regularExpression) != nil else {throw SearchFailure.configuration}
         let fd=open(file.path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC);guard fd>=0 else {throw SearchFailure.configuration};defer{close(fd)}
         var st=stat();guard fstat(fd,&st)==0,st.st_mode&S_IFMT==S_IFREG,st.st_mode&0o022==0,
@@ -94,7 +94,7 @@ struct SearchSweepPacing {
 /// the per-store lock. No launch agent, shell, Python or PID-based adoption.
 public enum LocalSearchSupervisor {
     private static func directory(_ url:URL,create:Bool=false)throws {
-        guard url.isFileURL,url.standardizedFileURL==url.resolvingSymlinksInPath() else{throw SearchFailure.configuration}
+        guard url.isFileURL,FilePaths.unlinked(url) else{throw SearchFailure.configuration}
         if create && !FileManager.default.fileExists(atPath:url.path) {
             try FileManager.default.createDirectory(at:url,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
         }

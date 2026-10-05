@@ -11,6 +11,9 @@ the Sparkle update archive + appcast. Never publishes, pushes or creates GitHub 
                   signed appcast.xml, signed with --ed-key-file only. Nothing is uploaded.
   appcast         the same from a signed, notarized DayDream-<version>.dmg (or a .zip of the stapled
                   app), with plain-text release notes. Nothing is uploaded or published.
+  platform        check an app is macOS 15.0+ / arm64 only (Info.plist, Package.swift, binaries); prepare,
+                  appcast and developer-id-release.py stage run the same check, and the appcast's
+                  sparkle:minimumSystemVersion 15.0 and sparkle:hardwareRequirements arm64 are required.
 
 Sparkle's own generate_keys always stores the private key in the login Keychain, so the key
 is made here instead: 32 random bytes from the OS (the Ed25519 seed), saved base64-encoded.
@@ -302,6 +305,90 @@ def audit(app):
         if path.is_symlink():
             require(relative.startswith("Frameworks/Sparkle.framework/"), "Unexpected bundle symlink")
 
+# ---------------------------------------------------------------- platform: macOS 15+, Apple silicon only
+# claude/crashguard-015: 0.1.5 runs on macOS 15.0 or later on Apple silicon only (0.1.4 crashed on macOS 15). Every
+# stage, prepare and appcast asserts the same floor in all three places it is written, and arm64 binaries.
+MIN_MACOS = "15.0"
+SWIFT_PRODUCTS = ("MacMem", "mac-mem", "mac-mem-backup")
+_LC_BUILD_VERSION, _PLATFORM_MACOS, _CPU_ARM64 = 0x32, 1, 0x0100000C
+
+def macho_platform(path):
+    """(cpu types, [(platform, 'x.y.z' minos)]) of a Mach-O file, thin or fat; ((), []) when it is not one."""
+    import struct
+    data = Path(path).read_bytes()
+    def thin(offset):
+        if data[offset:offset + 4] != bytes.fromhex("cffaedfe"):
+            return None, []
+        cpu, _, _, ncmds, _ = struct.unpack_from("<5I", data, offset + 4)
+        builds, at = [], offset + 32
+        for _ in range(min(ncmds, 4096)):
+            if at + 8 > len(data):
+                break
+            cmd, size = struct.unpack_from("<2I", data, at)
+            if cmd == _LC_BUILD_VERSION and at + 16 <= len(data):
+                platform, minos = struct.unpack_from("<2I", data, at + 8)
+                builds.append((platform, "%d.%d.%d" % (minos >> 16, (minos >> 8) & 0xFF, minos & 0xFF)))
+            if size < 8:
+                break
+            at += size
+        return cpu, builds
+    if data[:4] in (bytes.fromhex("cafebabe"), bytes.fromhex("cafebabf")):
+        wide = data[:4] == bytes.fromhex("cafebabf")
+        count = struct.unpack_from(">I", data, 4)[0]
+        cpus, builds = [], []
+        for i in range(min(count, 16)):
+            at = 8 + i * (32 if wide else 20)
+            cpu = struct.unpack_from(">I", data, at)[0]
+            offset = struct.unpack_from(">Q" if wide else ">I", data, at + 8)[0]
+            cpus.append(cpu)
+            builds += thin(offset)[1]
+        return tuple(cpus), builds
+    cpu, builds = thin(0)
+    return ((cpu,) if cpu is not None else ()), builds
+
+def _version(text):
+    return (tuple(int(x) for x in str(text).split(".")) + (0, 0, 0))[:3]
+
+def package_platform_problems(source=ROOT):
+    """Package.swift's own floor is macOS 15 (.macOS(.v15) or .macOS("15.0"))."""
+    text = (Path(source) / "Package.swift").read_text()
+    found = re.findall(r'\.macOS\(\s*(\.v[0-9_]+|"[0-9.]+")\s*\)', text)
+    if found != ['.v15'] and found != ['"15.0"']:
+        return ["Package.swift must declare platforms: [.macOS(.v15)] (or .macOS(\"15.0\")), found %s" % (found or "none")]
+    return []
+
+def platform_problems(app):
+    """The app says macOS 15.0 (LSMinimumSystemVersion) and its three Swift products are arm64-only, built for macOS
+    15.0 (LC_BUILD_VERSION). A build that would open on an older macOS or an Intel Mac is refused."""
+    problems = []
+    contents = Path(app) / "Contents"
+    try:
+        info = plistlib.loads((contents / "Info.plist").read_bytes())
+    except (OSError, plistlib.InvalidFileException) as error:
+        return ["Info.plist unreadable: %s" % error]
+    if str(info.get("LSMinimumSystemVersion", "")) != MIN_MACOS:
+        problems.append("Info.plist LSMinimumSystemVersion must be %s, found %r" % (MIN_MACOS, info.get("LSMinimumSystemVersion")))
+    for name in SWIFT_PRODUCTS:
+        path = contents / "MacOS" / name
+        if not path.is_file():
+            problems.append("MacOS/%s missing" % name)
+            continue
+        cpus, builds = macho_platform(path)
+        if cpus != (_CPU_ARM64,):
+            problems.append("MacOS/%s must be arm64 only, found cpu types %s" % (name, [hex(c) for c in cpus] or "none (not Mach-O)"))
+        macos = [minos for platform, minos in builds if platform == _PLATFORM_MACOS]
+        if not macos or any(_version(m) != _version(MIN_MACOS) for m in macos):
+            problems.append("MacOS/%s must be built for macOS %s (LC_BUILD_VERSION minos), found %s" % (name, MIN_MACOS, macos or "none"))
+    return problems
+
+def check_appcast_platform(item):
+    """The appcast item says macOS 15.0 and arm64 hardware only (generate_appcast infers both from the app)."""
+    minimum = (item.findtext(SPARKLE_NS + "minimumSystemVersion") or "").strip()
+    require(minimum == MIN_MACOS, "Appcast sparkle:minimumSystemVersion must be %s, found %r; DO NOT publish this output" % (MIN_MACOS, minimum))
+    hardware = item.findtext(SPARKLE_NS + "hardwareRequirements")
+    require(hardware is not None and hardware.strip() == "arm64",
+            "Appcast sparkle:hardwareRequirements must be arm64, found %r; DO NOT publish this output" % hardware)
+
 # ---------------------------------------------------------------- update archive and appcast
 def appcast_argv(key_file, prefix, directory, tools=SPARKLE_TOOLS):
     """generate_appcast with the key FILE. Never --account: that reads the Keychain."""
@@ -327,6 +414,7 @@ def check_appcast(feed, prefix, archive_name, build, short_version):
     signature = enclosure.attrib.get(SPARKLE_NS + "edSignature", "")
     require(signature, "No EdDSA signature on the archive; DO NOT publish this output")
     require("sparkle-signatures:" in Path(feed).read_text(), "The appcast itself is not signed; DO NOT publish this output")
+    check_appcast_platform(item)
     return signature
 
 def _release_inputs(key_file, rights_confirmed, updates_path):
@@ -380,6 +468,8 @@ def _release_app_facts(app, data, previous_build):
     # The release reads this commit's feed and key and updates quietly (an updates-off build never goes in a feed).
     for field, value in update_info(data).items():
         require(info.get(field) == value, "Signed app config mismatch: " + field)
+    problems = package_platform_problems() + platform_problems(app)
+    require(not problems, "Not a macOS 15 / Apple silicon release:\n  " + "\n  ".join(problems))
     build = str(info["CFBundleVersion"])
     require(re.fullmatch(r"[1-9][0-9]*", build) and int(build) > previous_build >= 1, "Build must exceed the verified prior installed build")
     return info, companions, build, info["CFBundleShortVersionString"]
@@ -504,7 +594,7 @@ def appcast(output, key_file, previous_build, notes, rights_confirmed, dmg=None,
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("action", choices=["make-key", "public-key", "set-public-key", "validate", "manifest", "prepare", "appcast"])
+    parser.add_argument("action", choices=["make-key", "public-key", "set-public-key", "validate", "manifest", "prepare", "appcast", "platform"])
     parser.add_argument("--key-file", type=Path, default=KEY_FILE)
     parser.add_argument("--key-dir", type=Path, help="make-key only: folder for the key (default ~/DayDream-keys)")
     parser.add_argument("--public-key", help="set-public-key: the base64 public key (default: derived from --key-file)")
@@ -530,6 +620,10 @@ def main():
         print("Wrote the public key to packaging/updates.json. Commit that file.")
     elif args.action == "manifest":
         manifest(args.app)
+    elif args.action == "platform":
+        problems = package_platform_problems() + platform_problems(args.app)
+        require(not problems, "Not a macOS 15 / Apple silicon build:\n  " + "\n  ".join(problems))
+        print("macOS %s and arm64 only: Info.plist, Package.swift and %s." % (MIN_MACOS, ", ".join(SWIFT_PRODUCTS)))
     elif args.action == "validate":
         data = config(require_key=False)
         print("packaging/updates.json is valid: feed %s. No network or key access." % data["feed"])

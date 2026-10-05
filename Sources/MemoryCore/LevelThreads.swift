@@ -243,12 +243,30 @@ tuesday wednesday thursday saturday sunday morning evening night dinner lunch br
             guard let name, !name.isEmpty else { return ThreadEntity(raw: "meeting:", kind: "meeting", label: "Meeting") }
             return ThreadEntity(raw: "meeting:" + norm(name), kind: "meeting", label: name, topic: topicWords(name))
         }
-        return app
+        // claude/dayeval-1005: a channel by channel and team ("General | Sales | Microsoft Teams"); its own views stay the
+        // app, and so does one name alone ("Q3 planning | Microsoft Teams" could be a team: r1 summaries-quality's rule).
+        let views: Set<String> = ["activity", "teams", "calendar", "calls", "files", "apps", "search", "home", "assignments", "onedrive",
+                                  "settings", "help", "communities", "copilot", "planner", "approvals", "shifts", "people", "notifications", "new chat"]
+        guard !views.contains(view), !view.hasPrefix("chat") else { return app }
+        let first = parts[0]
+        if parts.count == 1 { return app }
+        return ThreadEntity(raw: "chat:teams|#" + first.lowercased(), kind: "chat", label: "Teams in " + first, places: [first])
     }
     static func isAI(_ b: String, _ a: String, _ h: String) -> Bool {
-        ["com.anthropic.claudefordesktop", "com.openai.chat", "com.openai.codex"].contains(b) || ["claude", "chatgpt"].contains(a)
-            || ["claude.ai", "chatgpt.com", "chat.openai.com", "gemini.google.com", "perplexity.ai"].contains(h)
+        ["com.anthropic.claudefordesktop", "com.openai.chat", "com.openai.codex", "ai.perplexity.mac"].contains(b)
+            || ["claude", "chatgpt", "perplexity", "copilot", "microsoft copilot", "le chat", "poe", "grok", "deepseek"].contains(a)
+            || aiHosts.contains(h)
     }
+    /// An AI chat site's name ("copilot.microsoft.com" is Copilot), nil for any other site.
+    static func aiHostName(_ h: String) -> String? {
+        for (part, name) in [("claude", "Claude"), ("chatgpt", "ChatGPT"), ("openai", "ChatGPT"), ("gemini", "Gemini"), ("perplexity", "Perplexity"),
+                             ("copilot", "Copilot"), ("mistral", "Le Chat"), ("poe.com", "Poe"), ("grok", "Grok"), ("deepseek", "DeepSeek")]
+            where h.contains(part) { return name }
+        return nil
+    }
+    /// claude/dayeval-1005: AI chat sites past the owner's own (Copilot, Le Chat, Poe, Grok, DeepSeek too).
+    static let aiHosts: Set<String> = ["claude.ai", "chatgpt.com", "chat.openai.com", "gemini.google.com", "perplexity.ai", "copilot.microsoft.com",
+                                       "chat.mistral.ai", "poe.com", "grok.com", "chat.deepseek.com"]
     static func isCode(_ b: String, _ a: String) -> Bool {
         ["com.apple.dt.xcode", "com.microsoft.vscode", "com.todesktop.230313mzl4w4u92", "dev.zed.zed", "com.apple.terminal", "com.googlecode.iterm2",
          "com.jetbrains.intellij", "com.sublimetext.4", "com.mitchellh.ghostty", "dev.warp.warp-stable"].contains(b)
@@ -338,7 +356,7 @@ tuesday wednesday thursday saturday sunday morning evening night dinner lunch br
                 }
                 let l = s.lowercased()
                 // fix/sx-all: "email" too: TitleClean (fix/day-card) names a mailbox view "Email", as the cloud view shows it.
-                let boxes = ["inbox", "sent", "drafts", "all mail", "starred", "archive", "outbox", "junk", "spam", "trash", "mail", "email", "new message"]
+                let boxes = ["inbox", "all inboxes", "sent", "drafts", "all mail", "starred", "archive", "outbox", "junk", "spam", "trash", "mail", "email", "new message"]
                 if !s.isEmpty, !boxes.contains(where: { l == $0 || l.hasPrefix($0 + " (") || l.hasPrefix($0 + " –") || l.hasPrefix($0 + " -") }) { subject = s }
             }
             let who = recipient.map { [$0] } ?? []
@@ -359,6 +377,12 @@ tuesday wednesday thursday saturday sunday morning evening night dinner lunch br
             let server = parts.count >= 2 ? parts[1] : nil
             return ThreadEntity(raw: "chat:discord|" + [channel, server].compactMap { $0?.lowercased() }.joined(separator: "|"), kind: "chat",
                                 label: channel.map { "Discord in " + $0 } ?? "Discord", places: channel.map { [$0] } ?? [])
+        }
+        // claude/dayeval-1005: Instagram's direct messages are a conversation (the texting line's), not a feed read.
+        if h == "instagram.com", recipient != nil || ["• chats", "• direct", "direct messages", "inbox • ", "messages • "].contains(where: { lower.contains($0) }) {
+            let who = recipient.map { [$0] } ?? []
+            return ThreadEntity(raw: "chat:instagram|" + (who.first?.lowercased() ?? ""), kind: "chat",
+                                label: who.isEmpty ? "Instagram messages" : "Instagram with " + who[0], people: who)
         }
         if socialHosts.contains(h) {
             // notes-quality: a post is said to others, like a text: "Posted on X".
@@ -404,7 +428,7 @@ tuesday wednesday thursday saturday sunday morning evening night dinner lunch br
             let t = bare || ["new chat", "claude", "chatgpt", "new conversation"].contains(lower) ? "" : strip(title, suffixes: [" - Claude", " | Claude", " - ChatGPT"])
             let web = a == "google chrome" || a == "safari" || a == "chrome" || a == "arc" || a == "firefox"
             let name = b == "com.openai.codex" || b == "com.openai.chat" ? "ChatGPT" : b == "com.anthropic.claudefordesktop" ? "Claude"
-                : web || app.isEmpty ? (h.contains("claude") ? "Claude" : h.contains("gemini") ? "Gemini" : h.contains("perplexity") ? "Perplexity" : "ChatGPT") : app
+                : web || app.isEmpty ? (aiHostName(h) ?? "ChatGPT") : app
             // notes-quality: one thread per AI app ("ai:claude"), unless an ask shares a name with a document or project
             // (the planner links it by its moment note's title). Never a chat title as the label: it is often the question.
             let key = "ai:" + name.lowercased()
@@ -510,7 +534,9 @@ public struct MomentGist: Sendable, Equatable {
     /// Leads of a line that says something was sent, asked, posted or reviewed (validator10's did-verbs), or a draft to
     /// someone. "Worked on", "Watched" and "On a call" lines are a thread's name and time already.
     static let sent = ["Texted", "Emailed", "Replied", "Messaged", "Told", "Posted", "Asked", "Reviewed", "Approved", "Submitted"]
-    static let drafted = ["Drafted a text", "Drafted an email", "Drafted a reply", "Drafted a message", "Wrote a post"]
+    static let drafted = ["Drafted a text", "Drafted an email", "Drafted a reply", "Drafted a message", "Wrote a post",
+                          // claude/dayeval-1005: code's notes never say draft ("Wrote a text to Sam").
+                          "Wrote a text", "Wrote an email", "Wrote a reply", "Wrote a message", "Wrote a comment", "Wrote a quote"]
     public static func intent(_ bullets: [String]) -> String? {
         let lines = bullets.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
         return lines.first { l in sent.contains { l.hasPrefix($0 + " ") } } ?? lines.first { l in drafted.contains { l.hasPrefix($0) } }

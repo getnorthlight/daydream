@@ -39,7 +39,7 @@ private func request(_ actions:[NoteAction])throws->CanonicalNoteRequest{
  methodA.sendBy="return";methodB.sendBy="button"
  let mixedMethods=try ModelView(request:request([methodA,methodB]),actions:[methodA,methodB],localIntentSessions:true)
  check(mixedMethods.items.first?.requestSession==true && mixedMethods.text.contains("each submission gesture observed") && !mixedMethods.text.contains("each sent with Return"),"mixed Return/button session never attributes the first observed method to every request")
- check(CanonicalGrounding.cloudVersion=="deepseek-v4-flash-0731-zdr-prompt20-validator26","cloud writer version is prompt20/validator26 (final-1004: one version above scrub-1004's prompt19/validator25)")
+ check(CanonicalGrounding.cloudVersion=="deepseek-v4-flash-0731-zdr-prompt21-validator27","cloud writer version is prompt20/validator26 (final-1004: one version above scrub-1004's prompt19/validator25)")
  check((try? QwenNoThinkingTemplate.render(instruction:CanonicalGrounding.instruction(for:view),evidence:view.text,prefill:CanonicalGrounding.prefill)) != nil,"local session instruction fits the unchanged8192-byte template bound")
  print("RESULT \(pass) passed \(fail) failed");if fail>0{exit(1)}
 }}

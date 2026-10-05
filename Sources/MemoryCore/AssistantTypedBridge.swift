@@ -160,8 +160,15 @@ public final class AssistantTypedBridgeServer: @unchecked Sendable {
         var uid: uid_t = 0, gid: gid_t = 0
         guard getpeereid(c, &uid, &gid) == 0, uid == getuid() else { return }
         guard let line = AssistantTypedBridge.readAll(c, limit: AssistantTypedBridge.requestLimit, line: true),
-              let request = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] else { return }
-        let reply = request.isEmpty ? ["status": "ok"] : answer(request)
+              var request = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] else { return }
+        if request.isEmpty { return reply(c, ["status": "ok"]) }
+        // The owner-preview gate checks the process on the other end of this socket, as the kernel reports it
+        // (`LOCAL_PEERPID`). A `pid` the client wrote into the request is never trusted: it is replaced, or removed when
+        // the kernel can't say (the gate then fails closed).
+        request["pid"] = AgentBridgePeer.peerPID(c).map { Int($0) }
+        reply(c, answer(request))
+    }
+    private func reply(_ c: Int32, _ reply: [String: Any]) {
         guard let data = try? JSONSerialization.data(withJSONObject: reply) else { return }
         _ = AssistantTypedBridge.writeAll(c, data)
     }

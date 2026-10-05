@@ -9,9 +9,9 @@ import Security
 /// allowlisted property (`ChromeAppleEvents`), addressed to the already-running
 /// Chrome PID. No script, JavaScript, launch or keystroke (setup's Chrome step
 /// opens Chrome through Launch Services, not from here); the only permission
-/// prompt is `askForChromeAccess`: setup's Chrome step (`askChromeAccessInSetup`),
-/// right after setup starts recording with the switch on if still unanswered
-/// (`askChromeAccessAfterSetup`), and from Settings' Allow… button.
+/// prompt is `askForChromeAccess`: setup's Chrome row (`askChromeAccessInSetup`)
+/// and Settings' Allow… buttons, only on a press (chromeask-1005: never by itself
+/// after setup or when Chrome next comes forward).
 /// Never called on the main thread by page history (`ChromePageRecorder`).
 ///
 /// Release switch: with `ReleaseFeatures.chromePageHistory` false every entry

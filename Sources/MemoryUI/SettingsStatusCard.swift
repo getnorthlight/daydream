@@ -30,14 +30,18 @@ public struct SettingsStatusSnapshot: Equatable {
     /// `CapturePresentation.canResume`: nothing blocks a start, so Off offers Start Recording and Paused
     /// offers Resume Recording.
     public var canResume: Bool
+    /// chromeask-1005: Chrome pages aren't being saved (`BrowserHistoryLine.needsAccess`): one calm line with Fix.
+    public var chromeOff: Bool
+    /// chromeask-1005: refused, so the line's button is Ask again (else Fix).
+    public var chromeAskAgain: Bool
 
     public init(state: RecordingState, issue: String? = nil, permissions: PermissionSnapshot? = nil,
                 summaries: SummaryAvailability = SummaryAvailability(provider: .off, busy: false),
                 exclusions: ExclusionSummary = ExclusionSummary(alwaysPrivate: [], excludedByYou: []),
-                connections: String? = nil, canResume: Bool = true) {
+                connections: String? = nil, canResume: Bool = true, chromeOff: Bool = false, chromeAskAgain: Bool = false) {
         self.state = state; self.issue = issue
         self.permissions = permissions; self.summaries = summaries; self.exclusions = exclusions
-        self.connections = connections; self.canResume = canResume
+        self.connections = connections; self.canResume = canResume; self.chromeOff = chromeOff; self.chromeAskAgain = chromeAskAgain
     }
 }
 
@@ -83,6 +87,8 @@ public enum SettingsStatusAction: Equatable {
     /// Try Again beside a job that didn't work (the history upkeep, a deletion): runs it again now
     /// (the same retry as the orange line's Try Again in the menu bar). It also runs again by itself.
     case retry
+    /// chromeask-1005: Ask again or Fix beside "Chrome pages aren't being saved." (the app's `fixChromeAccess`).
+    case fixChrome
 }
 
 /// The status line's button: its title and what it does.
@@ -114,6 +120,10 @@ public struct SettingsStatusCardModel: Equatable {
     public let stateNeedsAttention: Bool
     /// The orange line for an operational issue or blocker the state line doesn't already say.
     public let attention: String?
+    /// chromeask-1005: "Chrome pages aren't being saved.", calm (not orange), with its own Fix; nil when they are.
+    public let chromeLine: String?
+    /// The line's button: Ask again (refused) or Fix (never asked).
+    public let chromeFixTitle: String
     /// The card's one button, or nil when nothing here can act on the line (a blocker without a fix,
     /// Recording without an issue).
     public let button: SettingsStatusButton?
@@ -125,7 +135,7 @@ public struct SettingsStatusCardModel: Equatable {
     public var stateLine: String { [stateTitle, stateDetail].compactMap { $0 }.joined(separator: " · ") }
     /// The card's VoiceOver label.
     public var accessibilityLabel: String {
-        (["DayDream, " + stateLine] + [attention].compactMap { $0 }).joined(separator: ". ")
+        (["DayDream, " + stateLine] + [attention, chromeLine].compactMap { $0 }).joined(separator: ". ")
     }
 
     public init(_ s: SettingsStatusSnapshot, calendar: Calendar, now: Date) {
@@ -135,7 +145,9 @@ public struct SettingsStatusCardModel: Equatable {
         attention = s.state.attentionLine(issue: s.issue, now: now, timeZone: zone)
         if case .needsPermission = s.state { stateNeedsAttention = true } else { stateNeedsAttention = false }
         button = Self.button(s)
-        if case .recording = s.state { quiet = attention == nil } else { quiet = false }
+        chromeLine = s.chromeOff ? ChromeAccessNotice.line : nil
+        chromeFixTitle = ChromeAccessNotice.title(askAgain: s.chromeAskAgain)
+        if case .recording = s.state { quiet = attention == nil && chromeLine == nil } else { quiet = false }
     }
 
     /// The one button: Needs Permission's Allow… (the Permissions page); else an issue's own fix; else the state's
@@ -284,10 +296,26 @@ public struct SettingsStatusCard: View {
                     .help(attention)
                     .settingsElement("attention", attention)
                 }
+                if let chromeLine = model.chromeLine {
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        Image(systemName: ChromeAccessNotice.symbol).font(.system(size: 10)).foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                        Text(chromeLine).font(.system(size: 12)).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button(model.chromeFixTitle) { act(.fixChrome) }
+                            .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(Color.accentColor)
+                            .accessibilityHint(ChromeAccessNotice.hint(askAgain: model.chromeFixTitle == ChromeAccessNotice.askAgainTitle))
+                            .settingsElement("chrome.fix", model.chromeFixTitle)
+                    }
+                    .padding(.leading, 15)
+                    .settingsElement("chrome", chromeLine)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(model.accessibilityLabel)
+            // The line's button, for VoiceOver (the combined element hides the button inside it).
+            .accessibilityAction(named: Text(model.chromeFixTitle)) { if model.chromeLine != nil { act(.fixChrome) } }
             if let button = model.button { actionButton(button) }
         }
         .padding(.horizontal, StatusCardMetrics.horizontalPadding).padding(.vertical, StatusCardMetrics.padding)

@@ -4,8 +4,9 @@
 # which holds llama.cpp headers the build needs and must stay tracked.
 /Vendor/
 
-# Build output
+# Build output (.build-*/: second lanes and scratch builds, e.g. .build-owner/ for the owner-typing flags)
 .build/
+.build-*/
 dist/
 DerivedData/
 *.dSYM/

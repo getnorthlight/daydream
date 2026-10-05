@@ -64,7 +64,7 @@ If you want them now, turn one on:
 - **Cloud summaries.** Paste your own [OpenRouter](https://openrouter.ai) API key. The line under the switch says what is sent: your activity, including words you type and Chrome page titles and sites (never full web addresses). OpenRouter bills your account.
 - **Summaries on this Mac.** Notes are written on your Mac. **Continue** downloads the model (2.74 GB) if it isn't on your Mac yet. It needs 8 GB of memory.
 
-The [guide](guide.md#summaries) explains what each one sends.
+The [README](../README.md#summaries) explains what each one sends.
 
 ## 6. Choose the apps to remember
 
@@ -72,7 +72,7 @@ The [guide](guide.md#summaries) explains what each one sends.
 
 Every app is remembered unless you uncheck it. Uncheck any app you never want recorded, such as a banking or health app. Common password managers are always skipped.
 
-**Typed text** and **Web pages in Chrome** start on; each switch has one line that says what it saves. Turn either off with one click, then or any time in Settings. Nothing is recorded before you press Start Recording. Typed text saves what you type in apps on a fixed list, such as Notes, Spotlight and Terminal, and on websites in Google Chrome while **Web pages in Chrome** is on too. Messages and email are on too; turn them off in Settings › Apps to remember. The guide's [Typed text](guide.md#typed-text) section lists every app and what is always skipped.
+**Typed text** and **Web pages in Chrome** start on; each switch has one line that says what it saves. Turn either off with one click, then or any time in Settings. Nothing is recorded before you press Start Recording. Typed text saves what you type in apps on a fixed list, such as Notes, Spotlight and Terminal, and on websites in Google Chrome while **Web pages in Chrome** is on too. Messages and email are on too; turn them off in Settings › Apps to remember. The README's [Typed text](../README.md#typed-text) section lists every app and what is always skipped.
 
 What you type is encrypted on your Mac, and DayDream deletes the exact words after 7 days unless you choose another time. AI apps you connect can read the words you typed and sent while **Let AI apps read what you typed** is on (on by default; Settings › Connections). With it off, they see only where and about how much you typed, and your summaries. Cloud summaries, if you choose them, get the words to write your notes. Window titles can include words you typed, like an email subject or a shell command. Those are saved, read by AI apps and sent to cloud summaries like any other window title. Anyone typing on this Mac account while it's on is recorded as you. Leave it off if you type passwords or other secrets into normal text boxes.
 
@@ -101,11 +101,11 @@ If your Mac sleeps or locks while recording, DayDream starts recording again whe
 
 ![Settings, "Web pages in Chrome": the switch is off, with one line on what it saves and a Learn more link.](images/settings-chrome-pages.png)
 
-Setup shows **Web pages in Chrome** switched on. Nothing is saved from Chrome until macOS lets DayDream control it. With the switch on, macOS asks right after setup starts recording (or the next time Google Chrome comes to the front, if it isn't open then). Say OK. If you said no, or turned the switch off in setup:
+Setup shows **Web pages in Chrome** switched on. Nothing is saved from Chrome until macOS lets DayDream control it. With the switch on, setup's Google Chrome row asks: press **Allow** there, then Allow in the box macOS shows (if Chrome is closed, it opens in the background to ask). If you said no, press **Ask again** beside "Chrome pages aren't being saved." in the menu bar menu (or on setup's row): DayDream clears its own Automation answer and macOS asks again. If macOS can't ask again (on a managed Mac, say), DayDream opens System Settings › Privacy & Security › Automation with a small guide beside it: turn on Google Chrome under DayDream. DayDream notices on its own, with no restart. If you turned the switch off in setup:
 
 1. Open DayDream Settings › Apps to remember.
 2. If you turned **Web pages in Chrome** off, turn it on. DayDream shows what it saves and never saves. Press **Turn On**.
-3. Press **Allow…** and let macOS give DayDream access to Google Chrome.
+3. Press **Allow** and let macOS give DayDream access to Google Chrome.
 
 DayDream then saves the title and site of the Chrome page in front, and when. If typed text is on too, it also saves what you type on websites, with the site. It saves nothing while any Incognito or Guest window is open, and it skips common banking, password, health and government sites. Other browsers DayDream knows, like Safari, aren't recorded. [PRIVACY.md](../PRIVACY.md#browser-history-google-chrome) has the details.
 
@@ -153,7 +153,7 @@ To disconnect it, remove the entry from the AI app's settings and run the same c
 - **Recording stopped.** The menu bar panel says why. Choose **Resume Now** if it's paused, or turn the switch on if it's off. If something must be fixed first, one button in the switch's place (for example **Allow…**) opens that step.
 - **"Move to Applications first."** You opened it from the install window. Quit DayDream, drag it to Applications and open it from there.
 - **"DayDream is already open."** Another copy of DayDream is using your history, for example one still open from the install window. This copy opens your history by itself as soon as the other one closes.
-- **Anything else.** Choose Help › Report a Problem, and see [Report a problem](guide.md#report-a-problem).
+- **Anything else.** Choose Help › Report a Problem, and see [Report a problem](../README.md#report-a-problem).
 
 To remove DayDream, see [docs/uninstall.md](uninstall.md).
 

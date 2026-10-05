@@ -27,7 +27,7 @@ Run the checks that cover what you changed, and say in the PR which ones you ran
 
 ## Keep DayDream's privacy promises
 
-The [guide](docs/guide.md#what-daydream-records) is a promise to users about what DayDream records and sends. A change must not quietly break it:
+The [README](README.md#what-daydream-records) is a promise to users about what DayDream records and sends. A change must not quietly break it:
 
 - Recording starts only because the user asked for it. After a quit, a restart, an update, sleep, a screen lock or a user switch it starts again only if it was recording before (never after the user's own Pause or Stop), and DayDream says so when it can't.
 - New kinds of capture, and anything that sends data off the Mac, are opt-in and explained in the README.

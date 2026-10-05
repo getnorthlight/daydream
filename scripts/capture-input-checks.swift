@@ -855,11 +855,20 @@ final class Rig {
         check(memory.read({ live += 1; return true }) && live == 1, "input source: read live on the main queue")
         let remembered = route.sync { memory.read({ live += 1; return false }) }
         check(remembered && live == 1, "input source: the route's executor (even on the main thread) reads the remembered value, never TIS")
+        // claude/crashguard-015: the app's one Text Input Sources reader answers off the main queue without calling TIS
+        // (its TIS half calls MainQueue.require(), which traps in this check build anywhere else).
+        let selected = KeyboardInputSource.isDirect()
+        let viaRoute = route.sync { (MainQueue.isCurrent, KeyboardInputSource.isDirect()) }
+        var viaThread: Bool?
+        let reader = Thread { viaThread = KeyboardInputSource.isDirect(); done.signal() }
+        reader.name = "capture-input-checks input source"; reader.start(); done.wait()
+        check(!viaRoute.0 && viaRoute.1 == selected && viaThread == selected,
+              "input source: KeyboardInputSource answers the main queue's last read on the route's executor and a tap thread")
         let capture = source("Sources/MacMemApp/EventCapture.swift")
         let offMain = capture.components(separatedBy: "fileprivate func handleTapOffMain(").dropFirst().first?.components(separatedBy: "\n    }\n").first ?? ""
         check(!offMain.isEmpty && !offMain.contains("NSEvent") && offMain.contains("Self.keyCharacters(event)"),
               "key characters: the tap thread's work reads through keyCharacters, never NSEvent")
-        check(capture.components(separatedBy: "NSEvent(cgEvent").count == 2 && capture.contains("static var appKitCharacters: (CGEvent) -> String = { NSEvent(cgEvent: $0)?.characters ?? \"\" }"),
+        check(capture.components(separatedBy: "NSEvent(cgEvent").count == 2 && capture.contains("static var appKitCharacters: (CGEvent) -> String = { MainQueue.require(); return NSEvent(cgEvent: $0)?.characters ?? \"\" }"),
               "key characters: NSEvent(cgEvent:) is made in one place, AppKit's main-queue half")
     }
 

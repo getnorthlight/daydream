@@ -285,6 +285,7 @@ public struct NoteCommitInvalidation: Equatable, Sendable {
     private func store(_ key: String, _ day: ActionDay, loadedAt: Date) {
         let final = timestamp(day.summary.end).map { loadedAt >= $0.addingTimeInterval(Self.settle) } ?? false
         entries[key] = Entry(day: day, loadedAt: loadedAt, final: final)
+        if key == todayKey { LaunchTrace.mark("today.loaded"); LaunchQuiet.todayShown() }
         touch(key)
         while entries.count > Self.capacity,
               let oldest = entries.keys.filter({ $0 != todayKey }).min(by: { uses[$0, default: 0] < uses[$1, default: 0] }) {
@@ -368,7 +369,8 @@ public struct NoteCommitInvalidation: Equatable, Sendable {
             switch result {
             case .success(let read):
                 day = read
-                build(read, summaries: browser?.summaries ?? cache.summaries, loadedAt: cache.loadedAt(key) ?? cache.now())
+                await build(read, summaries: browser?.summaries ?? cache.summaries, loadedAt: cache.loadedAt(key) ?? cache.now())
+                guard ticket == generation else { return }
                 if failed { failed = false }
                 failedDay = nil
                 // fix/prompt-row: each read of today opens its asks again, off the main thread (typing turned off, a
@@ -418,9 +420,16 @@ public struct NoteCommitInvalidation: Equatable, Sendable {
         }
     }
 
-    private func build(_ day: ActionDay, summaries: SummaryAvailability, loadedAt: Date) {
+    /// claude/perf3-1005: today's projection is built off the main thread, as a past day's is (`DayProjectionCache.project`;
+    /// it took 100-300 ms of main-thread time on a busy day, at every reread of today and every summaries change it draws).
+    /// Only the latest build lands: one started after it (a newer read, a summaries change) wins.
+    private var buildTicket = 0
+    private func build(_ day: ActionDay, summaries: SummaryAvailability, loadedAt: Date) async {
+        buildTicket += 1
+        let mine = buildTicket
         let calendar = browser?.calendar ?? cache.calendar
-        let made = TodaySnapshot.make(day: day, summaries: summaries, calendar: calendar, now: loadedAt, bundleNames: cache.bundleNames)
+        let made = await DayProjectionCache.project(day: day, summaries: summaries, calendar: calendar, now: loadedAt, bundleNames: cache.bundleNames)
+        guard mine == buildTicket, self.day?.summary.day == made.dayKey else { return }
         let next = browser.map { made.withPrompts($0.momentPrompts.prompts(made.dayKey)) } ?? made
         if snapshot != next { snapshot = next }
     }
@@ -432,7 +441,8 @@ public struct NoteCommitInvalidation: Equatable, Sendable {
     }
     private func rebuild(summaries: SummaryAvailability) {
         guard let day, let snapshot, snapshot.dayKey == day.summary.day else { return }
-        build(day, summaries: summaries, loadedAt: snapshot.loadedAt)
+        let loadedAt = snapshot.loadedAt
+        Task { await build(day, summaries: summaries, loadedAt: loadedAt) }
     }
 }
 

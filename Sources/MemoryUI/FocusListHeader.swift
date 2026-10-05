@@ -278,8 +278,6 @@ private struct JumpDayButtonStyle: ButtonStyle {
 extension View {
     /// A popover's first control gets keyboard focus when it opens; with keyboard navigation on, macOS drew a thick
     /// blue ring around it every time (owner, Preview 2: the first day chip "always surrounded by blue"). The ring
-    /// is dropped in popovers (macOS 14 and later); the controls still take Tab and Space.
-    @ViewBuilder public func daydreamNoInitialFocusRing() -> some View {
-        if #available(macOS 14.0, *) { self.focusEffectDisabled() } else { self }
-    }
+    /// is dropped in popovers; the controls still take Tab and Space.
+    public func daydreamNoInitialFocusRing() -> some View { focusEffectDisabled() }
 }

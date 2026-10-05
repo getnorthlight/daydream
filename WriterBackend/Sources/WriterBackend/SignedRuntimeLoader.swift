@@ -113,7 +113,7 @@ public enum SignedRuntimeLoader {
     /// can never load there, whatever the model, so setup says to move DayDream instead of "The model couldn't start."
     public static func appLocationAllowed(_ bundle: URL = Bundle.main.bundleURL) -> Bool { (try? safePath(bundle)) != nil }
     static func safePath(_ url: URL) throws {
-        guard url.path == url.resolvingSymlinksInPath().path else { throw WriterFailure.denied }
+        guard WriterPaths.unlinked(url) else { throw WriterFailure.denied }
         var current = url
         while current.path != "/" {
             let attrs = try FileManager.default.attributesOfItem(atPath: current.path)

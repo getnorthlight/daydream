@@ -9,6 +9,52 @@ import Carbon
 import MemoryCore
 import Security
 
+/// claude/crashguard-015: secure keyboard input (HIToolbox, `IsSecureEventInputEnabled`) and the frontmost app
+/// (`NSWorkspace`), for website typing. Both are read on the main queue only: they belong to the same OS family as the
+/// key translation that trapped off the main queue on macOS 15 (owner laptop 10/04), and they have never been run off
+/// it there. On the main queue each read is live, as before, and kept; elsewhere (the route's executor, a join on the
+/// tap thread) the value last read on the main queue is answered. The main queue reads them again for every input
+/// event at the tap and every heartbeat (0.5 s) while recording (`EventCapture`), and for every Chrome key before its
+/// work is handed over (`WebTypingRoute.intake`). Fail closed: before the first read, or when the last one is older than
+/// `staleAfter` (the main thread stalled), secure input reads as on (refuse) and no app reads as frontmost.
+enum MainInputFacts {
+    static let staleAfter: UInt64 = 2_000_000_000
+    private static let lock = NSLock()
+    private static var secure = true
+    private static var front: pid_t?
+    private static var readAt: UInt64?
+    /// Reads both now on the main queue and keeps them. Does nothing anywhere else.
+    static func refresh() {
+        guard MainQueue.isCurrent else { return }
+        _ = readLive()
+    }
+    /// Secure input is on, or (off the main queue) was at the last fresh main-queue read; true when unknown.
+    static func secureInput() -> Bool {
+        if MainQueue.isCurrent { return readLive().secure }
+        lock.lock(); defer { lock.unlock() }
+        return fresh ? secure : true
+    }
+    /// The frontmost app's PID, read the same way; nil when unknown.
+    static func frontmostPID() -> pid_t? {
+        if MainQueue.isCurrent { return readLive().front }
+        lock.lock(); defer { lock.unlock() }
+        return fresh ? front : nil
+    }
+    /// Called with `lock` held.
+    private static var fresh: Bool {
+        guard let readAt else { return false }
+        let now = DispatchTime.now().uptimeNanoseconds
+        return now >= readAt && now - readAt <= staleAfter
+    }
+    private static func readLive() -> (secure: Bool, front: pid_t?) {
+        MainQueue.require()
+        let s = IsSecureEventInputEnabled()
+        let f = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        lock.lock(); secure = s; front = f; readAt = DispatchTime.now().uptimeNanoseconds; lock.unlock()
+        return (s, f)
+    }
+}
+
 /// Accessibility + target-identity adapter for `BrowserTypingJoin`.
 /// Reads metadata only: roles, parents, window frames, the focused window's
 /// title, the one AXWebArea's AXURL, the focused field's labels (deny-only)
@@ -106,6 +152,16 @@ final class ChromeTypingWitness {
                           accessibility: Self.access(pid: pid, formSearchRecoveryEnabled: formSearchRecoveryEnabled), blockList: blockList, alwaysBlocked: alwaysBlocked, sites: sites, field: field)
     }
 
+    /// claude/xtyping-1005: wakes Chrome's accessibility when Chrome comes to the front (`BrowserTypingJoin.wake`): the
+    /// join's own checks and mode gate, then Chrome's application role, nothing else. Synchronous design, on the route's
+    /// executor only. When Chrome is already awake it stops before any Apple Event.
+    func wake(pid: pid_t, enabled: @escaping () -> Bool) -> Bool {
+        guard design == .synchronous, onRouteExecutor else { return false }
+        let session = ChromeModeReader.JoinSession(pid: pid, budget: TimeInterval(BrowserTypingTiming.lightBudgetNanoseconds) / 1_000_000_000)
+        return join.wake(environment: Self.environment(pid: pid, enabled: enabled, facts: facts), appleEvents: session.reply,
+                         accessibility: Self.access(pid: pid, formSearchRecoveryEnabled: formSearchRecoveryEnabled))
+    }
+
     /// Codex 07:10 (field hold, `BrowserTypingJoin.holdsRefusedBox`): whether focus is still in the box the last full
     /// join refused as `field`. Reads which app, window and element have focus and secure input; nothing else.
     func holdsRefusedBox(pid: pid_t) -> Bool? {
@@ -143,6 +199,7 @@ final class ChromeTypingWitness {
                               automationPermitted: { facts.permitted(pid: $0, launch: launchIdentity(pid: $0), now: DispatchTime.now().uptimeNanoseconds,
                                                                      read: { ChromeEventSender.permission(pid: $0) }) },
                               launchIdentity: { launchIdentity(pid: $0) })
+            .withAccessibilityJoin()
     }
 
     /// pid + launch date + bundle ID; a relaunch is a different target.
@@ -164,7 +221,7 @@ final class ChromeTypingWitness {
         // Apple Events. Helpers and app shims have other bundle IDs. A headless
         // or automation Chrome (no window, not in front) is not the person's
         // and is not counted (`ChromeProcesses`, live test build 7).
-        let instances = ChromeEventSender.userProcessCount(frontmost: NSWorkspace.shared.frontmostApplication?.processIdentifier)
+        let instances = ChromeEventSender.userProcessCount(frontmost: MainInputFacts.frontmostPID())
         return ChromeTargetFacts(pid: pid, bundleID: bundleID, launchIdentity: identity,
                                  signatureValid: signatureValid(pid: pid), bundleVersion: versions.bundleVersion,
                                  frameworkVersions: versions.frameworkVersions, instances: instances)
@@ -190,6 +247,12 @@ final class ChromeTypingWitness {
         /// claude/int-1003 (compose-send/v1): how many characters the proven composer holds, read only after a Return or
         /// Command-Return (`composeSnapshot`): whether it emptied. A count, never the value.
         case numberOfCharacters = "AXNumberOfCharacters"
+        /// claude/axjoin-1005 (the Accessibility join): the focused window's AXDocument, its active tab's address
+        /// (compared with the page's AXURL, as the tab's Apple Events URL was); asked only after every window answered "normal".
+        case document = "AXDocument"
+        /// claude/axjoin-1005: whether Chrome's profile button has an accessible description (Incognito and Guest
+        /// windows do). Presence only: the value is never decoded, compared or kept.
+        case customContent = "AXCustomContent"
     }
 
     /// Created on first use, which is after every Chrome window answered
@@ -219,12 +282,12 @@ final class ChromeTypingWitness {
     static func access(pid: pid_t, formSearchRecoveryEnabled: Bool = true) -> ChromeAXAccess<AXUIElement> {
         let app = LazyApplication(pid: pid)
         var access = ChromeAXAccess<AXUIElement>(
-            frontmostPID: { NSWorkspace.shared.frontmostApplication?.processIdentifier },
+            frontmostPID: { MainInputFacts.frontmostPID() },
             // Shared with the native witness. No timeout is set on the
             // system-wide element: AXUIElementSetMessagingTimeout on it sets the
             // default for every Accessibility call in this process.
             systemFocusedPID: { AccessibilityReader.systemFocusedApplication() },
-            secureInput: { IsSecureEventInputEnabled() },
+            secureInput: { MainInputFacts.secureInput() },
             focusedWindow: { app.element.flatMap { element($0, .focusedWindow) } },
             windows: {
                 guard let root = app.element, case .value(let v) = copy(root, .windows), let list = v as? [AnyObject],
@@ -294,8 +357,41 @@ final class ChromeTypingWitness {
             children: { node in childList(copy(node, .children)) },
             formSearch: { page, predicate, limit in formSearch(page: page, predicate: predicate, limit: limit) })
         access.formControlNames = { node, late in Self.formControlNames(node, late: late) }
+        // claude/axjoin-1005: the Accessibility join's seams (`ChromeAXAccess.offersAccessibilityJoin`).
+        access.document = { node in
+            guard case .value(let value) = copy(node, .document) else { return nil }
+            if let url = value as? URL { return url.absoluteString }
+            return value as? String
+        }
+        if getWindow != nil { access.windowIdentity = { windowNumber($0) } }
+        access.viewClasses = { node in
+            switch copy(node, .domClassList) {
+            case .missing: return []
+            case .failed: return nil
+            case .value(let v): return v as? [String]
+            }
+        }
+        access.described = { node in
+            switch copy(node, .customContent) { case .missing: return false; case .failed: return nil; case .value: return true }
+        }
         access.formSearchRecoveryEnabled = formSearchRecoveryEnabled
+        // claude/xtyping-1005: Chrome's application role, read and dropped; asking is what wakes Chrome's accessibility.
+        access.wake = { app.element.map { if case .value = copy($0, .role) { return true }; return false } ?? false }
         return access
+    }
+    /// claude/axjoin-1005: a window's number in the window server (stable for the window's lifetime), from
+    /// Accessibility's own `_AXUIElementGetWindow`, looked up once at run time. Unavailable: the seam isn't wired, so
+    /// `offersAccessibilityJoin` is false and every join takes the full Apple Events read.
+    private typealias GetWindow = @convention(c) (AXUIElement, UnsafeMutablePointer<CGWindowID>) -> AXError
+    private static let getWindow: GetWindow? = {
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "_AXUIElementGetWindow") else { return nil }
+        return unsafeBitCast(symbol, to: GetWindow.self)
+    }()
+    private static func windowNumber(_ node: AXUIElement) -> String? {
+        guard let get = getWindow, timed(node) else { return nil }
+        var number: CGWindowID = 0
+        guard get(node, &number) == .success, number != 0 else { return nil }
+        return String(number)
     }
     /// Form metadata reads honor the join deadline between names, without changing the click-control adapter.
     private static func formControlNames(_ node: AXUIElement, late: () -> Bool) -> [String]? {
@@ -407,6 +503,15 @@ final class ChromeTypingWitness {
         case .failed: return nil
         case .value(let v): return v as? String
         }
+    }
+}
+/// claude/axjoin-1005: the Accessibility join for Chrome builds it is validated on (`ChromeAXJoinPolicy`); any other
+/// build takes the full Apple Events join.
+extension ChromeJoinEnvironment {
+    func withAccessibilityJoin() -> ChromeJoinEnvironment {
+        var e = self
+        e.accessibilityJoin = { ChromeAXJoinPolicy.validated($0) }
+        return e
     }
 }
 #endif

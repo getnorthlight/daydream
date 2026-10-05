@@ -19,6 +19,8 @@
 //   T1       (claude/today-copy-1004, owner 10/04) the Today card's lines have no bold anywhere, and an ask's "about …" never
 //            only says the AI app again ("Asked Claude about Claude" reads "Asked Claude: “…”").
 //   T2       (claude/today-rank-1005, owner 10/05) the Today card leads with work (AI apps, docs, code); texting shows once, last.
+//   C1       (claude/chromeask-1005, owner 10/05) macOS's Chrome question: the row's words before it, once refused, and
+//            after setup ("Chrome pages aren't being saved. Fix"), the same in every place, and Fix goes where it fixes.
 // -D BASE_SHIM leaves out what needs this stream's new symbols, so the behavioural parts also run on a tree without
 // them (the base, a6944d3) and print their FAIL lines there.
 // Run from the tree's root (the source scans read Sources/), or set DD_SRC_ROOT.
@@ -58,6 +60,7 @@ import SwiftUI
         restorePreviewLine()
         todayLines()
         todayOrder()
+        chromeAskLines()
         print("\(passes) passed, \(failures) failed")
         exit(failures == 0 ? 0 : 1)
     }
@@ -213,8 +216,9 @@ import SwiftUI
             }
         }
         // The session's own reasons: every literal on a line that sets `reason` (a condition's other branch included).
+        // int-015: crashguard-015 keeps the value in `reasonStored` behind a lock (its initial "Recording is off." too).
         for line in reasonCode("Sources/MemoryCore/CaptureSession.swift") {
-            guard let set = line.range(of: #"\breason\s*=[^=]"#, options: .regularExpression) else { continue }
+            guard let set = line.range(of: #"\breason(?:Stored)?\s*=[^=]"#, options: .regularExpression) else { continue }
             let statement = line[set.lowerBound...].prefix { $0 != ";" }
             groups(literal, String(statement)).forEach { reasons.insert($0) }
         }
@@ -800,13 +804,82 @@ import SwiftUI
             t("social:x", "social", 30, ["Read posts on X"]), t("ai:claude", "ai", 20, ["Asked Claude"]),
             t("web:docs", "doc", 35, ["Wrote Launch plan"]), t("code:tallybird", "code", 45, ["Worked on Tallybird", "Ran a command"])],
             clauses: [:], activeSeconds: 7200, personSends: 20)
+        // claude/dayeval-1005 (owner 10/05): by default every conversation is one texting line, last, within six lines.
         let shown = DayReview.assemble(facts, quotes: [:]).flatMap(\.bullets)
-        equal(shown.map(\.thread), ["code:tallybird", "code:tallybird", "web:docs", "ai:claude", "person:avery"],
+        equal(shown.map(\.thread), ["code:tallybird", "code:tallybird", "web:docs", "ai:claude", "social:x", "texting"],
               "T2 work leads (code, docs, Claude), the texting once and last")
+        equal(DayReview.assemble(facts, quotes: [:], options: []).flatMap(\.bullets).map(\.thread),
+              ["code:tallybird", "code:tallybird", "web:docs", "ai:claude", "person:avery"], "T2 the same with the day-review options off (3/2/1/1)")
         check(DayReview.categoryWeight[.work]! > DayReview.categoryWeight[.browsing]! && DayReview.categoryWeight[.browsing]! > DayReview.categoryWeight[.personal]!,
               "T2 the weights order work, then browsing, then conversations")
         let little = DayReviewFacts(day: "2026-10-05", threads: [facts.threads[0], t("ai:claude", "ai", 3, ["Asked Claude"])], clauses: [:], activeSeconds: 600, personSends: 20)
-        equal(DayReview.assemble(little, quotes: [:]).flatMap(\.bullets).map(\.thread), ["person:avery", "person:avery", "ai:claude"],
+        equal(DayReview.assemble(little, quotes: [:]).flatMap(\.bullets).map(\.thread), ["texting", "ai:claude"],
               "T2 a day with little else keeps its score order, nothing capped")
+        equal(DayReview.assemble(little, quotes: [:], options: []).flatMap(\.bullets).map(\.thread), ["person:avery", "person:avery", "ai:claude"],
+              "T2 the same with the day-review options off")
+    }
+
+    // MARK: C1 (claude/chromeask-1005): "make the Chrome question impossible to get wrong"
+
+    static func chromeAskLines() {
+        typealias Row = PermissionChromeRow
+        // macOS's own box shows the usage string under "DayDream wants access to control Google Chrome".
+        let plist = (try? PropertyListSerialization.propertyList(from: Data(source("packaging/Info.plist").utf8), format: nil)) as? [String: Any]
+        equal(plist?["NSAppleEventsUsageDescription"] as? String,
+              "DayDream remembers which Chrome page you were on and what you wrote there, so you can find it later. It skips Incognito windows and never changes anything in Chrome.",
+              "C1 macOS's box explains in the owner's words")
+        // Before the press: the primer (typing on, typing off, Chrome closed).
+        equal(Row.subtitle(access: .notAsked, typing: true, opensChrome: false),
+              "macOS will ask once. Click Allow so DayDream knows which page you're typing on.", "C1 before: the primer")
+        equal(Row.subtitle(access: .notAsked, typing: false, opensChrome: false),
+              "macOS will ask once. Click Allow so DayDream knows which Chrome page you're on.", "C1 before, typing off: the primer without typing")
+        equal(Row.subtitle(access: .chromeNotRunning, typing: true, opensChrome: true),
+              "macOS will ask once. Click Allow so DayDream knows which page you're typing on. Chrome opens in the background to ask.",
+              "C1 before, Chrome closed: Allow says it opens Chrome in the background")
+        check(Row.illustration(access: .notAsked) == .ask && Row.trailing(access: .notAsked) == .allow && Row.allowTitle == "Allow",
+              "C1 before: the drawing of macOS's box beside one Allow")
+        // Refused (owner 10/5): short, with Ask again (macOS's question comes back); no Settings path.
+        for access in [ChromeAccessState.denied, .askFailed] {
+            equal(Row.subtitle(access: access, typing: true, opensChrome: true), "Chrome pages are off.", "C1 refused (\(access)): Chrome pages are off.")
+            check(Row.illustration(access: access) == nil && Row.trailing(access: access) == .refused && Row.line(access: access, asked: true) == nil
+                  && Row.askAgainTitle == "Ask again", "C1 refused (\(access)): Ask again, said once")
+        }
+        // A press Chrome couldn't answer: what to do, never "macOS will ask later".
+        equal(Row.line(access: .chromeNotRunning, asked: true), ChromeAccessState.chromeNotRunning.helper, "C1 Chrome didn't open: what to do")
+        // After setup: one calm line with Ask again (refused) or Fix (never asked), the same in the menu bar, the popover,
+        // Settings and the one reminder.
+        equal(ChromeAccessNotice.line, "Chrome pages aren't being saved.", "C1 after setup: the calm line")
+        equal(ChromeAccessNotice.fixTitle, "Fix", "C1 after setup: Fix (never asked)")
+        equal(ChromeAccessNotice.askAgainTitle, "Ask again", "C1 after setup: Ask again (refused)")
+        equal(ChromeAccessNotice.guideLine, "Turn this on.", "C1 the guide beside System Settings")
+        equal(ChromeAccessNotice.guideDone, "Chrome pages are on.", "C1 the guide's check")
+        equal(BrowserHistoryLine.needsAccess.text, ChromeAccessNotice.line, "C1 the menu bar's line is the calm line")
+        var p = CapturePresentation(state: .recording(since: now), canResume: true, canStop: true)
+        p.browserHistory = .needsAccess
+        check(MenuBarMenu.chromeFixes(p) && MenuBarMenu.chromeFixTitle(p) == "Fix", "C1 the menu bar and popover offer Fix while never asked")
+        p.chromeAskAgain = true
+        check(MenuBarMenu.chromeFixTitle(p) == "Ask again", "C1 ...and Ask again once refused")
+        for line in [BrowserHistoryLine.on, .off, .paused, .twoCopies] { p.browserHistory = line; check(!MenuBarMenu.chromeFixes(p), "C1 no Fix for \(line)") }
+        let card = SettingsStatusCardModel(SettingsStatusSnapshot(state: .recording(since: now), chromeOff: true, chromeAskAgain: true), calendar: .current, now: now)
+        check(card.chromeLine == ChromeAccessNotice.line && card.chromeFixTitle == "Ask again" && !card.quiet, "C1 Settings' status card shows the same line and Ask again")
+        // Settings › Apps to remember › Web pages in Chrome says the same (owner 10/5): Allow, Ask again, Allowed.
+        typealias Card = ChromePagesCard
+        check(Card.accessText(.denied) == ChromeAccessNotice.line && Card.accessButton(.denied) == .askAgain
+              && Card.accessButtonTitle(.askAgain) == "Ask again", "C1 Settings' Chrome card, refused: the calm line with Ask again")
+        check(Card.accessButton(.notAsked) == .allow && Card.accessButtonTitle(.allow) == "Allow" && Card.accessHelper(.notAsked) == Row.primerTypingOff,
+              "C1 Settings' Chrome card, never asked: Allow, with setup's primer")
+        check(Card.accessText(.allowed) == "Chrome access" && Card.accessButton(.allowed) == nil, "C1 Settings' Chrome card, allowed: Chrome access, Allowed")
+        check(!code("Sources/MemoryUI/ChromePagesSettings.swift").contains { $0.contains("access.offersSystemSettings") || $0.contains("access.buttonTitle") },
+              "C1 Settings' Chrome card has no Allow… and no second Open System Settings")
+        // The button does what it says: refused, Ask again; not asked, Fix opens setup's Chrome card.
+        check(ChromeAccessMemory.fix(lineAccess: .denied) == .askAgain && ChromeAccessMemory.fix(lineAccess: .askFailed) == .askAgain
+              && ChromeAccessMemory.fix(lineAccess: .notAsked) == .chromeCard, "C1 refused: Ask again; else setup's Chrome card")
+        // Calm: no bold, no old Allow…, nothing asks after setup.
+        let words = [Row.primer, Row.primerTypingOff, Row.opensChromeLine, Row.offLine, ChromeAccessNotice.line, ChromeAccessNotice.askAgainTitle,
+                     ChromeAccessNotice.guideLine, ChromeAccessNotice.guideDone]
+        check(words.allSatisfy { !$0.contains("**") && !$0.contains("Allow…") && !$0.contains("!") && !$0.contains("Privacy & Security") },
+              "C1 no bold, no Allow…, no exclamation, no long Settings path")
+        let app = code("Sources/MacMemApp/MacMemApp.swift").joined(separator: "\n") + code("Sources/MacMemApp/DaydreamOnboarding.swift").joined(separator: "\n")
+        check(!app.contains("askChromeAccessAfterSetup"), "C1 nothing asks after setup")
     }
 }

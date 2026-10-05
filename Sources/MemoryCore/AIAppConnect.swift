@@ -497,7 +497,7 @@ public enum AIAppConnect {
                 notes.append("The private key is made when you connect. \(app.name) keeps it in this file; you never copy it.")
                 notes.append("\(app.name) can then read your DayDream history. It can't change or delete anything. What it reads may be sent to its own online service.")
                 // claude/summary-1003 (owner decision 2026-10-03): the connect review names the typed-words setting.
-                notes.append("While \"\(AIReadsTypedSetting.title)\" is on in Settings › Connections, it can also read the words you typed and sent.")
+                notes.append("While \"\(AIReadsTypedSetting.title)\" is on in Settings › Connections, it can also read the words you typed.")
             }
         case .disconnect:
             if let entry = existing as? [String: Any] {

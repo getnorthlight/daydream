@@ -357,7 +357,7 @@ import Foundation
                      (id: "p3", at: Optional(d(22, 12, 26)), text: "never sent quote", draft: true, actionIDs: ["a4"])]
         let lines = RecallModel.evidence(texts: texts, hits: [hit], terms: ["quote"])
         equal(lines.map(\.id), ["p1", "p2", "p3"], "evidence: the moment's texts stand for the hits they hold, in time order")
-        equal(lines.map(\.who), ["You", "You", "Your draft"], "evidence: who wrote each, a draft said as one")
+        equal(lines.map(\.who), ["You", "You", "You"], "evidence: who wrote each; stored drafts say You too (never \"draft\")")
         equal(lines.map(\.matched), [true, false, true], "evidence: only lines with the query are marked")
         equal(lines[1].text, "ok thanks", "evidence: whitespace collapsed, words verbatim")
         let many = (0..<12).map { n in (id: "t\(n)", at: Optional(d(22, 10, n)), text: n == 1 ? "the quote" : "line \(n)", draft: false, actionIDs: ["x\(n)"]) }

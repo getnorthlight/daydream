@@ -20,9 +20,11 @@ func runTypedAccessChecks(home: URL) throws {
     let database = home.appendingPathComponent("memory.sqlite").path
     func refused(_ work: () throws -> Any) -> Bool { do { _ = try work(); return false } catch { return true } }
 
-    func run(_ path: String, _ args: [String], capability: String = "", input: Data? = nil) throws -> (status: Int32, output: String) {
+    func run(_ path: String, _ args: [String], capability: String = "", input: Data? = nil, toolset: ToolsetMode = .legacy) throws -> (status: Int32, output: String) {
         let process = Process(); process.executableURL = URL(fileURLWithPath: path); process.arguments = args
         var env = ProcessInfo.processInfo.environment; env["MAC_MEM_CAPABILITY"] = capability.isEmpty ? nil : capability
+        // agent-tools v2: the summary-only scan below pins the 0.1.4 tools' replies; the v2 tools get their own scan.
+        env[ToolsetMode.environmentKey] = toolset.rawValue
         process.environment = env
         let out = Pipe(), stdin = Pipe(); process.standardOutput = out; process.standardError = out; process.standardInput = stdin
         try process.run()
@@ -103,6 +105,30 @@ func runTypedAccessChecks(home: URL) throws {
     func leaked(_ text: String) -> [String] { (secrets + [legacyWords]).filter { text.contains($0) } }
 
     let summaryMCP = try mcp(token)
+    // agent-tools v2: the same fixture through the v2 tools (no DayDream app answers, so no typed words can be shared).
+    // A search's own query is echoed back, so the scan looks at every reply except that echo.
+    do {
+        func call(_ id: Int, _ name: String, _ arguments: [String: Any] = [:]) -> [String: Any] {
+            ["jsonrpc": "2.0", "id": id, "method": "tools/call", "params": ["name": name, "arguments": arguments]]
+        }
+        let requests: [[String: Any]] = [
+            ["jsonrpc": "2.0", "id": 1, "method": "initialize", "params": ["protocolVersion": "2025-06-18"]],
+            ["jsonrpc": "2.0", "id": 2, "method": "tools/list"],
+            call(3, "status"), call(4, "timeline"), call(5, "timeline", ["detail": "full", "format": "json"]),
+            call(6, "search", ["query": "pricing"]), call(7, "search", ["query": "Notes", "format": "json"]),
+            call(8, "search", ["query": "quokkamarmalade"]), call(9, "search", ["query": "", "when": "today"])]
+        let input = try requests.map { String(decoding: try JSONSerialization.data(withJSONObject: $0), as: UTF8.self) }.joined(separator: "\n") + "\n"
+        try store.setCaptureState("recording", reason: "synthetic access fixture", now: Date())
+        let result = try run(binary.path, ["--home", home.path, "--client", "claude-code", "--recipient", "local", "mcp"], capability: token, input: Data(input.utf8), toolset: .v2)
+        let lines = result.output.split(separator: "\n").map(String.init)
+        try check(result.status == 0 && lines.count == requests.count && !result.output.contains("\"error\""), "v2 MCP answered every request without an error")
+        let scanned = lines.filter { !$0.contains("\"id\":8,") && !$0.contains("\"id\":8}") }.joined()
+        try check(scanned.contains(control), "control: v2 replies carry real content (a window title)")
+        try check(leaked(scanned).isEmpty && !(lines.first { $0.contains("\"id\":8,") || $0.contains("\"id\":8}") } ?? "").contains("standup"),
+                  "no v2 reply (status, timeline, search) carries a typed word without the DayDream app")
+        try check(lines.contains { ($0.contains("\"id\":8,") || $0.contains("\"id\":8}")) && $0.contains("Typed words: unavailable while DayDream is closed.") },
+                  "v2 search without the DayDream app says typed words weren't searched, never a bare no-match")
+    }
     try check(summaryMCP.contains(control) && summaryMCP.contains("Typed in Notes"), "control: MCP replies carry real content (a window title and typed-draft lines)")
     try check(leaked(summaryMCP).isEmpty, "no MCP reply (status, context, current-context, search, read, open, recap, resources) carries a typed word")
     // owner decision 2026-10-03: tools/list (id 2) names moment_details' typing_note field, and moment_details (id 21)

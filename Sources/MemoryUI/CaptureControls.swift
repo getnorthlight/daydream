@@ -10,6 +10,8 @@ public struct CapturePresentation {
     public var permissions:PermissionSnapshot?
     /// The menu bar's "Browser history on" line (Chrome page history). Off unless the host sets it.
     public var browserHistory:BrowserHistoryLine = .off
+    /// chromeask-1005: Chrome access was refused, so the Chrome line's button is Ask again (else Fix).
+    public var chromeAskAgain:Bool = false
     public init(title:String,issue:String?=nil,recording:Bool=false,canResume:Bool=false,canStop:Bool=false) {
         self.title=title; self.issue=issue; self.recording=recording; self.canResume=canResume; self.canStop=canStop
         self.state=CapturePresentation.legacyState(title:title,issue:issue,recording:recording); self.permissions=nil
@@ -25,7 +27,8 @@ public enum BrowserHistoryLine:Equatable,Sendable {
     /// Recording with "Web pages in Chrome" on: `.needsAccess` while Chrome access is off (not allowed yet,
     /// or turned off in System Settings), `.paused` while Chrome can't be verified, else `.on`. Anything
     /// else, and while Google Chrome itself is excluded (nothing is saved then): `.off`. `access` is the
-    /// last answer, not `.checking` (the line never flips while a check runs).
+    /// last answer, not `.checking` (the line never flips while a check runs), and macOS's last answer while
+    /// Chrome is closed (chromeask-1005: a refusal still shows then).
     public static func make(recording:Bool,pagesOn:Bool,access:ChromeAccessState,chromeExcluded:Bool=false) -> BrowserHistoryLine {
         guard recording, pagesOn, !chromeExcluded else { return .off }
         if access == .unverified { return .paused }
@@ -36,7 +39,7 @@ public enum BrowserHistoryLine:Equatable,Sendable {
         switch self {
         case .off: return nil
         case .on: return "Browser history on (Google Chrome)"
-        case .needsAccess: return "Browser history on, but Chrome access is off"
+        case .needsAccess: return ChromeAccessNotice.line
         case .paused: return "Browser history paused: Chrome not verified"
         case .twoCopies: return "Browser history paused: two Chromes open"
         }
@@ -65,6 +68,9 @@ public struct CaptureActions {
     /// Try Again beside an orange line whose fix is to run the job again (`RecordingCopy.retriedIssues`: the history
     /// upkeep, a deletion). Never starts, pauses or stops recording.
     public var retryIssue:()->Void = {}
+    /// chromeask-1005: Fix beside "Chrome pages aren't being saved." Refused: Privacy & Security › Automation; not asked
+    /// yet: setup's Chrome row (the app decides). Never a macOS question from here.
+    public var fixChrome:()->Void = {}
 }
 
 extension CapturePresentation {

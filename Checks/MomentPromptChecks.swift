@@ -123,6 +123,8 @@ func runMomentPromptChecks(home: URL) throws {
     func run(_ args: [String], capability: String = "", input: Data? = nil) throws -> String {
         let process = Process(); process.executableURL = binary; process.arguments = ["--home", home.path, "--client", "claude-code", "--recipient", "local"] + args
         var env = ProcessInfo.processInfo.environment; env["MAC_MEM_CAPABILITY"] = capability.isEmpty ? nil : capability
+        // agent-tools v2: these checks pin the 0.1.4 tools' replies, so their server lists the 0.1.4 tools.
+        env[ToolsetMode.environmentKey] = ToolsetMode.legacy.rawValue
         process.environment = env
         let out = Pipe(), stdin = Pipe(); process.standardOutput = out; process.standardError = out; process.standardInput = stdin
         try process.run()

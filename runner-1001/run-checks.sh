@@ -7,7 +7,7 @@
 # signing or download. Every temp/build path is under the scratch folder below.
 set -uo pipefail
 # This COPY is headless-only; an unset/custom SKIP can never enable a window.
-export SKIP='^(owner-)?(recording-permission|docs-install-render|honesty-ui|honesty-ui-checks|update-quit|dd-menubar-checks|dd-app-menu-checks|dd-settings-status-checks|typing-ui-checks|setup-upgrade-checks|onboarding-screen-checks|dd-kit-checks|dd-recall-checks|permission-window-checks)$'
+export SKIP='^(owner-)?(recording-permission|docs-install-render|honesty-ui|honesty-ui-checks|update-quit|dd-menubar-checks|dd-app-menu-checks|dd-settings-status-checks|typing-ui-checks|setup-upgrade-checks|onboarding-screen-checks|dd-kit-checks|dd-recall-checks|permission-window-checks|chrome-ask-checks)$'
 C=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export PATH="$C/bin:$PATH"
 # docs-claims-checks can also check post drafts kept outside the repo (DAYDREAM_DRAFT_ROOT); none by default.
@@ -75,6 +75,19 @@ if [ -f scripts/what-happened-fold-checks.swift ]; then
     scripts/what-happened-fold-checks.swift $(objs MemoryCore HistoryCore PrivacyPolicy MemoryUI) -lc++ -lsqlite3 -o "$OUT/what-happened-fold"
   step what-happened-fold "$OUT/what-happened-fold"
 fi
+# perf2-1005: the input tap's wait for the main thread is bounded (a stalled main no longer makes macOS turn the tap off),
+# and the typing key's Keychain read is made ahead off the main thread. Headless: synthetic events, in-memory key store.
+if [ -f scripts/tap-handoff-checks.swift ]; then
+  step compile-tap-handoff swiftc -parse-as-library -module-cache-path "$I/modcache" -I "$B/Modules" -I Sources/CSQLite "${LLAMA[@]}" \
+    scripts/tap-handoff-checks.swift $(objs MemoryCore HistoryCore PrivacyPolicy) -lc++ -lsqlite3 -o "$OUT/tap-handoff"
+  step tap-handoff "$OUT/tap-handoff"
+fi
+# claude/dayeval-1005: never "draft" on screen or to an AI app (stored words are rewritten at display time).
+if [ -f scripts/no-draft-display-checks.swift ]; then
+  step compile-no-draft-display swiftc -parse-as-library -module-cache-path "$I/modcache" -I "$B/Modules" -I Sources/CSQLite "${LLAMA[@]}" \
+    scripts/no-draft-display-checks.swift $(objs MemoryCore HistoryCore PrivacyPolicy MemoryUI) -lc++ -lsqlite3 -o "$OUT/no-draft-display"
+  step no-draft-display "$OUT/no-draft-display"
+fi
 # gold/r2-store-perf: launch prepares the history (repair, time indexes, website typing settle) off the main thread.
 if [ -f scripts/launch-preparation-checks.swift ]; then
   step compile-launch-preparation swiftc -parse-as-library -module-cache-path "$I/modcache" -I "$B/Modules" -I Sources/CSQLite \
@@ -101,6 +114,19 @@ if [ -f scripts/store-main-thread-checks.swift ]; then
     $(for t in MemoryCore MemoryUI HistoryCore CoreIntegration PrivacyPolicy BrowserBridge WriterBackend CLlamaBridge BackupRestore; do [ -d "$B/$t.build" ] && ls "$B/$t.build/"*.o; done) \
     -lc++ -o "$OUT/store-main-thread"
   step store-main-thread env HOME="$OUT/store-main-thread-home" CFFIXED_USER_HOME="$OUT/store-main-thread-home" DD_CHECK_OUT="$OUT/store-main-thread-dd" "$OUT/store-main-thread"
+  # claude/perf3-1005: the recorder's heartbeat, the status and typing refreshes, today's reread and a scroll of the day
+  # run no statement on the main thread (StoreMainThread); the heartbeat writes only what changed. Offscreen window.
+  if [ -f scripts/store-main-thread-guard-checks.swift ]; then
+    sed -e "s#/private/tmp/daydream-#$R/daydream-#g" scripts/store-main-thread-guard-checks.swift > "$OUT/src/store-main-thread-guard-checks.swift"
+    mkdir -p "$OUT/store-main-thread-guard-home/Library/Preferences" "$OUT/store-main-thread-guard-dd"
+    step compile-store-main-thread-guard swiftc -D DEVELOPMENT_SOURCE_CHECKS -parse-as-library -module-cache-path "$I/modcache" -I "$B/Modules" \
+      -Xcc -fmodule-map-file="$PWD/Sources/CSQLite/module.modulemap" -Xcc -fmodule-map-file="$B/CLlamaBridge.build/module.modulemap" \
+      -Xcc -I -Xcc "$PWD/WriterBackend/Sources/CLlamaBridge/include" -F "$B" -framework Sparkle -Xlinker -rpath -Xlinker "$B" \
+      "$SMTSRC"/*.swift "$OUT/src/store-main-thread-guard-checks.swift" \
+      $(for t in MemoryCore MemoryUI HistoryCore CoreIntegration PrivacyPolicy BrowserBridge WriterBackend CLlamaBridge BackupRestore; do [ -d "$B/$t.build" ] && ls "$B/$t.build/"*.o; done) \
+      -lc++ -o "$OUT/store-main-thread-guard"
+    step store-main-thread-guard env HOME="$OUT/store-main-thread-guard-home" CFFIXED_USER_HOME="$OUT/store-main-thread-guard-home" DD_CHECK_OUT="$OUT/store-main-thread-guard-dd" "$OUT/store-main-thread-guard"
+  fi
 fi
 step privacy-build swift build --jobs 3 --package-path PrivacyPolicy --scratch-path "$BUILD-pp" --disable-automatic-resolution --product PrivacyChecks
 step PrivacyChecks "$BUILD-pp/debug/PrivacyChecks"
@@ -166,6 +192,12 @@ step typing-wiring-source-py python3 scripts/typing-wiring-source-checks.py -v
 # a tap that gets no keys stops with the reason that offers Quit & Reopen.
 if [ -f scripts/typing-public-lane-checks.py ]; then
   step typing-public-lane-py python3 scripts/typing-public-lane-checks.py
+fi
+# claude/crashguard-015: APIs that assert the main queue (Text Input Sources, TSM, NSEvent characters, Carbon hot keys)
+# only in listed functions behind MainQueue.require(); nothing main-only inside an off-main block (owner laptop 10/04:
+# TSM trapped off the main queue on macOS 15, not on 26).
+if [ -f scripts/check_main_thread_apis.py ]; then
+  step main-thread-apis-py python3 scripts/check_main_thread_apis.py
 fi
 CAPTURE=$(python3 -c "import re;s=open('scripts/daydream-core-source-checks.py').read();print(' '.join('Sources/MacMemApp/%s.swift'%n for n in eval(re.search(r'capture=(\[[^\]]*\])',s).group(1))))")
 python3 "$C/copy-check-source.py" Sources/MacMemApp/Coordinator.swift "$R" > "$OUT/src/headless-Coordinator.swift"
@@ -255,7 +287,7 @@ if [ -f scripts/notes-golden-checks.swift ]; then
   step notes-golden env HOME="$OUT/notes-home" CFFIXED_USER_HOME="$OUT/notes-home" NOTES_CHECK_ROOT="$OUT/notes-fixtures" "$OUT/notes-golden"
 fi
 if [ -f scripts/notes-writer-checks.swift ]; then
-  step compile-notes-writer swiftc -parse-as-library -target arm64-apple-macosx13.0 -module-cache-path "$I/modcache" \
+  step compile-notes-writer swiftc -parse-as-library -target arm64-apple-macosx15.0 -module-cache-path "$I/modcache" \
     -I "$B/Modules" -I Sources/CSQLite -I WriterBackend/Sources/CLlamaBridge/include "${LLAMA[@]}" \
     Sources/MacMemApp/WriterIntegration.swift Sources/MacMemApp/WriterScheduling.swift Sources/MacMemApp/WriterPreferences.swift Sources/MacMemApp/LevelPower.swift adapters/CoreWriterBinding.swift adapters/LevelWriterBinding.swift \
     scripts/notes-writer-checks.swift "$B"/WriterBackend.build/*.swift.o "$B"/CLlamaBridge.build/WriterLlama.cpp.o \
@@ -266,11 +298,11 @@ fi
 # fix/sx-engine-battery: the writer's cadence on a busy synthetic day (power, battery, an AI app, Low Power Mode,
 # catch-up) and its state machine (phases, download, Off, cloud failures), both through the real WriterIntegration with
 # a fake model, installer and OpenRouter. No network, keys, model or capture. Then the WriterBackend package checks.
-WRITERSRC="Sources/MacMemApp/WriterIntegration.swift Sources/MacMemApp/WriterScheduling.swift Sources/MacMemApp/WriterPreferences.swift Sources/MacMemApp/LevelPower.swift adapters/CoreWriterBinding.swift adapters/LevelWriterBinding.swift"
+WRITERSRC="Sources/MacMemApp/WriterIntegration.swift Sources/MacMemApp/WriterScheduling.swift Sources/MacMemApp/WriterQuiet.swift Sources/MacMemApp/WriterPreferences.swift Sources/MacMemApp/LevelPower.swift adapters/CoreWriterBinding.swift adapters/LevelWriterBinding.swift"
 # fix/writing-forever: writer-spin (fix/perf7) joins them (same recipe).
-for name in writer-cadence writer-state writer-spin; do
+for name in writer-cadence writer-state writer-spin writer-quiet; do
   if [ -f scripts/$name-checks.swift ]; then
-    step compile-$name swiftc -parse-as-library -target arm64-apple-macosx13.0 -module-cache-path "$I/modcache" \
+    step compile-$name swiftc -parse-as-library -target arm64-apple-macosx15.0 -module-cache-path "$I/modcache" \
       -I "$B/Modules" -I Sources/CSQLite -I WriterBackend/Sources/CLlamaBridge/include "${LLAMA[@]}" \
       $WRITERSRC scripts/$name-checks.swift "$B"/WriterBackend.build/*.swift.o "$B"/CLlamaBridge.build/WriterLlama.cpp.o \
       $(objs MemoryCore HistoryCore MemoryUI CoreIntegration PrivacyPolicy BrowserBridge) -lsqlite3 -lc++ -o "$OUT/$name"
@@ -278,7 +310,7 @@ for name in writer-cadence writer-state writer-spin; do
     step $name env HOME="$OUT/$name-home" CFFIXED_USER_HOME="$OUT/$name-home" CADENCE_ROOT="$OUT/$name-root" STATE_CHECK_ROOT="$OUT/$name-root" nice "$OUT/$name"
   fi
 done
-step compile-writer-app-integration swiftc -parse-as-library -target arm64-apple-macosx13.0 -module-cache-path "$I/modcache" \
+step compile-writer-app-integration swiftc -parse-as-library -target arm64-apple-macosx15.0 -module-cache-path "$I/modcache" \
   -I "$B/Modules" -I Sources/CSQLite -I WriterBackend/Sources/CLlamaBridge/include "${LLAMA[@]}" \
   $WRITERSRC WriterBackend/AppIntegrationChecks/main.swift "$B"/WriterBackend.build/*.swift.o "$B"/CLlamaBridge.build/WriterLlama.cpp.o \
   $(objs MemoryCore HistoryCore MemoryUI CoreIntegration PrivacyPolicy BrowserBridge) -lsqlite3 -lc++ -o "$OUT/writer-app-integration"
@@ -291,7 +323,7 @@ done
 step compile-wb-scheduler swiftc -parse-as-library -module-cache-path "$I/modcache" WriterBackend/SchedulerChecks/Support.swift \
   WriterBackend/Sources/WriterBackend/PendingNoteScheduler.swift WriterBackend/SchedulerChecks/main.swift -o "$OUT/wb-scheduler"
 step wb-scheduler "$OUT/wb-scheduler"
-step compile-wb-batch swiftc -parse-as-library -target arm64-apple-macosx13.0 -module-cache-path "$I/modcache" -I "$B/Modules" \
+step compile-wb-batch swiftc -parse-as-library -target arm64-apple-macosx15.0 -module-cache-path "$I/modcache" -I "$B/Modules" \
   -I WriterBackend/Sources/CLlamaBridge/include "${LLAMA[@]}" WriterBackend/BatchChecks/main.swift \
   "$B"/WriterBackend.build/*.swift.o "$B"/CLlamaBridge.build/WriterLlama.cpp.o -lc++ -o "$OUT/wb-batch"
 step wb-batch "$OUT/wb-batch"
@@ -330,15 +362,32 @@ if [ -f scripts/summary-ready-checks.swift ]; then
     scripts/summary-ready-checks.swift $(objs MemoryCore HistoryCore WriterBackend PrivacyPolicy CLlamaBridge) -lc++ -o "$OUT/summary-ready"
   step summary-ready "$OUT/summary-ready"
 fi
+# claude/dayeval-1005: moment cards without a model's note (code's note for every moment, no model load or cloud send).
+if [ -f scripts/moment-cards-checks.swift ]; then
+  step compile-moment-cards swiftc -parse-as-library -module-cache-path "$I/modcache" -I "$B/Modules" -I Sources/CSQLite "${LLAMA[@]}" \
+    scripts/moment-cards-checks.swift $(objs MemoryCore HistoryCore WriterBackend PrivacyPolicy CLlamaBridge) -lsqlite3 -lc++ -o "$OUT/moment-cards"
+  step moment-cards "$OUT/moment-cards"
+fi
 # claude/day-review-1003: the Today card's day review (rank groups, hysteresis, clauses, quotes, Forget, model failure).
 # The owner lane runs it again with Messages typing (owner-lane.sh).
 if [ -f scripts/day-review-checks.swift ]; then
-  step compile-day-review swiftc -parse-as-library -target arm64-apple-macosx14.0 -module-cache-path "$I/modcache" \
+  step compile-day-review swiftc -parse-as-library -target arm64-apple-macosx15.0 -module-cache-path "$I/modcache" \
     -I "$B/Modules" -I Sources/CSQLite -I WriterBackend/Sources/CLlamaBridge/include "${LLAMA[@]}" \
     scripts/day-review-checks.swift "$B"/WriterBackend.build/*.swift.o "$B"/CLlamaBridge.build/WriterLlama.cpp.o \
     $(objs MemoryCore HistoryCore MemoryUI CoreIntegration PrivacyPolicy BrowserBridge) -lsqlite3 -lc++ -o "$OUT/day-review"
   mkdir -p "$OUT/day-review-root" "$OUT/day-review-home/Library/Preferences"
   step day-review env HOME="$OUT/day-review-home" CFFIXED_USER_HOME="$OUT/day-review-home" DAY_REVIEW_ROOT="$OUT/day-review-root" nice "$OUT/day-review"
+fi
+# claude/dayeval-1005: the day review on six synthetic personas with apps the owner doesn't use (Figma, Linear, Salesforce,
+# Outlook, Teams, WhatsApp, Telegram, Signal, Notion, VS Code, Word...): the default card's must-holds, then its rubric
+# score (scripts/day-review-eval.py prints scores only). The owner lane runs it again with the shipped flags.
+if [ -f scripts/day-review-eval-checks.swift ]; then
+  step compile-day-review-eval swiftc -parse-as-library -target arm64-apple-macosx15.0 -module-cache-path "$I/modcache" \
+    -I "$B/Modules" -I Sources/CSQLite scripts/day-review-eval-checks.swift $(objs MemoryCore HistoryCore PrivacyPolicy) -lsqlite3 -o "$OUT/day-review-eval"
+  mkdir -p "$OUT/day-review-eval-root"
+  step day-review-eval env DAY_REVIEW_ROOT="$OUT/day-review-eval-root" DAY_REVIEW_EVAL_OUT="$OUT/day-review-eval-cards" nice "$OUT/day-review-eval"
+  step day-review-eval-score python3 scripts/day-review-eval.py --cards "$OUT/day-review-eval-cards/default" --refs "$OUT/day-review-eval-cards/refs.json" \
+    --min 95 --require privacy=1 nofiller=0.9 order=1 texting=0.9 coverage=0.9
 fi
 # gold/notes: G24 lives in the existing action-audit check (its 5000-action assertion now expects the whole day).
 if [ -f scripts/action-audit-checks.swift ]; then
@@ -373,10 +422,10 @@ step harness-build swift build --jobs 3 --package-path tools/chrome-device-test 
 step harness-selftest "$I/harness-build/debug/chrome-device-test-selftest"
 # The public MacMem binary must hold none of the private Chrome typing types.
 nm "$B/MacMem" > "$OUT/MacMem.nm" 2>&1
-# All 15 PRIVATE_SYMBOLS, read from scripts/chrome-typing-checks.py so the two lists never drift.
-PRIVATE_RE=$(python3 -c "import re;s=open('scripts/chrome-typing-checks.py').read();l=eval(re.search(r'PRIVATE_SYMBOLS = (\[[^\]]*\])',s).group(1));assert len(l)==15,l;print('|'.join(l))")
+# All 17 PRIVATE_SYMBOLS (claude/axjoin-1005: + ChromePrivateWindow, ChromeAXJoinPolicy), read from scripts/chrome-typing-checks.py so the two lists never drift.
+PRIVATE_RE=$(python3 -c "import re;s=open('scripts/chrome-typing-checks.py').read();l=eval(re.search(r'PRIVATE_SYMBOLS = (\[[^\]]*\])',s).group(1));assert len(l)==17,l;print('|'.join(l))")
 echo "$PRIVATE_RE" > "$OUT/private-symbols.txt"
-step public-nm-no-chrome-typing bash -c "[ \$(tr '|' '\n' < '$OUT/private-symbols.txt' | wc -l) -eq 15 ] && ! grep -E '$PRIVATE_RE' '$OUT/MacMem.nm' && echo PASS none of the 15 private Chrome typing symbols in public MacMem"
+step public-nm-no-chrome-typing bash -c "[ \$(tr '|' '\n' < '$OUT/private-symbols.txt' | wc -l) -eq 17 ] && ! grep -E '$PRIVATE_RE' '$OUT/MacMem.nm' && echo PASS none of the 17 private Chrome typing symbols in public MacMem"
 # Chrome page history is public: the public MacMem must carry its reader and sender.
 step public-nm-has-page-history bash -c "grep -q ChromePageProbe '$OUT/MacMem.nm' && grep -q ChromeEventSender '$OUT/MacMem.nm' && echo PASS public MacMem has Chrome page history: ChromePageProbe and ChromeEventSender"
 # Public + private (-DDAYDREAM_CHROME_TYPING) builds, synthetic checks, parse checks, nm.
@@ -410,6 +459,17 @@ OWNERFLAGS=(-Xswiftc -DDAYDREAM_OWNER_TYPING -Xswiftc -DDAYDREAM_CHROME_TYPING)
 step owner-build swift build --jobs 3 --scratch-path "$I/build-owner" --disable-automatic-resolution "${OWNERFLAGS[@]}"
 OB=$I/build-owner/arm64-apple-macosx/debug
 step owner-MacMemChecks "$OB/MacMemChecks"
+# claude/perf3-1005: the main-thread guard check again, with both flags against the flagged objects (the shipped build).
+if [ -f scripts/store-main-thread-guard-checks.swift ] && [ -n "${SMTSRC:-}" ]; then
+  mkdir -p "$OUT/owner-store-main-thread-guard-home/Library/Preferences" "$OUT/owner-store-main-thread-guard-dd"
+  step compile-owner-store-main-thread-guard swiftc -D DEVELOPMENT_SOURCE_CHECKS -D DAYDREAM_OWNER_TYPING -D DAYDREAM_CHROME_TYPING -parse-as-library -module-cache-path "$I/modcache" -I "$OB/Modules" \
+    -Xcc -fmodule-map-file="$PWD/Sources/CSQLite/module.modulemap" -Xcc -fmodule-map-file="$OB/CLlamaBridge.build/module.modulemap" \
+    -Xcc -I -Xcc "$PWD/WriterBackend/Sources/CLlamaBridge/include" -F "$OB" -framework Sparkle -Xlinker -rpath -Xlinker "$OB" \
+    "$SMTSRC"/*.swift "$OUT/src/store-main-thread-guard-checks.swift" \
+    $(for t in MemoryCore MemoryUI HistoryCore CoreIntegration PrivacyPolicy BrowserBridge WriterBackend CLlamaBridge BackupRestore; do [ -d "$OB/$t.build" ] && ls "$OB/$t.build/"*.o; done) \
+    -lc++ -o "$OUT/owner-store-main-thread-guard"
+  step owner-store-main-thread-guard env HOME="$OUT/owner-store-main-thread-guard-home" CFFIXED_USER_HOME="$OUT/owner-store-main-thread-guard-home" DD_CHECK_OUT="$OUT/owner-store-main-thread-guard-dd" "$OUT/owner-store-main-thread-guard"
+fi
 step owner-ProductionBindingChecks "$OB/ProductionBindingChecks"
 step owner-privacy-build swift build --jobs 3 --package-path PrivacyPolicy --scratch-path "$BUILD-pp-owner" --disable-automatic-resolution --product PrivacyChecks "${OWNERFLAGS[@]}"
 step owner-PrivacyChecks "$BUILD-pp-owner/debug/PrivacyChecks"
@@ -627,6 +687,50 @@ if [ -f scripts/recording-wake-checks.swift ]; then
       step owner-permission-blip env HOME="$OPBHOME" CFFIXED_USER_HOME="$OPBHOME" DD_CHECK_OUT="$OPBDD" "$OUT/owner-permission-blip"
     fi
   fi
+  # permflash-015 (owner 10/4: "the permission screen flashes for two frames though everything is on"): what every
+  # surface SHOWS of the permissions follows a settled value (PermissionSettle): an off read changes it only once the
+  # reads have stayed off for the settle time; a permission really off still shows within the bound; the person's own
+  # Start, a first setup and the recorder are unchanged. The REAL MemoryViewModel with the check seams, plus the
+  # permission page and setup hosted in a window never ordered on screen. Then the mutation: the same check against a
+  # copy of the app source whose shown value takes every read as it is must FAIL (else the check guards nothing).
+  if [ -f scripts/permission-flash-checks.swift ]; then
+    flash_mutant() { # <lane: "" | owner-> <modules dir> <objs fn> <flags...>
+      local lane=$1 mb=$2 objs=$3; shift 3
+      local src=$OUT/src/${lane}flash-mutant; rm -rf "$src"; mkdir -p "$src"; cp "$RECSRC"/*.swift "$src/"
+      python3 - "$src/MacMemApp.swift" <<'PY' || return 1
+import sys, pathlib
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+old = "else {shown=permissionShown.read(read,at:now,settle:settle,counts:awake && !wake.suspended)}"
+if s.count(old) != 1: print("FAIL: the settle line is not in MacMemApp.swift exactly once (%d)" % s.count(old)); sys.exit(1)
+p.write_text(s.replace(old, "else {shown=permissionShown.take(read)}"))
+PY
+      local home=$OUT/${lane}permission-flash-mutant-home dd=$OUT/${lane}permission-flash-mutant-dd; mkdir -p "$home/Library/Preferences" "$dd"; chmod 700 "$dd"
+      swiftc "$@" -D DEVELOPMENT_SOURCE_CHECKS -parse-as-library -module-cache-path "$I/modcache" -I "$mb/Modules" \
+        -Xcc -fmodule-map-file="$PWD/Sources/CSQLite/module.modulemap" -Xcc -fmodule-map-file="$mb/CLlamaBridge.build/module.modulemap" \
+        -Xcc -I -Xcc "$PWD/WriterBackend/Sources/CLlamaBridge/include" -F "$mb" -framework Sparkle -Xlinker -rpath -Xlinker "$mb" \
+        "$src"/*.swift scripts/permission-flash-checks.swift $($objs) -lc++ -o "$OUT/${lane}permission-flash-mutant" || { echo "FAIL: the mutant did not compile"; return 1; }
+      env HOME="$home" CFFIXED_USER_HOME="$home" DD_CHECK_OUT="$dd" DD_FLASH_ONLY=A,B,G "$OUT/${lane}permission-flash-mutant" > "$OUT/${lane}permission-flash-mutant.out" 2>&1
+      local rc=$? fails; fails=$(grep -cE '^FAIL' "$OUT/${lane}permission-flash-mutant.out")
+      if [ "$rc" -ne 0 ] && [ "$fails" -gt 0 ]; then echo "PASS [mutation] without the settle the flash checks fail: exit=$rc, $fails FAIL lines"; return 0; fi
+      echo "FAIL [mutation] without the settle the flash checks still pass (exit=$rc, $fails FAIL lines): they guard nothing"; return 1; }
+    PFHOME=$OUT/permission-flash-home; PFDD=$OUT/permission-flash-dd; mkdir -p "$PFHOME/Library/Preferences" "$PFDD"; chmod 700 "$PFDD"
+    step compile-permission-flash swiftc -D DEVELOPMENT_SOURCE_CHECKS -parse-as-library -module-cache-path "$I/modcache" -I "$B/Modules" \
+      -Xcc -fmodule-map-file="$PWD/Sources/CSQLite/module.modulemap" -Xcc -fmodule-map-file="$B/CLlamaBridge.build/module.modulemap" \
+      -Xcc -I -Xcc "$PWD/WriterBackend/Sources/CLlamaBridge/include" -F "$B" -framework Sparkle -Xlinker -rpath -Xlinker "$B" \
+      "$RECSRC"/*.swift scripts/permission-flash-checks.swift $(recobjs) -lc++ -o "$OUT/permission-flash"
+    step permission-flash env HOME="$PFHOME" CFFIXED_USER_HOME="$PFHOME" DD_CHECK_OUT="$PFDD" "$OUT/permission-flash"
+    step permission-flash-mutation flash_mutant "" "$B" recobjs
+    if [ -d "${OB:-/nonexistent}/MemoryCore.build" ]; then
+      OPFHOME=$OUT/owner-permission-flash-home; OPFDD=$OUT/owner-permission-flash-dd; mkdir -p "$OPFHOME/Library/Preferences" "$OPFDD"; chmod 700 "$OPFDD"
+      step compile-owner-permission-flash swiftc -D DEVELOPMENT_SOURCE_CHECKS -D DAYDREAM_OWNER_TYPING -D DAYDREAM_CHROME_TYPING -parse-as-library \
+        -module-cache-path "$I/modcache" -I "$OB/Modules" \
+        -Xcc -fmodule-map-file="$PWD/Sources/CSQLite/module.modulemap" -Xcc -fmodule-map-file="$OB/CLlamaBridge.build/module.modulemap" \
+        -Xcc -I -Xcc "$PWD/WriterBackend/Sources/CLlamaBridge/include" -F "$OB" -framework Sparkle -Xlinker -rpath -Xlinker "$OB" \
+        "$RECSRC"/*.swift scripts/permission-flash-checks.swift $(opbobjs) -lc++ -o "$OUT/owner-permission-flash"
+      step owner-permission-flash env HOME="$OPFHOME" CFFIXED_USER_HOME="$OPFHOME" DD_CHECK_OUT="$OPFDD" "$OUT/owner-permission-flash"
+      step owner-permission-flash-mutation flash_mutant owner- "$OB" opbobjs -D DAYDREAM_OWNER_TYPING -D DAYDREAM_CHROME_TYPING
+    fi
+  fi
   # perm-1004 (owner 10/3): every surface names the missing permission and goes to its pane; Input Monitoring turned
   # on after launch restarts by itself once; the exact row, removed with minus first, then added again; no macOS prompt
   # (every Accessibility root and posted event reads trust first); test copies get a labelled icon and ad-hoc copies
@@ -788,10 +892,10 @@ step shortcuts-py python3 scripts/check_shortcuts.py
 # check alone (scripts/clock-shift.c); before each shifted run a probe proves the shift took. Synthetic stores in TMPDIR.
 if [ -f scripts/wb-core-clock-checks.sh ]; then
   WBT=$OUT/wb-core; mkdir -p "$WBT"
-  step compile-wb-core-lib swiftc -parse-as-library -emit-library -emit-module -module-name WriterBackend -target arm64-apple-macosx13.0 \
+  step compile-wb-core-lib swiftc -parse-as-library -emit-library -emit-module -module-name WriterBackend -target arm64-apple-macosx15.0 \
     -module-cache-path "$I/modcache" WriterBackend/Sources/WriterBackend/{Contract,LocalWriter,CloudWriter,CloudActivation,CloudTransport,CanonicalNotes,SourceClauseCoverage,ModelView,CoreWriterAdapter,LongMomentNotes}.swift \
     -emit-module-path "$WBT/WriterBackend.swiftmodule" -o "$WBT/libWriterBackend.dylib"
-  step compile-wb-core swiftc -parse-as-library WriterBackend/CoreChecks.swift -target arm64-apple-macosx13.0 -module-cache-path "$I/modcache" \
+  step compile-wb-core swiftc -parse-as-library WriterBackend/CoreChecks.swift -target arm64-apple-macosx15.0 -module-cache-path "$I/modcache" \
     -I "$WBT" -I "$B/Modules" -I Sources/CSQLite "$B"/MemoryCore.build/*.swift.o "$B"/HistoryCore.build/*.swift.o "$B"/PrivacyPolicy.build/*.swift.o \
     -L "$WBT" -lWriterBackend -lsqlite3 -Xlinker -rpath -Xlinker "$WBT" -o "$WBT/core-checks"
   step wb-core "$WBT/core-checks"

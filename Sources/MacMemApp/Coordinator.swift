@@ -86,6 +86,8 @@ final class Coordinator {
     /// another connection's lock (every state change reads the label: a failed save, a pause, the heartbeat), and a
     /// read given up that way (the history held for a moment) says what the last read said, rather than "unknown".
     private func summaryMode() -> String? {
+        // claude/perf3-1005: on the main thread, the recorder's last heartbeat's read off it, while it is fresh.
+        if Thread.isMainThread, let beat = beatSummaryMode, Date().timeIntervalSince(beat.at) < 1.5 { lastSummaryMode = .some(beat.mode); return beat.mode }
         let read = Thread.isMainThread ? StoreWait.bounded(Self.mainWaitBudget) { try store.summaryWriter()?.mode }
                                        : (result: Result { try store.summaryWriter()?.mode }, heldUp: false)
         switch read.result {
@@ -182,12 +184,70 @@ final class Coordinator {
         // reads after it (`onStateChanged`) included. A heartbeat held up that way counts as a failed one only once the
         // history has been held for as long as one heartbeat used to wait (`heldCountsAfter`, the 1.5 s busy timeout),
         // so recording pauses after the same time held as before (three such waits), without the main thread waiting.
-        _ = StoreWait.bounded(Self.mainWaitBudget) { reconcileResumeBounded() }
+        // claude/perf3-1005: this synchronous form is the checks' (and any caller's off the main thread); the recorder's
+        // timer runs `reconcileResumeOffMain`, the same reads and the same handling of what they found.
+        _ = StoreWait.bounded(Self.mainWaitBudget) { applyBeat(readBeat(permitted: permittedSettled(), reads: nil)) }
     }
-    private func reconcileResumeBounded() {
+    /// claude/perf3-1005 (owner 10/04, "still laggy AF"; the laptop's sample: 1 s of main-thread time in 30 s writing
+    /// the heartbeat with Google Drive busy on the disk): the recorder's heartbeat reads and writes the history on
+    /// `beatQueue`, never on the main thread, then hands what it found back to the main thread, where it is handled
+    /// exactly as `reconcileResume` handles it. One at a time: a timer tick while one is still out is skipped (the next
+    /// tick goes), so a slow disk never queues writes up. `beatReads` runs on the queue with it (the app's typing and
+    /// status reads) and its result runs on the main thread just before `onStateChanged`.
+    func reconcileResumeOffMain() {
+        guard !beatOut else { beatsSkipped += 1; return }
+        let permitted = permittedSettled()
+        // Permission gone while recording: the session's state changes (`health`), on the main thread as before, where
+        // everything else reads it. Rare, and that write is the one that matters then.
+        if !permitted && session.state == "recording" {
+            _ = StoreWait.bounded(Self.mainWaitBudget) { applyBeat(readBeat(permitted: false, reads: nil)) }
+            return
+        }
+        beatOut = true
+        let reads = beatReads?()
+        Self.beatQueue.async { [self] in
+            let beat = StoreWait.bounded(Self.mainWaitBudget) { readBeat(permitted: permitted, reads: reads) }
+            let mode = Result { try store.summaryWriter()?.mode }
+            DispatchQueue.main.async { [self] in
+                beatOut = false
+                if case .success(let mode) = mode { beatSummaryMode = (mode, Date()) }
+                guard case .success(let found) = beat.result else { return }
+                applyBeat(found)
+            }
+        }
+    }
+    /// The heartbeat's queue (claude/perf3-1005). Serial, so heartbeats never overlap.
+    static let beatQueue = DispatchQueue(label: "daydream.heartbeat", qos: .userInitiated)
+    /// A heartbeat is out on `beatQueue`.
+    private var beatOut = false
+    /// Timer ticks skipped because the last heartbeat was still out (a slow disk). For the checks and diagnostics.
+    private(set) var beatsSkipped = 0
+    /// The app's reads that go with each off-main heartbeat: called on the main thread, it returns the reads for
+    /// `beatQueue`, and what those return runs on the main thread just before `onStateChanged`.
+    var beatReads: (() -> (() -> (() -> Void))?)?
+    /// The summary setting the last heartbeat read off the main thread, and when (`summaryMode`).
+    private var beatSummaryMode: (mode: String?, at: Date)?
+    /// The summary setting changed: `label` reads it again rather than trust the last heartbeat's read.
+    func summaryWriterChanged() { beatSummaryMode = nil }
+    /// What one heartbeat found: its write's outcome (and whether another connection held it up) and the app's reads.
+    struct Beat {
+        let health: Result<Void, Error>
+        let heldUp: Bool
+        let apply: (() -> Void)?
+    }
+    /// The heartbeat's store work, on whatever thread calls it: the session's health write (written only when something
+    /// changed, `refreshCaptureState`), the choices intake judges by, and the app's reads.
+    private func readBeat(permitted: Bool, reads: (() -> (() -> Void))?) -> Beat {
+        let attempt = StoreWait.bounded(Self.mainWaitBudget) { try session.health(permitted: permitted) }
+        // The choices intake judges by, read again (a change saved elsewhere, such as mac-mem). A read that fails
+        // keeps the last ones: every save reads them again from the history anyway (CaptureSession.record).
+        if case .success = attempt.result { reloadPolicy() }
+        return Beat(health: attempt.result, heldUp: attempt.heldUp, apply: reads?())
+    }
+    /// The main thread's part of a heartbeat: the fault rules, save authority and the state change.
+    private func applyBeat(_ beat: Beat) {
         do {
-            let attempt = StoreWait.bounded(Self.mainWaitBudget) { try session.health(permitted: permittedSettled()) }
-            if attempt.heldUp, case .failure(let error) = attempt.result, CaptureFault.busy(error) {
+            if beat.heldUp, case .failure(let error) = beat.health, CaptureFault.busy(error) {
                 faulted = true
                 let at = now()
                 let since = heldSince ?? at
@@ -196,6 +256,7 @@ final class Coordinator {
                     if session.state == "recording" {
                         if !nativeReceipts.active { nativeReceipts.begin(); RecordingLog.note("Save authority restored while recording.") }
                     } else { closeBrowserTransport();nativeReceipts.invalidate();onPause?() }
+                    beat.apply?()
                     onStateChanged?()
                     return
                 }
@@ -203,12 +264,9 @@ final class Coordinator {
                 // late would stretch the time held before the pause).
                 heldSince = since.addingTimeInterval(Self.heldCountsAfter)
             }
-            try attempt.result.get()
+            try beat.health.get()
             heldSince = nil
             healthFailures = 0
-            // The choices intake judges by, read again (a change saved elsewhere, such as mac-mem). A read that fails
-            // keeps the last ones: every save reads them again from the history anyway (CaptureSession.record).
-            reloadPolicy()
             // Saving works again only while recording. A heartbeat that saves while recording is paused for a failed
             // save (the recorder's timer runs once more before it stops) says nothing about that save: the app's retry,
             // a fresh Start, must still run.
@@ -227,6 +285,7 @@ final class Coordinator {
         if session.state == "recording" {
             if !nativeReceipts.active { nativeReceipts.begin(); RecordingLog.note("Save authority restored while recording.") }
         } else { closeBrowserTransport();nativeReceipts.invalidate();onPause?() }
+        beat.apply?()
         onStateChanged?()
     }
     /// Failed heartbeats in a row before recording pauses (only busy ones; any other pauses at once).
@@ -271,6 +330,17 @@ final class Coordinator {
     /// browser (Chrome Beta, Dev, Canary and web-app shims included) never does.
     func allowsApp(_ bundle: String) -> Bool {
         guard !bundle.isEmpty, let settings = policyForIntake() else { return false }
+        return Self.allows(bundle, settings)
+    }
+    /// claude/perf3-1005: `allowsApp` by the choices last read (the heartbeat reads them again off the main thread
+    /// every 0.5 s), for the Chrome page timer's 0.5 s check on the main thread; it reads them when none were read.
+    /// What is saved is still judged by choices read for it (`preflight`, `recordPage`).
+    func allowsAppLastRead(_ bundle: String) -> Bool {
+        intakePolicyLock.lock(); let known = intakePolicy; intakePolicyLock.unlock()
+        guard let known, !bundle.isEmpty else { return allowsApp(bundle) }
+        return Self.allows(bundle, known)
+    }
+    private static func allows(_ bundle: String, _ settings: PrivacySettings) -> Bool {
         if bundle == BrowserSafety.supportedBundle {
             guard settings.browserPagesOn else { return false }
         } else if CaptureSession.excludedBrowsers.contains(bundle) { return false }
@@ -518,6 +588,8 @@ final class Coordinator {
             if let receipt {session.onCommitted?();onNativeCommitted?(receipt)}
         }
     }
+    /// perf2-1005: a typed unit is open: its seal's Keychain read is made ahead, off the main thread.
+    func prefetchTypingKey() { if isRunning,captureText {store.prefetchTypedKey()} }
     func commitKeyMarker(kind:String,proof:FocusProof,now:UInt64) throws {
         guard isRunning,captureText else {return}
         let receipt=try nativeReceipts.commit(store:store,path:.keyMarker) {id in try captureBinding.commitKeyMarker(id:id,kind:kind,proof:proof,now:now)}
@@ -532,6 +604,14 @@ final class Coordinator {
     /// - Anything else: recording pauses and the app tries again by itself (`onStorageFault`).
     /// - `recording`: the write was made while recording (the session may have paused itself since); nil reads the session.
     func captureFailed(_ error: Error, recording: Bool? = nil) {
+        // claude/crashguard-015: what follows (a pause, `onPause`, `onStateChanged`, `onStorageFault`) is the app's main
+        // thread state (SwiftUI's published values among it). A caller off the main thread is posted there, judged by
+        // whether it was recording now, as website typing's executor does (`WebTypingRoute.failed`).
+        guard Thread.isMainThread else {
+            let recordingThen = recording ?? (session.state == "recording")
+            DispatchQueue.main.async { self.captureFailed(error, recording: recordingThen) }
+            return
+        }
         let recordingNow = recording ?? (session.state == "recording")
         let fault = CaptureFault.classify(error, sessionRecording: recordingNow)
         switch fault {

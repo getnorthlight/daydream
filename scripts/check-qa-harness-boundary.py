@@ -70,7 +70,8 @@ class SignedWriterQABoundary(unittest.TestCase):
 class SyntheticFallbackQABoundary(unittest.TestCase):
  def test_normal_no_model_uses_existing_preparing_view(self):
   text=(S.parent/'Sources/MacMemApp/MacMemApp.swift').read_text()
-  self.assertIn('else {DaydreamPreparingWindow()}\n        #endif',text)
+  # perf2-1005: the preparing window tells the launch session it appeared (window first; the model is made after).
+  self.assertIn('else {DaydreamPreparingWindow().onAppear {session.windowShown()}}\n        #endif',text)
   self.assertIn('#if DAYDREAM_QA_HARNESS && DAYDREAM_OWNER_TYPING\nstruct SyntheticWindow:View',text)
  def test_normal_isolated_selector_is_false(self):
   text=(S.parent/'Sources/MacMemApp/DaydreamLaunchSession.swift').read_text()

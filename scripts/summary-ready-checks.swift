@@ -75,7 +75,7 @@ func window(_ app: String, _ title: String, site: String = "") -> [String: Any] 
             let byText = Dictionary(grouping: f.bullets, by: \.text)
             check(byText.count == f.bullets.count, "fallback mixed: no repeated line (got \(f.bullets.map(\.text)))")
             let sends = f.bullets.filter { $0.text.hasPrefix("Used the send key") }
-            let drafts = f.bullets.filter { $0.text.hasPrefix("Typed a draft") }
+            let drafts = f.bullets.filter { $0.text.hasPrefix("Typed in ") && !$0.text.contains("send") }
             check(sends.count == 1 && sends[0].assertion == "submitted" && sends[0].actionIDs.count == 2, "fallback mixed: both sends in one submitted line")
             check(drafts.count == 1 && drafts[0].assertion == "draft" && drafts[0].actionIDs.count == 2, "fallback mixed: both drafts in one draft line")
             check(f.bullets.allSatisfy { b in CanonicalGrounding.coreClaimProblem(f.title, b, mixed.actions.filter { b.actionIDs.contains($0.id) }) == nil },
@@ -165,7 +165,7 @@ func window(_ app: String, _ title: String, site: String = "") -> [String: Any] 
         ["kind": "ai.reply", "app": app, "title": app, "state": "reported", "description": "\(app) reported: the fictional export test passes on the sample file."]
     }
     static func writingNotReading() throws {
-        let rule = "Bullets say what was WRITTEN, SENT or DRAFTED"
+        let rule = "Bullets say what was WRITTEN or SENT"
         check(CanonicalGrounding.instruction.contains(rule), "writing rule: the model's instruction says bullets cover writing")
         check(CanonicalGrounding.instruction.contains("Things only read (text on screen, search results, REPORT) get a bullet only if nothing was."),
               "writing rule: the instruction leaves out things only read when something was written")
@@ -185,7 +185,7 @@ func window(_ app: String, _ title: String, site: String = "") -> [String: Any] 
         check(kinds.contains(.typed) && kinds.contains(.search) && kinds.contains(.report), "writing rule: fixture has a draft, a search and a report (got \(kinds))")
         if let f = try? CanonicalGrounding.fallbackNote(r, view: v) {
             let texts = f.bullets.map(\.text)
-            check(texts == ["Typed a draft in Notes."], "writing rule fallback: only the draft line (got \(texts))")
+            check(texts == ["Typed in Notes."], "writing rule fallback: only the typing line, never \"draft\" (got \(texts))")
             check(!texts.contains { $0.contains("search results") || $0.contains("reported") }, "writing rule fallback: no reading line")
             check((try? CanonicalGrounding.check(f, request: r, view: v)) == f, "writing rule fallback: check accepts it without citing what was read")
         } else { check(false, "writing rule fallback: note written") }
@@ -268,7 +268,7 @@ func window(_ app: String, _ title: String, site: String = "") -> [String: Any] 
             let texts = merged.bullets.map(\.text)
             // claude/summary-1003 (owner): word-less terminal typing is a command ("Typed a command in harborline."), never
             // "Typed a draft in Ghostty.".
-            check(Set(texts).count == texts.count && texts.contains("Typed a command in harborline.") && texts.contains("Typed a draft in ChatGPT."),
+            check(Set(texts).count == texts.count && texts.contains("Typed a command in harborline.") && texts.contains("Typed in ChatGPT."),
                   "long merge: each line once across segments (got \(texts))")
             let typed = Set(r.actions.filter { $0.kind == "keyboard.text_input" }.map(\.id))
             check(typed.isSubset(of: Set(merged.bullets.flatMap(\.actionIDs))), "long merge: every typed row is cited")

@@ -50,6 +50,7 @@ enum SendRulesChecks {
             ("com.google.Chrome","app.slack.com","app.slack.com","message","chat",[.submit:"return"]),
             ("com.google.Chrome","discord.com","discord.com","message","chat",[.submit:"return"]),
             ("com.google.Chrome","web.whatsapp.com","web.whatsapp.com","message","chat",[.submit:"return"]),
+            ("com.google.Chrome","www.snapchat.com","www.snapchat.com","textArea","chat",[.submit:"return"]),
             ("com.apple.mail",nil,"Re: Friday meeting","body","email",[.mailSend:"mailSend"]),
             ("com.apple.mail",nil,"New Message","to","email",[.mailSend:"mailSend"]),
             // claude/int-1003: webmail Command-Return is a draft until the compose closes (`EmailComposeAdapter`).

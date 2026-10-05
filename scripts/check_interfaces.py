@@ -61,14 +61,60 @@ class Interfaces(unittest.TestCase):
                                         input="\n".join(map(json.dumps,requests))+"\n", text=True,
                                         env={**os.environ,"MAC_MEM_CAPABILITY":token})
         rows = [json.loads(line) for line in result.splitlines()]
-        # claude/summary-1003 (owner decision 2026-10-03): moment_details is the one tool that may carry typed words,
-        # gated in the DayDream app by "Let AI apps read what you typed" (scripts/ai-read-typed-checks.swift).
-        self.assertEqual([t["name"] for t in rows[1]["result"]["tools"]],["status","context","search","read","open","recall","current-context","recap","moment_details"])
-        self.assertIn("demo-search",rows[2]["result"]["content"][0]["text"])
+        # agent-tools v2: the server lists the four v2 tools; the 0.1.4 names (read here) still answer, unlisted.
+        self.assertEqual([t["name"] for t in rows[1]["result"]["tools"]],["timeline","search","details","status"])
+        self.assertTrue(rows[0]["result"]["capabilities"]["tools"]["listChanged"])
+        self.assertIn("start with timeline",rows[0]["result"]["instructions"])
+        found = rows[2]["result"]["content"][0]["text"]
+        self.assertTrue(found.startswith("DayDream \u00b7 ")); self.assertIn("SQLite",found); self.assertNotIn("macmem://",found)
+        self.assertNotIn("not a final answer",found)
         self.assertIn("error",rows[3]); self.assertEqual(rows[4]["result"]["content"][0]["text"],"null")
         # claude/mcp-prompts-1003: unknown tools stay protocol errors and name the real ones; a missing item says what to do.
-        self.assertEqual(rows[3]["error"]["code"],-32602); self.assertIn("moment_details",rows[3]["error"]["message"])
+        self.assertEqual(rows[3]["error"]["code"],-32602); self.assertIn("details",rows[3]["error"]["message"])
         self.assertIn("Next:",rows[5]["result"]["content"][0]["text"])
+
+    def mcp(self, requests, toolset=None):
+        token = self.token()
+        env = {**os.environ,"MAC_MEM_CAPABILITY":token}
+        env.pop("DAYDREAM_MCP_TOOLSET", None)
+        if toolset: env["DAYDREAM_MCP_TOOLSET"] = toolset
+        lines = "\n".join(json.dumps({"jsonrpc":"2.0","id":i,"method":m,"params":p}) for i,(m,p) in enumerate(requests))+"\n"
+        result = subprocess.check_output(self.base + ["--client","test-host","--recipient","synthetic-local","mcp"], input=lines, text=True, env=env)
+        return [json.loads(line) for line in result.splitlines()]
+
+    def test_legacy_toolset(self):
+        # agent-tools v2: DAYDREAM_MCP_TOOLSET=legacy lists the 0.1.4 tools with the 0.1.4 instructions; both lists them all.
+        rows = self.mcp([("initialize",{}),("tools/list",{})], toolset="legacy")
+        self.assertEqual([t["name"] for t in rows[1]["result"]["tools"]],["status","context","search","read","open","recall","current-context","recap","moment_details"])
+        self.assertIn("recap",rows[0]["result"]["instructions"]); self.assertNotIn("start with timeline",rows[0]["result"]["instructions"])
+        both = [t["name"] for t in self.mcp([("tools/list",{})], toolset="both")[0]["result"]["tools"]]
+        self.assertEqual(both[:4],["timeline","search","details","status"])
+        for name in ["recap","recall","open","read","context","current-context","moment_details"]: self.assertIn(name,both)
+
+    def test_v2_tools(self):
+        # agent-tools v2: one header line, compact text by default, json on request, plain errors, no links or send states.
+        rows = self.mcp([("initialize",{"protocolVersion":"2025-06-18"}),("tools/call",{"name":"timeline","arguments":{"when":"today"}}),
+                         ("tools/call",{"name":"timeline","arguments":{"when":"today","format":"json","detail":"full"}}),
+                         ("tools/call",{"name":"search","arguments":{"query":"Search","kinds":["page"]}}),
+                         ("tools/call",{"name":"details","arguments":{"id":"not-an-id"}}),
+                         ("tools/call",{"name":"status","arguments":{}}),
+                         ("tools/call",{"name":"timeline","arguments":{"when":"next week"}}),
+                         ("tools/call",{"name":"recap","arguments":{"when":"today"}})])[1:]
+        text = [r["result"]["content"][0]["text"] for r in rows]
+        for t in [text[0],text[2],text[4]]:
+            self.assertTrue(t.startswith("DayDream \u00b7 ")); self.assertNotIn("macmem://",t)
+            for word in ["How to answer","Next:","not sent","send key","(confirmed)"]: self.assertNotIn(word,t)
+        self.assertIn("Where you left off:",text[0])
+        page = json.loads(text[1]); self.assertEqual(page["tool"],"timeline"); self.assertEqual(rows[1]["result"]["structuredContent"]["tool"],"timeline")
+        self.assertIn("1 item matches",text[2])
+        ids = [w for w in text[2].split() if len(w)==10 and w[4]=="-"]
+        self.assertTrue(ids)
+        details = self.mcp([("tools/call",{"name":"details","arguments":{"id":ids[0]}})])[0]["result"]["content"][0]["text"]
+        self.assertTrue(details.startswith("DayDream \u00b7 ")); self.assertIn(ids[0],details)
+        self.assertTrue(rows[3]["result"]["isError"]); self.assertIn("1004-k7f2q",text[3])
+        self.assertIn("Recording:",text[4]); self.assertIn("Never shown: whether a message went out",text[4])
+        self.assertFalse(rows[5]["result"].get("isError",False)); self.assertIn("can't see the future",text[5]); self.assertIn("calendar",text[5])
+        self.assertFalse(rows[6]["result"].get("isError",False)); self.assertTrue(text[6].startswith("**Recap:"))
 
     def test_recap_over_mcp(self):
         # mcp-recap-1002: recap answers over MCP with the per-day shape and how to present it; ids and links never.

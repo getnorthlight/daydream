@@ -29,9 +29,19 @@ final class TypedTextExpiryTimer {
         self.store = store
         self.now = now
     }
+    /// perf2-1005 (owner 10/04, slow open): the app runs the job on a utility queue, never on the main thread, so the
+    /// launch doesn't wait for the delete (up to 1.5 s for another connection's lock) or a Keychain read. Checks run it
+    /// in place (false).
+    static var runsOffMain = false
+    private static let queue = DispatchQueue(label: "daydream.typed-expiry", qos: .utility)
     /// Runs the job now, then every hour until `stop`.
     func start(schedule: Schedule = TypedTextExpiryTimer.runLoop) {
         stop()
+        if Self.runsOffMain {
+            Self.queue.async { [weak self] in self?.run() }
+            cancel = schedule(Self.interval) { [weak self] in Self.queue.async { self?.run() } }
+            return
+        }
         run()
         cancel = schedule(Self.interval) { [weak self] in self?.run() }
     }
@@ -40,7 +50,8 @@ final class TypedTextExpiryTimer {
         // A Keychain that was locked at the last read is read again first,
         // so typing resumes after an unlock even if nothing else asks.
         _ = try? store.retryLockedTypedVault(now: now())
-        do { lastReport = try store.expireTypedText(now: now()); lastFailed = false }
+        // Off the main thread it lets a capture save in first (`StoreWait.lettingMainIn`).
+        do { lastReport = try StoreWait.lettingMainIn { try store.expireTypedText(now: now()) }; lastFailed = false }
         catch { lastFailed = true }
     }
     func stop() { cancel?(); cancel = nil }

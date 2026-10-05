@@ -29,7 +29,7 @@ enum RuntimeSignatureVerifier {
                   SecCodeCheckValidity(running, SecCSFlags(rawValue: noNetwork), requirement) == errSecSuccess,
                   SecCodeCopyStaticCode(running, [], &runningStatic) == errSecSuccess, let runningStatic,
                   SecCodeCopyPath(runningStatic, [], &runningPath) == errSecSuccess, let runningPath,
-                  (runningPath as URL).resolvingSymlinksInPath() == url.resolvingSymlinksInPath()
+                  WriterPaths.same(runningPath as URL, url)
             else { throw WriterFailure.denied }
         }
         var raw: CFDictionary?

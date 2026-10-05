@@ -20,8 +20,20 @@ public final class CaptureSession {
         ? "Recording apps. Chrome page titles and sites are saved only if you turn them on. What's on web pages and what you type in browsers is never saved."
         : "Recording apps. Web browsers are skipped: what's on web pages and what you type in browsers is never saved."
     #endif
-    public private(set) var state = "off"
-    public private(set) var reason = "Recording is off."
+    /// claude/crashguard-015: both are read on the main thread and on website typing's executor (every key asks whether
+    /// it is recording) while the heartbeat's queue or a save written later may change them off the main thread: each
+    /// read and write is under `factsLock`. Never `lock`, which is held across store writes.
+    public private(set) var state: String {
+        get { factsLock.lock(); defer { factsLock.unlock() }; return stateStored }
+        set { factsLock.lock(); stateStored = newValue; factsLock.unlock() }
+    }
+    public private(set) var reason: String {
+        get { factsLock.lock(); defer { factsLock.unlock() }; return reasonStored }
+        set { factsLock.lock(); reasonStored = newValue; factsLock.unlock() }
+    }
+    private let factsLock = NSLock()
+    private var stateStored = "off"
+    private var reasonStored = "Recording is off."
     public var onCommitted: (() -> Void)?
     /// fix/chrome-capture (opt-in diagnostics): this recording session's epoch, "" when it can't be read.
     public func captureEpoch() -> String { lock.lock(); defer { lock.unlock() }; return (try? store.captureStatus())?["epoch"] ?? "" }
@@ -79,7 +91,8 @@ public final class CaptureSession {
         if state == "recording", !permitted {
             state = "permission_denied"; reason = "Permission was revoked. Resume explicitly after granting it."
         }
-        try store.setCaptureState(state, reason: reason, now: now)
+        // claude/perf3-1005: written only when something changed or the saved time is getting old (refreshCaptureState).
+        try store.refreshCaptureState(state, reason: reason, now: now)
     }
     public static func accepts(_ evidence: Evidence, focusedFieldKnown: Bool, settings: PrivacySettings, now: Date = Date()) -> Bool {
         // AX has no universal affirmative "not private" signal. Never persist
@@ -138,17 +151,44 @@ public struct CaptureBurst {
 
 extension MemoryStore {
     public func setCaptureState(_ state: String, reason: String, now: Date = Date()) throws {
+        try transaction(preservingTypedNarrative: true) { try writeCaptureState(state, reason: reason, now: now) }
+    }
+    /// `setCaptureState`'s write, inside the caller's transaction.
+    private func writeCaptureState(_ state: String, reason: String, now: Date) throws {
+        let previous = try rows("SELECT body FROM metadata WHERE id='capture'").first?.first
+        let previousFields = try previous.map { try decode([String:String].self,$0) }
+        let previousState = previousFields?["state"]
+        let checked = timestamp(previousFields?["checked_at"] ?? "")
+        if state != "recording" || previousState != state || checked.map({ now.timeIntervalSince($0) < 0 || now.timeIntervalSince($0) > 5 }) ?? true {
+            discardTypedNarrativeCarry()
+        }
+        let epoch = previousState == state ? (previousFields?["epoch"] ?? UUID().uuidString) : UUID().uuidString
+        try exec("INSERT OR REPLACE INTO metadata VALUES('capture',?)", [json(["state":state,"reason":reason,"checked_at":iso(now),"epoch":epoch])])
+        if previousState != state { try invalidateDisclosure() }
+    }
+    /// claude/perf3-1005: how old the saved heartbeat (`checked_at`) may get before the recorder's heartbeat writes it
+    /// again. Readers call a recording older than 5 s "heartbeat expired"; the time is saved to the second, so a write
+    /// every 2 s keeps it under 3.5 s old even with the heartbeat a tick late.
+    public static let heartbeatRewriteAfter: TimeInterval = 2
+    /// The recorder's heartbeat (`CaptureSession.health`, every 0.5 s): the row `setCaptureState` writes, but written
+    /// only when something changed: the state, its reason, or a saved time `heartbeatRewriteAfter` old (or ahead of
+    /// `now`, after the clock went back). Otherwise nothing is written: no journal, no fsync. The write lock is still
+    /// taken every time (the same BEGIN IMMEDIATE), so a history another connection holds fails each heartbeat as busy,
+    /// as a write did, and the held-history rules (`Coordinator`) count it the same way.
+    /// Returns whether it wrote. A heartbeat that writes nothing leaves the typed-narrative carry as a fresh write of the
+    /// same recording state would (`setCaptureState` keeps it then) and drops it for any other state, as that does.
+    @discardableResult public func refreshCaptureState(_ state: String, reason: String, now: Date = Date()) throws -> Bool {
         try transaction(preservingTypedNarrative: true) {
-            let previous = try rows("SELECT body FROM metadata WHERE id='capture'").first?.first
-            let previousFields = try previous.map { try decode([String:String].self,$0) }
-            let previousState = previousFields?["state"]
-            let checked = timestamp(previousFields?["checked_at"] ?? "")
-            if state != "recording" || previousState != state || checked.map({ now.timeIntervalSince($0) < 0 || now.timeIntervalSince($0) > 5 }) ?? true {
-                discardTypedNarrativeCarry()
+            if let body = try rows("SELECT body FROM metadata WHERE id='capture'").first?.first,
+               let fields = try? decode([String:String].self, body),
+               fields["state"] == state, fields["reason"] == reason, fields["epoch"] != nil,
+               let checked = timestamp(fields["checked_at"] ?? ""),
+               now.timeIntervalSince(checked) >= 0, now.timeIntervalSince(checked) < Self.heartbeatRewriteAfter {
+                if state != "recording" { discardTypedNarrativeCarry() }
+                return false
             }
-            let epoch = previousState == state ? (previousFields?["epoch"] ?? UUID().uuidString) : UUID().uuidString
-            try exec("INSERT OR REPLACE INTO metadata VALUES('capture',?)", [json(["state":state,"reason":reason,"checked_at":iso(now),"epoch":epoch])])
-            if previousState != state { try invalidateDisclosure() }
+            try writeCaptureState(state, reason: reason, now: now)
+            return true
         }
     }
     public func captureStatus(now: Date = Date()) throws -> [String:String] {

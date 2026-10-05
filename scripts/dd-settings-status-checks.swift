@@ -430,8 +430,9 @@ struct RootFrameKey: PreferenceKey {
         check(!labels.contains { $0.lowercased().contains("total") }, "the snapshot has no lifetime total", labels.joined(separator: ","))
         let modelLabels = Mirror(reflecting: model(Fx.snapshot(Fx.recording))).children.compactMap(\.label)
         check(!modelLabels.contains { $0.lowercased().contains("total") }, "the line's model has no lifetime total", modelLabels.joined(separator: ","))
-        // ux/declutter: the snapshot carries the state, the issue, the rows' values and whether Resume can run only.
-        equal(labels, ["state", "issue", "permissions", "summaries", "exclusions", "connections", "canResume"], "the snapshot has no day numbers, week, usage or store size")
+        // ux/declutter: the snapshot carries the state, the issue, the rows' values and whether Resume can run only
+        // (chromeask-1005: and whether Chrome pages aren't being saved, for the calm line with Ask again or Fix).
+        equal(labels, ["state", "issue", "permissions", "summaries", "exclusions", "connections", "canResume", "chromeOff", "chromeAskAgain"], "the snapshot has no day numbers, week, usage or store size")
     }
 
     // MARK: Laid out
@@ -824,7 +825,8 @@ struct RootFrameKey: PreferenceKey {
         let view = host(MemorySettings(model: model), size: sheetSize)
         for _ in 0..<60 where elements["state"] == nil || elements["row.connections"] == nil { pump(0.05) }
         let state = model.presentation.state
-        check(elements["state"]?.text.hasPrefix(state.kind.title) == true, "the app's line shows the model's state", elements["state"]?.text ?? "none")
+        // perm-1004 (72d5565): the card's title is the state's title (`Turn on Accessibility` while a permission is missing).
+        check(elements["state"]?.text.hasPrefix(state.title) == true, "the app's line shows the model's state", elements["state"]?.text ?? "none")
         var needs = false
         if case .needsPermission = state { needs = true }
         check(elements["system-settings"] == nil && (elements["action"]?.text == "Allow…") == needs,

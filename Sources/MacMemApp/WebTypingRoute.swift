@@ -82,7 +82,7 @@ final class WebTypingRoute {
         var fieldHeld: (_ pid: pid_t) -> Bool? = { _ in nil }
         /// Runs work after a delay in seconds on this (main) executor.
         var schedule: (TimeInterval, @escaping () -> Void) -> Void = { delay, work in DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work) }
-        var secureInput: () -> Bool = { IsSecureEventInputEnabled() }
+        var secureInput: () -> Bool = { MainInputFacts.secureInput() }   // claude/crashguard-015: main queue only
         var pressAndHold: () -> Bool = { UserDefaults.standard.object(forKey: "ApplePressAndHoldEnabled") as? Bool ?? true }
         /// Seconds since any mouse button last went down (nil: unknown).
         var secondsSinceMouseDown: () -> Double? = {
@@ -99,6 +99,9 @@ final class WebTypingRoute {
         /// claude/int-1003 (compose-send/v1): the composer the last full join proved, read again after a Return or
         /// Command-Return (`ChromeTypingWitness.composeSnapshot`). nil: not read (nothing is confirmed). On the route's executor.
         var composeSnapshot: (_ pid: pid_t) -> BrowserComposeSnapshot? = { _ in nil }
+        /// claude/xtyping-1005: wakes Chrome's accessibility (`ChromeTypingWitness.wake`); true when it woke it. Called
+        /// only when Chrome comes to the front (`chromeInFront`), on the route's executor.
+        var wake: (_ pid: pid_t, _ enabled: @escaping () -> Bool) -> Bool = { _, _ in false }
         // ---- QF-17 bracketed design (prototype). Unused by the synchronous design. ----
         /// Which join design this route runs (`ChromeJoinDesign.current` when the environment is made).
         var design: ChromeJoinDesign = ChromeJoinDesign.current
@@ -147,6 +150,7 @@ final class WebTypingRoute {
                 witness.submitControl(pid: pid, x: x, y: y, page: page, focusID: focusID, names: names, enabled: enabled)
             })
             env.composeSnapshot = { pid in witness.composeSnapshot(pid: pid) }
+            env.wake = { pid, enabled in witness.wake(pid: pid, enabled: enabled) }
             env.design = design
             // QF-17: reads run on the witness's own serial queue (the one instance that holds all join state: M4).
             env.background = { work in witness.queue.async(execute: work) }
@@ -161,7 +165,7 @@ final class WebTypingRoute {
                 let now = DispatchTime.now().uptimeNanoseconds
                 return now &- UInt64(since * 1_000_000_000)
             }
-            env.frontmostPID = { NSWorkspace.shared.frontmostApplication?.processIdentifier }
+            env.frontmostPID = { MainInputFacts.frontmostPID() }
             // claude/chrome-offmain-1003: the synchronous design runs on its own executor (owner builds; the bracketed
             // design keeps its own read loop and stays on main). The witness's reads, the timers and the stop's one
             // bounded join run there; the keyboard input source is read on main for each key and kept for it.
@@ -222,6 +226,8 @@ final class WebTypingRoute {
         let chrome = bundle == WebTypingGate.bundle && pid != nil
         // The input source, for this key's join (Chrome keys only: a key in another app reads nothing here).
         if chrome { _ = environment.directKeyboardInput() }
+        // claude/crashguard-015: and secure input and the frontmost app, read here on the main queue for the executor.
+        if chrome { MainInputFacts.refresh() }
         let read = chrome ? Self.activeRead(coordinator) : nil
         let work: TypingKeyHandoff.Work = { [self] characters in
             decided = .some(read)
@@ -308,6 +314,7 @@ final class WebTypingRoute {
         // the main thread.
         if let executor = environment.executor, !executor.isCurrent {
             _ = environment.directKeyboardInput()
+            MainInputFacts.refresh()   // claude/crashguard-015
             let lock = NSLock()
             var deciding = true, done = false
             executor.sync {
@@ -555,6 +562,7 @@ final class WebTypingRoute {
             return false
         }
         diagnostics.count("web.key")
+        WebTypingRefusals.shared.keyArrived(at: eventAt)   // claude/xtyping-1005: the tally's typing sessions
         guard let a = active(coordinator) else { return false }
         self.coordinator = coordinator
         if self.pid != pid { if self.pid != nil { diagnostics.count("web.chromeRelaunched") }; drop(.focus); self.pid = pid }
@@ -1016,6 +1024,25 @@ final class WebTypingRoute {
         } catch { diagnostics.count("post.storeThrew"); failed(a.coordinator, error) }
     }
 
+    /// claude/xtyping-1005: EventCapture, on main: Chrome `pid` came to the front, or was in front when recording
+    /// started (a relaunched Chrome comes to the front as a new PID). Chrome's accessibility is asleep until an
+    /// assistive client asks its application its role, and while it sleeps every join is refused `notFocused`; so,
+    /// with website typing on (the same checks a key's join makes first: `activeRead`), the witness wakes it now
+    /// (`BrowserTypingJoin.wake`: the join's checks and mode gate, then that one role read). Synchronous design only;
+    /// when Chrome is already awake it reads no more than which app is in front and focused.
+    func chromeInFront(pid: pid_t, coordinator: Coordinator) {
+        guard environment.design == .synchronous, Self.activeRead(coordinator) != nil else { return }
+        let work: () -> Void = { [self, weak coordinator] in
+            let woke = environment.wake(pid) { [weak coordinator] in
+                guard let coordinator else { return false }
+                return coordinator.isRunning && coordinator.captureText && coordinator.allowsApp(WebTypingGate.bundle)
+            }
+            if woke { WebTypingRefusals.shared.woke() }
+        }
+        if elsewhere(work) { return }
+        work()
+    }
+
     /// EventCapture dropped a key as late, unread (review G51): the
     /// unfinished text is sealed like native typing's gap, so it is saved
     /// only if a fresh join finds its field again, and never joined to the
@@ -1023,7 +1050,10 @@ final class WebTypingRoute {
     func keyLost(at now: UInt64) {
         if elsewhere({ self.keyLost(at: now) }) { return }
         // fix/chrome-root: a key lost at intake (processed too long after it was typed) while Chrome is in front.
-        if let pid, environment.frontmostPID?() == pid { WebTypingRefusals.shared.note("key.lateAtIntake") }
+        if let pid, environment.frontmostPID?() == pid {
+            WebTypingRefusals.shared.keyArrived(at: now)   // claude/xtyping-1005: a lost key is part of a typing session too
+            WebTypingRefusals.shared.note("key.lateAtIntake")
+        }
         if finishing != nil { drop(.focus); return }
         if environment.design == .bracketed { bracketedBoundary(at: now, op: .gap); return }
         guard burst.pending || burst.session.hasLive else { return }
@@ -1580,7 +1610,7 @@ extension WebTypingRoute {
                     privacyContext = true
                 }
             } catch {
-                drop(.focus); a.coordinator.captureFailed(error); return false
+                drop(.focus); failed(a.coordinator, error); return false
             }
             return true
         }
@@ -1728,7 +1758,7 @@ extension WebTypingRoute {
                 if let due = burst.session.nextParkedDeadline, due <= now { drop(.focus); return true }
             }
         } catch {
-            drop(.focus); a.coordinator.captureFailed(error); return true
+            drop(.focus); failed(a.coordinator, error); return true
         }
         refreshTimers()
         return true

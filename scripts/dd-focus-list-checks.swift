@@ -1093,7 +1093,9 @@ final class FlagBox: @unchecked Sendable { var open = false; var fail = false }
         let list = E.sources(from: mixed.shuffled())
         equal(list.count, E.sourceLimit, "sources: at most three")
         equal(E.sourceLimit, 3, "sources: the limit is three")
-        equal(list.map(\.openActionID), ["m7", "m11", "m10"],
+        // perf2-1005: e92443a (five -> three) expected m10 here, against its own rule: Tool (m2, 9:10) and github.com
+        // (m3, 9:15) both have two actions, and the earlier first seen is kept, so Tool's m9 is the third.
+        equal(list.map(\.openActionID), ["m7", "m11", "m9"],
               "sources: the three with the most actions, listed by first seen (ties keep the earlier)")
         check(zip(list, list.dropFirst()).allSatisfy { $0.first <= $1.first }, "sources: chronological")
         equal(list.first { $0.openActionID == "m11" }?.site, "example.org", "sources: a page is one per host (URL and host agree)")
@@ -1104,11 +1106,13 @@ final class FlagBox: @unchecked Sendable { var open = false; var fail = false }
               "sources: a bundle ID is never shown", tool.map { $0.title + " / " + $0.detail(la) } ?? "")
         // ux/declutter: the icon names the app, so a window's line is its span alone.
         equal(list.first { $0.bundle == "com.apple.TextEdit" }?.detail(la), "9:00\u{2013}9:35 AM", "sources: a window's span")
-        equal(list.first { $0.site == "github.com" }?.detail(la), "github.com · 9:15\u{2013}9:50 AM", "sources: a page's host and span")
+        // github.com is not among the three kept above; its two visits on their own.
+        let hosted = E.sources(from: mixed.filter { $0.site == "github.com" })
+        equal(hosted.first { $0.site == "github.com" }?.detail(la), "github.com · 9:15\u{2013}9:50 AM", "sources: a page's host and span")
         check(!list.contains { $0.detail(la).localizedCaseInsensitiveContains("edited") }, "sources: never claims edited")
         equal(list.first { $0.bundle == "com.apple.TextEdit" }?.detail(la, complete: false), "",
               "sources: a read short of every member claims no time")
-        equal(list.first { $0.site == "github.com" }?.detail(la, complete: false), "github.com", "sources: a short read keeps a page's host, no time")
+        equal(hosted.first { $0.site == "github.com" }?.detail(la, complete: false), "github.com", "sources: a short read keeps a page's host, no time")
         check(!source("Sources/MemoryUI/FocusListExpanded.swift").contains("incompleteNote"),
               "sources: no separate incomplete note (the moment's summary line says it may be missing)")
         let notesSource = E.sources(from: [action("n0", 9, 0, app: "Notes", bundle: "com.apple.Notes", title: "")]).first
@@ -1174,12 +1178,18 @@ final class FlagBox: @unchecked Sendable { var open = false; var fail = false }
         b.selectedCanonicalActivity = "t-chrome"
         check(wait { probe.detailMomentID == "t-chrome" && probe.detailActions.count == 17 }, "hosted: the detail opens with the moment's actions",
               "\(String(describing: probe.detailMomentID)) \(probe.detailActions.count)")
-        check(wait { probe.detailTyped?.blocks.first?.text == "LGTM, ship it" }, "show all: the detail reads what was typed in the moment",
+        // perf2-1005: 693a762 ("Keep owner action history beneath bounded source summaries") took the words off this path:
+        // the detail passes `typed: .empty` and its exact words come from the owner source preview (`loadOwnerSourcePreviews`,
+        // its own window only, closed when the day's memory changes; summary-ux-owner-view-checks). `loadMomentTyped` is
+        // never asked, so these checks now hold the detail to that: no words read here, none left in view state.
+        pump(0.3)
+        check(typedAsks.isEmpty, "show all: the detail never reads typed words through loadMomentTyped", "\(typedAsks.count) asks")
+        check(probe.detailTyped?.blocks.isEmpty ?? true, "show all: no typed words held in the detail's view state",
               "\(String(describing: probe.detailTyped))")
-        equal(typedAsks.last?.count, 17, "show all: it asks about the moment's own actions only")
         typingOn = false
         b.dayCache.invalidate(todayKey)
-        check(wait { probe.detailTyped != nil && probe.detailTyped?.blocks.isEmpty == true }, "show all: typing turned off (the day's memory changed): the words go at once",
+        pump(0.2)
+        check(typedAsks.isEmpty && (probe.detailTyped?.blocks.isEmpty ?? true), "show all: typing turned off (the day's memory changed): still no words",
               "\(String(describing: probe.detailTyped))")
         typingOn = true
         b.loadMomentTyped = nil

@@ -104,6 +104,8 @@ public struct CardSummaryFlow: Equatable, Sendable {
 /// The sweep: one band over the whole quote block, one phase for every line, about 4.5 s a pass, ease-in-out, looping.
 public enum SummarySweep {
     public static let period: TimeInterval = 4.5
+    /// perf2-1005: the band crosses at most this many times (about 36 s), then rests: nothing in the UI animates forever.
+    public static let passes = 8
     /// The band's gradient stops across a strip three times the block's width (summary-v2's `.sweeping`: 35% / 50% / 65%).
     public static let stops: [Double] = [0.35, 0.5, 0.65]
     /// The strip's offset, in block widths, at a phase from 0 to 1: the band enters from the left and leaves on the right.

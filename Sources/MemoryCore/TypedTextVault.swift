@@ -191,6 +191,50 @@ public final class TypedTextVault {
     private var current: TypedVaultState
     private var boundStore: String?
 
+    /// perf2-1005: the Keychain read a seal makes first (`latest`) was on the main thread for every typed unit (laptop:
+    /// `SecItemCopyMatching` from the main thread). While typing, the item is read ahead off the main thread
+    /// (`prefetch`); a seal that writes nothing (its day key is already in the item) uses that read when it is at most
+    /// `prefetchFresh` old and no vault in this process has written the item since. A seal that writes (a new day key),
+    /// Forget, dropping keys and turning typing on always read the item at once, as before, so an item that disappeared
+    /// is still never re-created from a copy.
+    public static let prefetchFresh: UInt64 = 30_000_000_000
+    /// A new read ahead at most this often while typing.
+    public static let prefetchEvery: UInt64 = 10_000_000_000
+    private static let writesLock = NSLock()
+    private static var writes: UInt64 = 0
+    static var writeGeneration: UInt64 { writesLock.lock(); defer { writesLock.unlock() }; return writes }
+    private static func wrote() { writesLock.lock(); writes &+= 1; writesLock.unlock() }
+    private var ahead: (data: Data?, at: UInt64, generation: UInt64)?
+    private var aheadAsked: UInt64?
+    /// Keychain reads made by this vault (the checks count them).
+    public private(set) var keychainReads = 0
+    private func load(_ keyStore: TypedKeyStore) throws -> Data? { keychainReads += 1; return try keyStore.load() }
+    private static let aheadQueue = DispatchQueue(label: "daydream.typed-key-ahead", qos: .utility)
+
+    /// While typing (any thread): reads the item ahead off the caller's thread, at most once per `prefetchEvery`,
+    /// only while ready. `async`: false runs the read on the caller (the checks).
+    public func prefetch(now: UInt64 = DispatchTime.now().uptimeNanoseconds, async: Bool = true) {
+        lock.lock()
+        guard keyStore != nil, current == .ready, aheadAsked.map({ now < $0 || now - $0 >= Self.prefetchEvery }) ?? true else { lock.unlock(); return }
+        aheadAsked = now
+        lock.unlock()
+        let read = { [weak self] in
+            guard let self else { return }
+            self.lock.lock(); defer { self.lock.unlock() }
+            guard let keyStore = self.keyStore, self.current == .ready else { return }
+            let generation = Self.writeGeneration
+            guard let data = try? self.load(keyStore) else { self.ahead = nil; return }
+            self.ahead = (data, DispatchTime.now().uptimeNanoseconds, generation)
+        }
+        if async { Self.aheadQueue.async(execute: read) } else { read() }
+    }
+    /// The read ahead, used once: fresh and with no write since; nil otherwise.
+    private func takeAhead(now: UInt64) -> Data?? {
+        defer { ahead = nil }
+        guard let a = ahead, now >= a.at, now - a.at <= Self.prefetchFresh, a.generation == Self.writeGeneration else { return nil }
+        return .some(a.data)
+    }
+
     /// nil key store means this process may never hold a key.
     public init(keyStore: TypedKeyStore?) {
         self.keyStore = keyStore
@@ -240,7 +284,7 @@ public final class TypedTextVault {
         lock.lock(); defer { lock.unlock() }
         guard let keyStore else { current = .unavailable; return current }
         let data: Data?
-        do { data = try keyStore.load() } catch { keyring = nil; current = .locked; return current }
+        do { data = try load(keyStore) } catch { keyring = nil; current = .locked; return current }
         switch read(data) {
         case .ring(let ring): keyring = ring; current = .ready
         case .missing, .damaged: keyring = nil; current = hadWords ? .keyLost : .notSetUp
@@ -258,7 +302,7 @@ public final class TypedTextVault {
     private func latest() throws -> TypedKeyring {
         guard let keyStore else { throw TypedTextError.typingLocked(.unavailable) }
         let data: Data?
-        do { data = try keyStore.load() } catch { keyring = nil; current = .locked; throw TypedTextError.typingLocked(.locked) }
+        do { data = try load(keyStore) } catch { keyring = nil; current = .locked; throw TypedTextError.typingLocked(.locked) }
         switch read(data) {
         case .ring(let ring): keyring = ring; return ring
         case .missing, .damaged: keyring = nil; current = .keyLost; throw TypedTextError.typingLocked(.keyLost)
@@ -268,6 +312,7 @@ public final class TypedTextVault {
     /// Writes a changed keyring. Any failure leaves the vault not ready
     /// (locked), so capture stops reading and the menu-bar dot goes away.
     private func store(_ ring: TypedKeyring) throws {
+        Self.wrote(); ahead = nil
         do { try keyStore?.save(try Self.encode(ring)) } catch { keyring = nil; current = .locked; throw TypedTextError.typingLocked(.locked) }
         keyring = ring
     }
@@ -280,13 +325,14 @@ public final class TypedTextVault {
         lock.lock(); defer { lock.unlock() }
         guard let keyStore, current == .notSetUp || current == .keyLost else { throw TypedTextError.cannotSetUp(current) }
         let existing: Data?
-        do { existing = try keyStore.load() } catch { throw TypedTextError.cannotSetUp(current) }
+        do { existing = try load(keyStore) } catch { throw TypedTextError.cannotSetUp(current) }
         switch read(existing) {
         case .ring(let ring): keyring = ring; current = .ready; return
         case .newer, .foreign: throw TypedTextError.cannotSetUp(current)
         case .missing, .damaged: break
         }
         let ring = TypedKeyring(keys: [:], mac: Self.fresh(), store: boundStore)
+        Self.wrote(); ahead = nil
         do { try keyStore.save(try Self.encode(ring)) } catch { throw TypedTextError.cannotSetUp(current) }
         keyring = ring; current = .ready
     }
@@ -306,7 +352,10 @@ public final class TypedTextVault {
     func seal(_ text: String, id: String, epoch: String) throws -> Data {
         lock.lock(); defer { lock.unlock() }
         guard current == .ready, keyring != nil else { throw TypedTextError.typingLocked(current) }
-        var ring = try latest()
+        var ring: TypedKeyring
+        if let data = takeAhead(now: DispatchTime.now().uptimeNanoseconds), case .ring(let early) = read(data), early.keys[epoch] != nil {
+            keyring = early; ring = early
+        } else { ring = try latest() }
         if ring.keys[epoch] == nil {
             ring.keys[epoch] = Self.fresh()
             if ring.store == nil { ring.store = boundStore }
@@ -324,7 +373,7 @@ public final class TypedTextVault {
     func open(_ sealed: Data, id: String, epoch: String) throws -> String {
         lock.lock(); defer { lock.unlock() }
         guard current == .ready, var ring = keyring else { throw TypedTextError.typingLocked(current) }
-        if ring.keys[epoch] == nil, let stored = try? keyStore?.load(), case .ring(let fresh) = read(stored) { keyring = fresh; ring = fresh }
+        if ring.keys[epoch] == nil, let keyStore, let stored = try? load(keyStore), case .ring(let fresh) = read(stored) { keyring = fresh; ring = fresh }
         guard let raw = ring.keys[epoch].flatMap({ Data(base64Encoded: $0) }),
               let box = try? AES.GCM.SealedBox(combined: sealed),
               let plain = try? AES.GCM.open(box, using: SymmetricKey(data: raw), authenticating: Self.aad(id: id, epoch: epoch)),
@@ -348,6 +397,7 @@ public final class TypedTextVault {
     func destroy() throws {
         lock.lock(); defer { lock.unlock() }
         guard let keyStore else { throw TypedTextError.cannotSetUp(current) }
+        Self.wrote(); ahead = nil
         try keyStore.delete()
         keyring = nil; current = .notSetUp
     }

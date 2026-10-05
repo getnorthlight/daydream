@@ -76,6 +76,7 @@ final class CarbonTypingHotkeyRegistrar: TypingHotkeyRegistrar {
     private var handler: (() -> Void)?
 
     func register(keyCode: UInt32, modifiers: UInt32, handler: @escaping () -> Void) -> TypingHotkeyRegistration {
+        MainQueue.require()   // claude/crashguard-015: Carbon's event target is the main queue's
         unregister()
         self.handler = handler
         var pressed = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
@@ -103,6 +104,7 @@ final class CarbonTypingHotkeyRegistrar: TypingHotkeyRegistrar {
     }
 
     func unregister() {
+        MainQueue.require()
         TypingHotkey.clearPresses()
         if let hotKey { UnregisterEventHotKey(hotKey) }
         if let eventHandler { RemoveEventHandler(eventHandler) }

@@ -39,6 +39,20 @@ public enum FocusListLayout {
         sections.flatMap { sessions($0.moments, sectionID: $0.id).compactMap { FocusAppCard.members($0).first } }
     }
 
+    /// perf2-1005: the card each moment draws in, by the card's identity in its section's lazy rows (`TimelineSession.id`,
+    /// what `FocusListRowsCard`'s `ForEach` is keyed by). A card far from view has no frame until the list scrolls near it,
+    /// so a reveal scrolls to its card by this id first (a lazy stack finds a row by its `ForEach` id without building it).
+    public static func cardIDs(_ sections: [FocusListSection]) -> [String: String] {
+        var cards: [String: String] = [:]
+        for section in sections {
+            for session in sessions(section.moments, sectionID: section.id) {
+                for m in session.members where cards[m.id] == nil { cards[m.id] = session.id }
+                cards[session.id] = session.id
+            }
+        }
+        return cards
+    }
+
     /// One app per existing bracket is a display container only; each saved moment keeps its own identity and details.
     public static func sessions(_ moments: [MomentSlice], sectionID: String = "") -> [TimelineSession<MomentSlice>] {
         TimelineSessionGrouping.group(moments.map { m in
@@ -172,7 +186,10 @@ struct FocusListRowsCard: View {
     @State private var layout = FocusListSessionCache()
 
     var body: some View {
-        VStack(spacing: 0) {
+        // perf2-1005 (owner 10/4, "clicking cards is glitchy"): lazy rows. Every card of a 276-moment day was a live view,
+        // and a click (select + expand) re-ran SwiftUI's update over all of them (~120 ms a click); now only the cards near
+        // the visible area exist. Collapsed rows are a fixed 52 pt, so the unbuilt rows' estimated height is exact.
+        LazyVStack(spacing: 0) {
             if let paused { paused.padding(.horizontal, 6).padding(.vertical, 4) }
             let sessions = layout.sessions(moments, sectionID: sectionID)
             ForEach(Array(sessions.enumerated()), id: \.element.id) { i, session in
@@ -444,7 +461,9 @@ struct FocusAppCardHeader: View {
         let lit = hovered || (context.linked.map(ids.contains) ?? false)
         let updating = members.contains { context.updating.contains($0.id) }
         let range = FocusAppCard.latestTime(members, timeZone: context.timeZone) + (updating ? " · " + MomentSubtitle.updating : "")
-        let line = expanded ? "" : FocusAppCard.collapsedLine(members)
+        // claude/perf3-1005: made once per draw (the accessibility label below used to make it again).
+        let collapsed = FocusAppCard.collapsedLine(members)
+        let line = expanded ? "" : collapsed
         let items = context.items(anchor)
         return Button { context.toggle(target) } label: {
             // Owner 10/2 (final): the icon, the title with the newest summary line under it, the range on the right.
@@ -483,7 +502,7 @@ struct FocusAppCardHeader: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityIdentifier("focus-list-row")
-        .accessibilityLabel(FocusAppCard.accessibilityLabel(members, timeZone: context.timeZone))
+        .accessibilityLabel(FocusAppCard.accessibilityLabel(members, timeZone: context.timeZone, line: collapsed))
         .accessibilityValue(FocusListLayout.rowAccessibilityValue(expanded: expanded))
         .accessibilityHint(expanded ? "Collapses the card" : "Expands the card")
         .accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)

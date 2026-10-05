@@ -2,7 +2,7 @@ import Foundation
 
 /// claude/mcp-prompts-1003: what an AI app reads by default over MCP (`response_format: "concise"`): each tool's reply as
 /// short Markdown, written for the reading model. One line per item, local times with "Today"/"Yesterday", the id to
-/// pass on for more, "sent", "send key used" or "draft" in plain words, and a closing "Next:" line saying which call
+/// pass on for more, never a send state, and a closing "Next:" line saying which call
 /// answers the obvious follow-up. `response_format: "detailed"` returns the JSON reply exactly as before.
 ///
 /// Privacy: built only from the JSON reply the same call returns in detailed form, so concise never says more than
@@ -26,6 +26,8 @@ public enum AssistantMarkdown {
     /// The concise reply for `tool`, from its detailed `body`. Falls back to `body` when it isn't a reply this knows.
     public static func render(tool: String, body: String, now: Date = Date(), zone: TimeZone = .current) -> String {
         let clock = Clock(now: now, zone: zone)
+        // agent-tools v2 (owner rule): no send state in any reply, whoever built the body.
+        let body = AgentLegacyFilter.clean(body)
         if tool == "read", body.trimmingCharacters(in: .whitespacesAndNewlines) == "null" { return notFound }
         guard let data = body.data(using: .utf8), let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return body }
         var lines: [String]
@@ -119,9 +121,8 @@ public enum AssistantMarkdown {
     static func stateLabel(_ state: String?, to: String? = nil) -> String? {
         let target = to.map { " to \($0)" } ?? ""
         switch state ?? "" {
-        case "sent": return "sent\(target) (confirmed)"
-        case "submitted": return "send key used\(target); delivery not confirmed"
-        case "draft", "typed", "drafted_request": return "draft\(to.map { " in \($0)" } ?? ""), not sent"
+        // agent-tools v2 (owner rule): never whether a message was sent or is a draft; only where it was typed.
+        case "", "sent", "submitted", "draft", "typed", "drafted_request": return to.map { "conversation: \($0)" }
         case "requested": return "asked\(target)"
         case "reported": return "reported, not verified"
         case "planned": return "a stated plan"
@@ -266,7 +267,8 @@ public enum AssistantMarkdown {
             let kind = s(a["kind"]) ?? ""
             var line = "- \(c.time(s(a["when"]) ?? "")) \u{00B7} \(place)"
             if kind == "typed" {
-                line += " \u{00B7} typed" + (stateLabel(s(a["state"]), to: to).map { ", \($0)" } ?? "")
+                let label = stateLabel(s(a["state"]), to: to)
+                line += label?.hasPrefix("typed") == true ? " \u{00B7} " + label! : " \u{00B7} typed" + (label.map { ", \($0)" } ?? "")
                 lines.append(line)
                 if let words = s(a["typed_text"]) { lines.append("   " + quote(words, max: 1200)) }
                 else if let typed = s(a["typed"]) { lines.append("   " + one(typed)) }
@@ -280,7 +282,7 @@ public enum AssistantMarkdown {
         }
         if let note = s(o["typing_note"]) { lines.append(note) }
         if actions.contains(where: { $0["typed_text"] != nil }) {
-            lines.append("Typed words are the person's own; a draft was not sent. Quote only what the question needs.")
+            lines.append("Typed words are the person's own. Quote only what the question needs.")
         }
         var next: [String] = []
         if let after = s(o["next"]) { next.append("more of this moment with the same id and after \(code(after))") }
@@ -449,7 +451,7 @@ public enum AssistantMarkdown {
         if let earlier = o["earlier_days_not_shown"] as? Int, earlier > 0 { lines.append("(\(earlier) earlier days not shown; ask for a shorter range.)") }
         if let about = s(o["about"]) { lines.append(about) }
         if let present = s(o["present"]) { lines.append("How to answer: " + present) }
-        lines.append("Next: search for one thing named here; moment_details for exact words or who it was sent to.")
+        lines.append("Next: search for one thing named here; moment_details for exact words and where they were typed.")
         return lines
     }
 }

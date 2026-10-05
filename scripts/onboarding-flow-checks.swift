@@ -114,14 +114,14 @@ import Foundation
         check(Row.shown(release: true, installed: true, chromeExcluded: false, answered: true, reading: false, latched: true)
               && Row.shown(release: true, installed: true, chromeExcluded: false, answered: false, reading: true, latched: true),
               "Chrome row: once shown it stays, showing its answer (or macOS asking)")
-        check(Row.holdsPage(shown: true, pressed: false, answered: false) && !Row.holdsPage(shown: true, pressed: true, answered: false)
-              && !Row.holdsPage(shown: true, pressed: false, answered: true) && !Row.holdsPage(shown: false, pressed: false, answered: false),
-              "Chrome row: the page waits for it only before its press or an answer")
+        // chromeask-1005: also while macOS asks and once refused (the row says where the switch is); only Allowed moves on.
+        check(Row.holdsPage(shown: true, allowed: false) && !Row.holdsPage(shown: true, allowed: true) && !Row.holdsPage(shown: false, allowed: false),
+              "Chrome row: the page waits for it until Chrome is allowed (before the press, while macOS asks, once refused)")
         var held = DaydreamOnboardingRoute()
         held.permissionsChanged(accessibility: true, inputMonitoring: true, waitsForChrome: true)
         check(held.page == .permissions, "both permissions allowed while the Chrome row waits: the page stays (Continue moves on)")
         held.permissionsChanged(accessibility: true, inputMonitoring: true)
-        check(held.page == .summaries, "the Chrome row answered or pressed: the page moves on by itself")
+        check(held.page == .summaries, "the Chrome row allowed: the page moves on by itself")
         var card = DaydreamOnboardingRoute(afterPermissions: .review, advances: false)
         card.permissionsChanged(accessibility: true, inputMonitoring: true)
         check(card.page == .permissions, "the upgrade's Chrome card never moves on by itself")

@@ -82,7 +82,9 @@ class MCPUpdate(unittest.TestCase):
         grant = subprocess.run([str(self.exe), '--home', str(self.home), '--client', 'claude-desktop', '--recipient', 'daydream-connect', 'grant'],
                                capture_output=True, text=True, env=env, timeout=60)
         self.assertEqual(grant.returncode, 0, grant.stderr)
-        self.env = dict(env, MAC_MEM_CAPABILITY=json.loads(grant.stdout)['capability'])
+        # agent-tools v2: these checks pin the 0.1.4 tools' replies (DAYDREAM_MCP_TOOLSET=legacy); the v2 update note is
+        # test_v2_carried_on_from_the_0_1_4_list.
+        self.env = dict(env, MAC_MEM_CAPABILITY=json.loads(grant.stdout)['capability'], DAYDREAM_MCP_TOOLSET='legacy')
         self.servers = []
 
     def tearDown(self):
@@ -307,6 +309,25 @@ class MCPUpdate(unittest.TestCase):
         self.assertEqual(server.notifications, ['notifications/tools/list_changed'])
         self.assertIn('may be out of date', first)
         self.assertIn('recap, moment_details', first)
+
+    def test_v2_carried_on_from_the_0_1_4_list(self):
+        # agent-tools v2: a chat begun on 0.1.4 carries on as 0.1.5. Its old tools keep answering (unlisted) with no send
+        # state; the note names the new tools it lacks, without pointing at Next lines.
+        env = {k: v for k, v in self.env.items() if k != 'DAYDREAM_MCP_TOOLSET'}
+        server = Server(self.exe, self.home, dict(env, DAYDREAM_MCP_RENEWALS='1', DAYDREAM_MCP_PROTOCOL='2025-06-18',
+                                                   DAYDREAM_MCP_LISTED='0123456789abcdef:' + self.OLDER + ',recap,moment_details'))
+        self.servers.append(server)
+        first = self.text(server.ask('tools/call', {'name': 'status'}))
+        self.assertEqual(server.notifications, ['notifications/tools/list_changed'])
+        self.assertTrue(first.startswith('Note: ' + self.STALE), first)
+        self.assertIn('without timeline, details', first)
+        self.assertIn('still work', first)
+        self.assertNotIn('Next line', first.splitlines()[0])
+        old = server.ask('tools/call', {'name': 'recap', 'arguments': {'when': 'today'}})
+        self.assertIn('result', old)
+        self.assertNotIn('not sent', self.text(old))
+        self.assertEqual([t['name'] for t in server.ask('tools/list')['result']['tools']], ['timeline', 'search', 'details', 'status'])
+        self.assertNotIn(self.STALE, self.text(server.ask('tools/call', {'name': 'timeline'})), 'once the AI app has the new list, no note')
 
     def test_carried_on_with_the_same_list_says_nothing(self):
         server = self.start()

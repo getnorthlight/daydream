@@ -424,7 +424,10 @@ final class Hold: @unchecked Sendable {
         let memory = try await existingHistory("busy-intent")
         let hold = Hold(memory.appendingPathComponent("memory.sqlite").path, seconds: 3)
         let o = try await open("busy-intent", home: memory, intent: ["recording": true], settle: false)
-        check(!o.model.recording && calm(o) && pausedReason(o) == RecordingCopy.savingRetry, "ADV-8",
+        // wal-1005: in SQLite's write-ahead log (the app's history now) another connection's save never holds a read up:
+        // the history opens, and only its saves wait. Recording starts once the file is free (below), nothing said.
+        let wal = HistoryJournal.onDisk(memory.appendingPathComponent("memory.sqlite").path) == .wal
+        check(!o.model.recording && calm(o) && (wal || pausedReason(o) == RecordingCopy.savingRetry), "ADV-8",
               "a history held as DayDream opens (recording was on): the calm \"\(RecordingCopy.savingRetry)\" pause, not storage attention: \(describe(o)), menu \(header(o).status.text)")
         check(o.notices.posted.isEmpty && (intent(o.defaults)?["recording"] as? Bool) == true, "ADV-8",
               "…nothing is said, and the launch intent is kept: \(String(describing: intent(o.defaults)))")
@@ -458,7 +461,9 @@ final class Hold: @unchecked Sendable {
         let hold = Hold(memory.appendingPathComponent("memory.sqlite").path, seconds: 4)
         let o = try await open("busy-start", home: memory, settle: false)
         o.model.requestStart(openSetup: {})
-        check(!o.model.recording && calm(o) && o.model.setupRequest == nil, "ADV-8",
+        // wal-1005: in WAL the open isn't held up by the other connection (only saves wait), so Start may already record.
+        let wal = HistoryJournal.onDisk(memory.appendingPathComponent("memory.sqlite").path) == .wal
+        check((wal || !o.model.recording) && calm(o) && o.model.setupRequest == nil, "ADV-8",
               "Start while the history is still held: nothing about storage, no setup: \(describe(o))")
         try await hold.waitReleased(6)
         _ = try await waitFor(10) { o.model.recording }
@@ -722,7 +727,9 @@ final class Hold: @unchecked Sendable {
         model.noticeCenter = notices.center
         model.wakeSystem = wake.system
         let o = Opened(model: model, notices: notices, wake: wake, home: memory, defaults: d)
-        check(!model.recording && model.historyStoreID == nil && calm(o) && pausedReason(o) == RecordingCopy.savingRetry, "prepared-busy",
+        // wal-1005: in WAL the model's open isn't held up by the other connection's save (only its own saves wait).
+        let wal = HistoryJournal.onDisk(memory.appendingPathComponent("memory.sqlite").path) == .wal
+        check(!model.recording && calm(o) && (wal || (model.historyStoreID == nil && pausedReason(o) == RecordingCopy.savingRetry)), "prepared-busy",
               "launch prepared the history and the model's open met a busy file: the calm \"\(RecordingCopy.savingRetry)\" pause: \(describe(o))")
         try await hold.waitReleased(5)
         _ = try await waitFor(10) { model.recording }

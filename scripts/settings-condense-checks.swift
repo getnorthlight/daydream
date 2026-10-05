@@ -38,7 +38,7 @@ import SwiftUI
         AIReadsTypedSetting.set(true, defaults)
         require(AIReadsTypedSetting.isOn(defaults), "turned on again: on")
         require(AIReadsTypedSetting.title == "Let AI apps read what you typed", "title")
-        require(AIReadsTypedSetting.line == "ChatGPT, Claude and other connected apps can search and read your typed words. Passwords are never shared.",
+        require(AIReadsTypedSetting.line == "AI apps you connect can see what you type, minus passwords and codes.",
                 "one short line")
         let cards = source("Sources/MemoryUI/PermissionSetup.swift")
         guard let chrome = cards.range(of: "if let chromeRow { chromeCard(chromeRow) }"),

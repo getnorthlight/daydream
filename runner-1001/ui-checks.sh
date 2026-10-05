@@ -33,6 +33,8 @@ APPCHECKS="settings-hub-checks dd-menubar-checks dd-app-menu-checks dd-app-model
 [ -f scripts/setup-upgrade-checks.swift ] && APPCHECKS="$APPCHECKS setup-upgrade-checks"
 [ -f scripts/onboarding-screen-checks.swift ] && grep -q '^// DD-RECIPE: APP' scripts/onboarding-screen-checks.swift && APPCHECKS="$APPCHECKS onboarding-screen-checks"
 [ -f scripts/dd-first-launch-checks.swift ] && APPCHECKS="$APPCHECKS dd-first-launch-checks"
+# chromeask-1005: macOS's Chrome question, every path (fake Chrome; renders to DD_CHECK_OUT/chrome-ask-shots).
+[ -f scripts/chrome-ask-checks.swift ] && APPCHECKS="$APPCHECKS chrome-ask-checks"
 for check in $APPCHECKS; do
   src=$(uicheck $check)
   step compile-$check swiftc "${UIFLAGS[@]}" -F "$B" -framework Sparkle -Xlinker -rpath -Xlinker "$B" \

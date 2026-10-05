@@ -121,8 +121,8 @@ private func event(_ id: String, _ kind: String, _ s: Double, title: String = ""
         check(p2?.detail == "Ghostty · Asked Claude Code" && p2?.actionIDs.contains("p2-return") == true,
               "a piece sealed before its Return (17 s later) is sent by that Return", p2?.detail ?? "nil")
         let p3 = prompts.first { $0.actionIDs.contains("p3a") }
-        check(p3?.detail == "Ghostty · Typed, not sent" && p3?.typed.first?.text == "And one more question I have not sent",
-              "a line never followed by Return reads \"Typed, not sent\" with its words", p3?.detail ?? "nil")
+        check(p3?.detail == "Ghostty · Typed" && p3?.typed.first?.text == "And one more question I have not sent",
+              "a line never followed by Return reads \"Typed\" with its words, never not sent", p3?.detail ?? "nil")
         let p4 = prompts.first { $0.actionIDs.contains("p4") }
         check(p4?.typed.first?.text == long.trimmingCharacters(in: .whitespaces) && p4?.actionIDs.contains("p4-return") == true,
               "the long prompt shows whole, with its Return folded in")

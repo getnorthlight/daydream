@@ -21,8 +21,8 @@ import MemoryCore
         var faults = 0, healthy = 0, states = 0
     }
 
-    static func coordinator(_ root: URL, _ name: String) throws -> (MemoryStore, Coordinator, Probe) {
-        let store = try MemoryStore(home: root.appendingPathComponent(name), writable: true, automaticallySyncSearch: false)
+    static func coordinator(_ root: URL, _ name: String, live: Bool = false) throws -> (MemoryStore, Coordinator, Probe) {
+        let store = try MemoryStore(home: root.appendingPathComponent(name), writable: true, automaticallySyncSearch: false, liveHistory: live)
         let coordinator = try Coordinator(store: store, permissions: { true }) {}
         let probe = Probe()
         coordinator.onStorageFault = { probe.faults += 1 }
@@ -101,31 +101,37 @@ import MemoryCore
         // gold r3-store: a heartbeat waits a moment at most on the main thread (it used to wait the 1.5 s busy timeout),
         // and one held up that way counts as a failed heartbeat once per 1.5 s held: two such keep recording, the third
         // pauses, at the same time held as before (0, 1.5, 3 s held keep recording; 4.5 s pauses).
-        (store, c, probe) = try coordinator(root, "heartbeat")
-        var heldClock = Date()
-        c.now = { heldClock }
-        try c.start()
-        var other: OpaquePointer?
-        guard sqlite3_open_v2(store.home.appendingPathComponent("memory.sqlite").path, &other, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK, let other else {
-            return check(false, "a second connection opens")
+        // int-015 (wal-1005 + perf3-1005 0bfe833): the same held-writer pause, in the rollback journal and in WAL (the app's
+        // own history): another connection's write lock still pauses recording at 4.5 s held.
+        for wal in [false, true] {
+            (store, c, probe) = try coordinator(root, wal ? "heartbeat-wal" : "heartbeat", live: wal)
+            let lane = wal ? " (WAL history)" : ""
+            if wal { check(HistoryJournal.onDisk(store.home.appendingPathComponent("memory.sqlite").path) == .wal, "int-015: the app's own new history is WAL") }
+            var heldClock = Date()
+            c.now = { heldClock }
+            try c.start()
+            var other: OpaquePointer?
+            guard sqlite3_open_v2(store.home.appendingPathComponent("memory.sqlite").path, &other, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK, let other else {
+                return check(false, "a second connection opens\(lane)")
+            }
+            defer { sqlite3_close(other) }
+            check(sqlite3_exec(other, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK, "a second connection holds the write lock\(lane)")
+            let heldStarted = Date()
+            c.reconcileResume()
+            heldClock += 1.5; c.reconcileResume()
+            heldClock += 1.5; c.reconcileResume()
+            check(Date().timeIntervalSince(heldStarted) < 0.5, "three held heartbeats wait a moment each at most (\(Int(Date().timeIntervalSince(heldStarted) * 1000)) ms in all)\(lane)")
+            check(c.isRunning && probe.faults == 0, "two busy heartbeats (3 s held) keep recording\(lane)")
+            heldClock += 1.5; c.reconcileResume()
+            // The pause itself can't be saved while the file is held (the session keeps it in memory); the app shows its
+            // retry line whatever the session could write.
+            check(!c.isRunning && c.session.state != "recording" && probe.faults == 1, "the third (4.5 s held) pauses for a retry\(lane)")
+            check(sqlite3_exec(other, "COMMIT", nil, nil, nil) == SQLITE_OK, "the second connection lets go\(lane)")
+            try c.start()
+            c.reconcileResume()
+            check(c.isRunning && probe.healthy == 1, "once the file is free, recording starts and the heartbeat says saving works again\(lane)")
+            c.pause("Paused by you")
         }
-        defer { sqlite3_close(other) }
-        check(sqlite3_exec(other, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK, "a second connection holds the write lock")
-        let heldStarted = Date()
-        c.reconcileResume()
-        heldClock += 1.5; c.reconcileResume()
-        heldClock += 1.5; c.reconcileResume()
-        check(Date().timeIntervalSince(heldStarted) < 0.5, "three held heartbeats wait a moment each at most (\(Int(Date().timeIntervalSince(heldStarted) * 1000)) ms in all)")
-        check(c.isRunning && probe.faults == 0, "two busy heartbeats (3 s held) keep recording")
-        heldClock += 1.5; c.reconcileResume()
-        // The pause itself can't be saved while the file is held (the session keeps it in memory); the app shows its
-        // retry line whatever the session could write.
-        check(!c.isRunning && c.session.state != "recording" && probe.faults == 1, "the third (4.5 s held) pauses for a retry")
-        check(sqlite3_exec(other, "COMMIT", nil, nil, nil) == SQLITE_OK, "the second connection lets go")
-        try c.start()
-        c.reconcileResume()
-        check(c.isRunning && probe.healthy == 1, "once the file is free, recording starts and the heartbeat says saving works again")
-        c.pause("Paused by you")
 
         // A recorder that stops tells the app once, so it is never taken for live again (a later lock would otherwise
         // write "Resumes after unlock" over why it stopped). Never started here: no event tap.

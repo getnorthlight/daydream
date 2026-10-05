@@ -187,7 +187,7 @@ struct Scenario {
     /// fix/sx-all round 3: things the person does to the store mid-day (Forget a range), at their times.
     var hooks: [(at: Date, run: (MemoryStore, Date) throws -> Void)] = []
 }
-struct HourRow: Codable { var hour: String; var runs = 0; var ordinaryRuns = 0; var liveRuns = 0; var finalRuns = 0; var mcpRuns = 0; var catchUpRuns = 0; var ordinaryTimerPasses = 0; var loads = 0; var passes = 0; var timerPasses = 0; var onDemand = 0; var catchUp = 0; var modelSeconds = 0.0 }
+struct HourRow: Codable { var hour: String; var runs = 0; var ordinaryRuns = 0; var liveRuns = 0; var serviceRuns = 0; var staleTurns = 0; var finalRuns = 0; var mcpRuns = 0; var catchUpRuns = 0; var ordinaryTimerPasses = 0; var loads = 0; var passes = 0; var timerPasses = 0; var onDemand = 0; var catchUp = 0; var modelSeconds = 0.0 }
 struct Result: Codable {
     var scenario: String
     var events: Int
@@ -212,7 +212,7 @@ struct Result: Codable {
     // All original totals remain measured. Only independently proved mandatory work is separated.
     var ordinaryRewrites = 0, maxNonMandatoryRunsPerMoment = 0
     var maxMCPRunsPerBatch = 0, mcpBatchStarts: [Date] = []
-    var liveRuns = 0, finalRuns = 0, ordinaryRuns = 0, mcpRuns = 0, pastRuns = 0
+    var liveRuns = 0, serviceRuns = 0, staleTurns = 0, finalRuns = 0, ordinaryRuns = 0, mcpRuns = 0, pastRuns = 0
     var evidenceErrors: [String] = []
 }
 
@@ -220,7 +220,7 @@ struct Result: Codable {
 /// never acquires the scheduler's lock, and never trusts a product "run reason" label.
 /// Literal contract times intentionally make a production cadence change require review.
 @MainActor final class CadenceEvidence {
-    enum Role: Equatable { case ordinary, live, final, mcp, catchUp }
+    enum Role: Equatable { case ordinary, live, service, final, mcp, catchUp }
     struct Ledger: Decodable {
         let version: Int; let written: [String: WrittenMark]; let entries: [ScheduledWriterState]
         enum CodingKeys: String, CodingKey { case version, written, entries }
@@ -239,13 +239,27 @@ struct Result: Codable {
         let item: ScheduledWriterTarget, activity: ActivityNote
         let start: Date, end: Date, closeAt: Date, closed: Bool, nonempty: Bool, newTyped: Bool
         let mark: WrittenMark?
+        /// The moment showed a current note when the operation began.
+        var ready: Bool { activity.status == "ready" }
         var liveDue: Date { max(start.addingTimeInterval(600), mark?.at.addingTimeInterval(600) ?? start.addingTimeInterval(600)) }
         var liveEligible: Bool { !closed && nonempty && activity.actionIDs.count <= 400 }
         var finalEligible: Bool { closed && nonempty && activity.actionIDs.count <= 400 && mark?.provisional == true }
+        /// 03beb17 first-note service: an open moment with no current note is due a provisional note three minutes after
+        /// its last action (five-minute service deadline less two minutes of generation reserve), before it closes.
+        var serviceDue: Date { end.addingTimeInterval(180) }
+        var serviceEligible: Bool { !closed && nonempty && !ready }
     }
     struct View { let at: Date; let facts: [String: Fact]; let ledger: Ledger }
     struct Run {
         let item: ScheduledWriterTarget, role: Role, started: Date, ended: Date, fact: Fact
+    }
+    /// 03beb17's first-note service queues an OPEN moment. When a hold (power, the load budget) keeps its batch from
+    /// running and the person carries on in the moment, the queued entry is at a revision core no longer has, and the
+    /// pass does not route the moment again until it is due again. At its turn the writer finds the entry stale
+    /// (`WriterQueueSource.isCurrent`), runs nothing and drops it; `onNoteRun` still reports the turn. Not an attempt:
+    /// `staleErrors` and `staleAfterErrors` prove nothing ran and nothing was written.
+    struct StaleTurn {
+        let item: ScheduledWriterTarget, started: Date, ended: Date, fact: Fact
     }
     struct Armed {
         let at: Date, armedAt: Date
@@ -256,6 +270,7 @@ struct Result: Codable {
     let store: MemoryStore, days: [String], today: String
     var view: View?, activeMCP = false, nextAttempt = Date.distantPast
     var runs: [Run] = [], pending: [Run] = [], errors: [String] = []
+    var staleTurns: [StaleTurn] = [], pendingStale: [StaleTurn] = []
     var ordinaryRewrites = 0, nonMandatory: [String: Int] = [:]
     var mcpBatchSizes: [Int] = [], mcpBatchStarts: [Date] = []
     var ordinaryTimers: [Date] = [], lastTimer = Date.distantPast, armed: Armed?
@@ -300,7 +315,7 @@ struct Result: Codable {
     func begin(at: Date, idle: TimeInterval, mcp: Bool, timer: Bool) throws {
         // This driver has no lock/sleep events. Its only early close is independently simulated idle.
         closing = !mcp && idle>=300 ? at.addingTimeInterval(-idle+1) : nil
-        view=try snapshot(at:at,closing:closing);activeMCP=mcp;nextAttempt=at;pending=[];servedRequired=0
+        view=try snapshot(at:at,closing:closing);activeMCP=mcp;nextAttempt=at;pending=[];pendingStale=[];servedRequired=0
         if timer {
             errors+=Self.timerErrors(armed:armed,at:at,lastTimer:lastTimer)
             if armed?.shortDeadline != true { ordinaryTimers.append(at) }
@@ -318,11 +333,19 @@ struct Result: Codable {
         if mcp { return .mcp }
         if item.day != today { return .catchUp }
         if fact.liveEligible && fact.liveDue<=view.at { return .live }
+        if fact.serviceEligible && fact.serviceDue<=view.at { return .service }
         if fact.finalEligible { return .final }
         return .ordinary
     }
     func note(_ item: ScheduledWriterTarget, at: Date) {
-        guard let view,let fact=view.facts[item.key],let role=Self.role(item,view:view,mcp:activeMCP,today:today) else { errors.append("unknown/stale run facts for \(item.key)");return }
+        guard let view,let fact=view.facts[item.key] else { errors.append("unknown run facts for \(item.key)");return }
+        if fact.item != item {
+            let turn=StaleTurn(item:item,started:nextAttempt,ended:at,fact:fact)
+            errors+=Self.staleErrors(turn,view:view,mcp:activeMCP,today:today,seen:staleTurns)
+            nextAttempt=at;pendingStale.append(turn);staleTurns.append(turn)
+            return
+        }
+        guard let role=Self.role(item,view:view,mcp:activeMCP,today:today) else { errors.append("unknown/stale run facts for \(item.key)");return }
         if role == .live || role == .final { servedRequired+=1 }
         if pending.contains(where:{$0.item.key==item.key}) { errors.append("duplicate run in one operation: \(item.key)") }
         if role == .ordinary {
@@ -340,11 +363,37 @@ struct Result: Codable {
                 if !changed && !fact.newTyped && !((grew || longer) && writes<3) { errors.append("ordinary rewrite lacks growth, new typed evidence, or revision change: \(item.key)") }
             }
         }
-        if role == .ordinary || role == .mcp { nonMandatory[item.key,default:0]+=1 }
+        if role == .ordinary || role == .service || role == .mcp { nonMandatory[item.key,default:0]+=1 }
         let run=Run(item:item,role:role,started:nextAttempt,ended:at,fact:fact)
         // Only FakeModel.load/generate advance this clock during a driver operation.
         // beginBatch and all scheduler/core work leave it unchanged between note callbacks.
         nextAttempt=at;pending.append(run);runs.append(run)
+    }
+    /// A stale turn, judged from what was true when the operation began.
+    static func staleErrors(_ turn: StaleTurn, view: View, mcp: Bool, today: String, seen: [StaleTurn]) -> [String] {
+        var errors: [String]=[]
+        let key=turn.item.key,fact=turn.fact
+        // The same moment at another revision: it changed after the entry was queued.
+        if fact.item.key != key || (fact.item.inputRevision==turn.item.inputRevision && fact.item.policyRevision==turn.item.policyRevision) { errors.append("stale turn at the moment's current revision: \(key)") }
+        // Queued before this operation began, at exactly that revision (never chosen and gone stale within it).
+        if !view.ledger.entries.contains(where:{ $0.item==turn.item && ($0.status == .queued || $0.status == .retry) }) { errors.append("stale turn was not queued before the operation: \(key)") }
+        // Only today's open moment that this pass does not route again keeps such an entry: a closed moment, or one due
+        // live or first-note work, is queued again at its current revision, which replaces the entry.
+        if mcp || turn.item.day != today || fact.closed || (fact.liveEligible && fact.liveDue<=view.at) || (fact.serviceEligible && fact.serviceDue<=view.at) {
+            errors.append("stale turn for a moment the operation routes at its current revision: \(key)")
+        }
+        // Only FakeModel.load/generate advance the clock: the turn took no time, so no model ran for it.
+        if turn.ended != turn.started { errors.append("stale turn used the model: \(key)") }
+        if seen.contains(where:{ $0.item==turn.item }) { errors.append("stale entry had more than one turn: \(key)") }
+        return errors
+    }
+    /// And from the ledger afterwards: the entry is gone and the moment's written mark is as it was.
+    static func staleAfterErrors(_ turn: StaleTurn, before: Ledger, after: Ledger) -> [String] {
+        var errors: [String]=[]
+        let key=turn.item.key
+        if after.entries.contains(where:{ $0.item==turn.item }) { errors.append("stale entry was not dropped: \(key)") }
+        if after.written[key] != before.written[key] { errors.append("stale turn changed the written mark: \(key)") }
+        return errors
     }
     static func postErrors(_ run: Run, mark: WrittenMark?) -> [String] {
         var errors: [String]=[]
@@ -357,6 +406,8 @@ struct Result: Codable {
         switch run.role {
         case .live:
             if !mark.provisional || mark.at != run.started || run.started<run.fact.liveDue { errors.append("invalid live cadence mark: \(run.item.key)") }
+        case .service:
+            if !mark.provisional || run.started<run.fact.serviceDue { errors.append("invalid first-note service mark: \(run.item.key)") }
         case .final:
             if mark.provisional { errors.append("closure did not finalize provisional mark: \(run.item.key)") }
         case .ordinary,.catchUp:
@@ -366,17 +417,18 @@ struct Result: Codable {
         }
         return errors
     }
-    static func arm(current: View, before view: View, nextWake: Date, lastTimer: Date, servedRequired: Int, background: Bool, today: String) -> (Armed,[String]) {
+    static func arm(current: View, before view: View, nextWake: Date, lastTimer: Date, servedRequired: Int, ran: Int = 0, background: Bool, today: String) -> (Armed,[String]) {
         let at=current.at
         var errors: [String]=[]
         let floor=max(lastTimer.addingTimeInterval(300),view.at.addingTimeInterval(1))
         var keys=Set<String>()
         if background && nextWake<floor {
             // Independent future candidates are computed before another ingest can change them.
-            let candidates=current.facts.values.filter {$0.item.day==today && $0.liveEligible}.flatMap { fact -> [(Date,String)] in
+            let candidates=current.facts.values.filter {$0.item.day==today && ($0.liveEligible || $0.serviceEligible)}.flatMap { fact -> [(Date,String)] in
                 var values: [(Date,String)]=[]
-                if fact.liveDue>at { values.append((fact.liveDue,fact.item.key)) }
-                if fact.mark?.provisional==true && fact.closeAt>at { values.append((fact.closeAt,fact.item.key)) }
+                if fact.liveEligible && fact.liveDue>at { values.append((fact.liveDue,fact.item.key)) }
+                if fact.liveEligible && fact.mark?.provisional==true && fact.closeAt>at { values.append((fact.closeAt,fact.item.key)) }
+                if fact.serviceEligible && fact.serviceDue>at { values.append((fact.serviceDue,fact.item.key)) }
                 return values
             }
             let first=candidates.map(\.0).min()
@@ -388,6 +440,18 @@ struct Result: Codable {
                 let due=Set(current.facts.values.filter {$0.item.day==today && $0.liveEligible && $0.liveDue<=at}.map { $0.item.key })
                 let newlyDue=Set(view.facts.values.filter {$0.item.day==today && $0.liveEligible && $0.liveDue>view.at && $0.liveDue<=at}.map {$0.item.key})
                 keys.formUnion(due.intersection(newlyDue))
+                // 03beb17: first-note service that became due while fake inference ran (an open moment passing its
+                // three-minute mark, or a moment with no current note closing) continues on the next second.
+                let serviceNewly=current.facts.values.filter { fact in
+                    guard fact.item.day==today,fact.nonempty,!fact.ready,let before=view.facts[fact.item.key],!before.closed else { return false }
+                    return fact.closed || (fact.serviceEligible && fact.serviceDue<=at && before.serviceDue>view.at)
+                }
+                keys.formUnion(serviceNewly.map { $0.item.key })
+                // A full 12-note batch with first-note work still due (a backlog released by power) continues too.
+                if ran==12 {
+                    keys.formUnion(current.facts.values.filter {$0.item.day==today && $0.nonempty && !$0.ready &&
+                        ($0.closed || ($0.serviceEligible && $0.serviceDue<=at))}.map { $0.item.key })
+                }
                 if servedRequired==12 {
                     let queued=Set(current.ledger.entries.filter {
                         ($0.status == .queued || $0.status == .retry) && $0.nextAttempt<=at && current.facts[$0.item.key]?.item==$0.item
@@ -403,6 +467,7 @@ struct Result: Codable {
         let after=try ledger()
         for run in pending { errors+=Self.postErrors(run,mark:after.written[run.item.key]) }
         guard let view else { throw MemError.invalid("cadence oracle: finish without begin") }
+        for turn in pendingStale { errors+=Self.staleAfterErrors(turn,before:view.ledger,after:after) }
         if !activeMCP && background {
             let required=Set(view.facts.values.filter {$0.item.day==today && (($0.liveEligible && $0.liveDue<=view.at) || $0.finalEligible)}.map {$0.item.key})
             let served=Set(pending.filter {$0.role == .live || $0.role == .final}.map {$0.item.key})
@@ -417,7 +482,7 @@ struct Result: Codable {
         }
         guard let nextWake else { armed=nil;return }
         let current=try snapshot(at:at,closing:closing)
-        let proof=Self.arm(current:current,before:view,nextWake:nextWake,lastTimer:lastTimer,servedRequired:servedRequired,background:background,today:today)
+        let proof=Self.arm(current:current,before:view,nextWake:nextWake,lastTimer:lastTimer,servedRequired:servedRequired,ran:pending.count,background:background,today:today)
         armed=proof.0;errors+=proof.1
     }
 }
@@ -585,11 +650,13 @@ func run(_ scenario: Scenario, day rows: [[String: Any]], history: [[String: Any
         switch run.role {
         case .ordinary: hours[h]!.ordinaryRuns+=1
         case .live: hours[h]!.liveRuns+=1
+        case .service: hours[h]!.serviceRuns+=1
         case .final: hours[h]!.finalRuns+=1
         case .mcp: hours[h]!.mcpRuns+=1
         case .catchUp: hours[h]!.catchUpRuns+=1
         }
     }
+    for turn in evidence.staleTurns { hours[row(turn.ended)]!.staleTurns+=1 }
     for t in evidence.ordinaryTimers { hours[row(t),default:HourRow(hour:row(t))].ordinaryTimerPasses+=1 }
     for t in snap.loads { hours[row(t), default: HourRow(hour: row(t))].loads += 1; hours[row(t)]!.modelSeconds += 4 }
     for t in snap.answers { hours[row(t), default: HourRow(hour: row(t))].modelSeconds += 5 }
@@ -616,14 +683,16 @@ func run(_ scenario: Scenario, day rows: [[String: Any]], history: [[String: Any
     result.mcpBatchStarts=evidence.mcpBatchStarts
     result.ordinaryRuns=hours.values.map(\.ordinaryRuns).reduce(0,+)
     result.liveRuns=hours.values.map(\.liveRuns).reduce(0,+)
+    result.serviceRuns=hours.values.map(\.serviceRuns).reduce(0,+)
+    result.staleTurns=hours.values.map(\.staleTurns).reduce(0,+)
     result.finalRuns=hours.values.map(\.finalRuns).reduce(0,+)
     result.mcpRuns=hours.values.map(\.mcpRuns).reduce(0,+)
     result.pastRuns=hours.values.map(\.catchUpRuns).reduce(0,+)
     result.evidenceErrors=evidence.errors
-    if result.noteRuns != result.ordinaryRuns+result.liveRuns+result.finalRuns+result.mcpRuns+result.pastRuns || result.noteRuns != c.noteRuns { result.evidenceErrors.append("run partition/callbacks do not equal total attempts") }
+    if result.noteRuns != result.ordinaryRuns+result.liveRuns+result.serviceRuns+result.staleTurns+result.finalRuns+result.mcpRuns+result.pastRuns || result.noteRuns != c.noteRuns { result.evidenceErrors.append("run partition/callbacks do not equal total attempts") }
     if result.pastRuns != c.catchUpNotes || result.mcpBatchStarts.count != c.onDemandBatches { result.evidenceErrors.append("catch-up/MCP accounting mismatch") }
     if !result.evidenceErrors.isEmpty { throw MemError.invalid("cadence oracle: " + result.evidenceErrors.joined(separator:"; ")) }
-    print("    proved partition ordinary/live/final/MCP/catch-up: \(result.ordinaryRuns)/\(result.liveRuns)/\(result.finalRuns)/\(result.mcpRuns)/\(result.pastRuns); ordinary rewrites \(result.ordinaryRewrites)")
+    print("    proved partition ordinary/live/service/final/MCP/catch-up: \(result.ordinaryRuns)/\(result.liveRuns)/\(result.serviceRuns)/\(result.finalRuns)/\(result.mcpRuns)/\(result.pastRuns); ordinary rewrites \(result.ordinaryRewrites); stale turns (nothing ran) \(result.staleTurns)")
     print("  \(scenario.name): runs=\(result.noteRuns) loads=\(result.loads) modelSeconds=\(Int(result.modelSeconds)) batches=\(result.batches) onDemand=\(result.onDemandBatches)/skipped \(result.onDemandSkipped) passes=\(result.timerPasses)+\(result.eventPasses) levels=\(result.modelLevels)/\(result.codeLevels) moments=\(result.moments) maxRuns=\(result.maxRunsPerMoment) catchUp=\(result.catchUpNotes) \(result.catchUpBatches.map(\.count)) typed=\(typedKept)/\(typedRows) refused=\(refusedApps.sorted())")
     print("    hour runs loads passes(timer) onDemand: " + result.hours.map { "\($0.hour):\($0.runs)/\($0.loads)/\($0.passes)(\($0.timerPasses))/\($0.onDemand)" }.joined(separator: " "))
     return result
@@ -688,6 +757,9 @@ func scenario(_ name: String, day: Date) -> Scenario? {
         // fix/sx-all round 3 (P1): a closed moment pending again without growing a quarter is written once more, 15
         // minutes after its mark, so its block is never held for a day. A pull request read (a code note), Xcode, then 3
         // clicks back on the pull request (the moment rejoins); and Forget over part of a written moment.
+        // 03beb17 (first-note service): the 3 clicks leave the open pull request without a current note, so it gets a new
+        // provisional note three minutes after them, before its final note at closure: the rejoined moment is written 3
+        // times (provisional, provisional again, final), and Forget adds exactly one rewrite to that.
         let rejoinStart = ISO8601DateFormatter().date(from: "2026-09-21T16:00:00Z")!
         let rejoinDay = RejoinDay.make(start: rejoinStart)
         let rejoin = try await run(Scenario(name: "rejoin", power: { _ in .ac }, start: rejoinStart.addingTimeInterval(-60), end: rejoinStart.addingTimeInterval(3 * 3600)),
@@ -703,9 +775,9 @@ func scenario(_ name: String, day: Date) -> Scenario? {
                                                 _ = try store.executeDeletion(previewID: preview.id, confirmed: true, now: now)
                                             })]),
                                    day: rejoinDay, history: [], root: root)
-        check(forget.pendingClosed.isEmpty && forget.blocks >= 1 && forget.maxRunsPerMoment <= 3 && forget.maxRunsPerMoment >= 2,
-              "Forget: a written moment Forget shortened is written again once; nothing stays pending and its block is written",
-              "pending \(forget.pendingClosed), blocks \(forget.blocks), max runs \(forget.maxRunsPerMoment)")
+        check(forget.pendingClosed.isEmpty && forget.blocks >= 1 && forget.maxRunsPerMoment == rejoin.maxRunsPerMoment + 1 && forget.maxRunsPerMoment <= 4,
+              "Forget: a written moment Forget shortened is written again once (one run more than the same morning without Forget); nothing stays pending and its block is written",
+              "pending \(forget.pendingClosed), blocks \(forget.blocks), max runs \(forget.maxRunsPerMoment) (rejoin \(rejoin.maxRunsPerMoment))")
     }
     /// fix/sx-all round 3: an AI app asking 12 times an hour on power (CADENCE_ONLY_MCPAC runs only this).
     @MainActor static func mcpACCheck(root: URL, day: [[String: Any]], nine: Date) async throws {
@@ -772,6 +844,59 @@ func scenario(_ name: String, day: Date) -> Scenario? {
         check(full.1.isEmpty && full.0.shortDeadline,"oracle: bounded full mandatory batch plus matching due queue proves continuation")
         let unqueued=O.arm(current:view(due.addingTimeInterval(10)),before:view(due),nextWake:due.addingTimeInterval(11),lastTimer:due,servedRequired:12,background:true,today:day)
         check(!unqueued.1.isEmpty,"oracle: full batch without matching residual queue does not prove continuation")
+        // 03beb17 first-note service: an open moment with no current note, three minutes after its last action.
+        let young=end.addingTimeInterval(-10),serviceAt=end.addingTimeInterval(180)
+        let waiting=fact(activity,shiftedStart:young)
+        let serviceRun=O.Run(item:item,role:.service,started:serviceAt,ended:serviceAt.addingTimeInterval(10),fact:waiting)
+        var serviceMark=WrittenMark(actions:2,typed:0,at:serviceAt,provisional:true,end:end,revision:"input|policy|local",writes:1,writerRevision:WriterQueueSource.writerRevision)
+        check(O.role(item,view:view(serviceAt,waiting),mcp:false,today:day) == .service && O.postErrors(serviceRun,mark:serviceMark).isEmpty,
+              "oracle: first-note service accepted three minutes after an open moment's last action, with a provisional mark")
+        check(O.role(item,view:view(serviceAt.addingTimeInterval(-1),waiting),mcp:false,today:day) == .ordinary
+              && !O.postErrors(O.Run(item:item,role:.service,started:serviceAt.addingTimeInterval(-1),ended:serviceAt,fact:waiting),mark:serviceMark).isEmpty,
+              "oracle: a run before the three-minute mark gets no service role (an ordinary run of an open moment is an error)")
+        serviceMark.provisional=false
+        check(!O.postErrors(serviceRun,mark:serviceMark).isEmpty,"oracle: a first note of an open moment that is not provisional is rejected")
+        var noted=activity;noted.status="ready"
+        let current=fact(noted,shiftedStart:young)
+        check(!current.serviceEligible && O.role(item,view:view(serviceAt,current),mcp:false,today:day) == .ordinary
+              && !fact(activity,shiftedStart:young,closed:true).serviceEligible && !fact(activity,shiftedStart:young,nonempty:false).serviceEligible,
+              "oracle: a moment with a current note, a closed one and an empty one get no first-note service")
+        let quiet=view(end.addingTimeInterval(60),waiting),quietTimer=end.addingTimeInterval(50)
+        let serviceArmed=O.arm(current:quiet,before:quiet,nextWake:serviceAt,lastTimer:quietTimer,servedRequired:0,background:true,today:day)
+        check(serviceArmed.1.isEmpty && serviceArmed.0.shortDeadline && serviceArmed.0.keys==Set([item.key]),"oracle: a wake at the earliest first-note service time is a proved short deadline")
+        let serviceEarly=O.arm(current:quiet,before:quiet,nextWake:serviceAt.addingTimeInterval(-1),lastTimer:quietTimer,servedRequired:0,background:true,today:day)
+        let notedQuiet=view(end.addingTimeInterval(60),current)
+        let serviceNoted=O.arm(current:notedQuiet,before:notedQuiet,nextWake:serviceAt,lastTimer:quietTimer,servedRequired:0,background:true,today:day)
+        check(!serviceEarly.1.isEmpty && !serviceNoted.1.isEmpty,"oracle: a fabricated service wake, or one for a moment with a current note, fails arming proof")
+        let crossed=O.arm(current:view(serviceAt.addingTimeInterval(5),waiting),before:view(serviceAt.addingTimeInterval(-5),waiting),nextWake:serviceAt.addingTimeInterval(6),lastTimer:serviceAt.addingTimeInterval(-5),servedRequired:0,background:true,today:day)
+        let already=O.arm(current:view(serviceAt.addingTimeInterval(15),waiting),before:view(serviceAt.addingTimeInterval(5),waiting),nextWake:serviceAt.addingTimeInterval(16),lastTimer:serviceAt.addingTimeInterval(5),servedRequired:0,background:true,today:day)
+        check(crossed.1.isEmpty && crossed.0.shortDeadline && !already.1.isEmpty,
+              "oracle: a service time crossed during finite inference continues on the next second; one already due before an unfilled batch does not")
+        let backlog=O.arm(current:view(serviceAt.addingTimeInterval(15),waiting),before:view(serviceAt.addingTimeInterval(5),waiting),nextWake:serviceAt.addingTimeInterval(16),lastTimer:serviceAt.addingTimeInterval(5),servedRequired:0,ran:12,background:true,today:day)
+        check(backlog.1.isEmpty && backlog.0.shortDeadline,"oracle: a full 12-note batch with first-note work still due proves continuation")
+        // A stale turn: the entry queued for first-note service at "older", the open moment now at "input" and not due again.
+        let older=ScheduledWriterTarget(target:WriterTarget(kind:.activity,day:day,timezone:zone,activityID:activity.id),inputRevision:"older",policyRevision:"policy",lastActivity:end.addingTimeInterval(-60))
+        let olderQueued=ScheduledWriterState(item:older,status:.queued,attempts:0,nextAttempt:end)
+        let turnAt=end.addingTimeInterval(60)
+        let held=view(turnAt,waiting,entries:[olderQueued])
+        let turn=O.StaleTurn(item:older,started:turnAt,ended:turnAt,fact:waiting)
+        let gone=O.Ledger(version:1,written:[:],entries:[])
+        check(O.staleErrors(turn,view:held,mcp:false,today:day,seen:[]).isEmpty && O.staleAfterErrors(turn,before:held.ledger,after:gone).isEmpty,
+              "oracle: a stale turn is accepted when the entry was queued before, the open moment moved on and isn't due, nothing ran and the entry is dropped")
+        check(!O.staleErrors(O.StaleTurn(item:older,started:turnAt,ended:turnAt.addingTimeInterval(5),fact:waiting),view:held,mcp:false,today:day,seen:[]).isEmpty,
+              "oracle: a stale turn that took model time is rejected")
+        check(!O.staleErrors(turn,view:view(turnAt,waiting),mcp:false,today:day,seen:[]).isEmpty
+              && !O.staleErrors(O.StaleTurn(item:item,started:turnAt,ended:turnAt,fact:waiting),view:view(turnAt,waiting,entries:[queued]),mcp:false,today:day,seen:[]).isEmpty,
+              "oracle: a stale turn needs an entry queued before the operation, at a revision the moment no longer has")
+        let dueView=view(serviceAt,waiting,entries:[olderQueued]),closedFact=fact(activity,shiftedStart:young,closed:true)
+        check(!O.staleErrors(O.StaleTurn(item:older,started:serviceAt,ended:serviceAt,fact:waiting),view:dueView,mcp:false,today:day,seen:[]).isEmpty
+              && !O.staleErrors(O.StaleTurn(item:older,started:turnAt,ended:turnAt,fact:closedFact),view:view(turnAt,closedFact,entries:[olderQueued]),mcp:false,today:day,seen:[]).isEmpty
+              && !O.staleErrors(turn,view:held,mcp:true,today:day,seen:[]).isEmpty,
+              "oracle: a moment due first-note work, a closed one or an AI app's batch gets no stale turn (each is queued again at its current revision)")
+        let written=O.Ledger(version:1,written:[older.key:serviceMark],entries:[])
+        check(!O.staleAfterErrors(turn,before:held.ledger,after:O.Ledger(version:1,written:[:],entries:[olderQueued])).isEmpty
+              && !O.staleAfterErrors(turn,before:held.ledger,after:written).isEmpty && !O.staleErrors(turn,view:held,mcp:false,today:day,seen:[turn]).isEmpty,
+              "oracle: a stale entry left queued, a written mark changed by the turn, or a second turn of the same entry is rejected")
     }
     /// The acceptance, on a generated busy day (2026-09-20) and three days before it.
     @MainActor static func checks(root: URL) async throws {
@@ -836,6 +961,11 @@ func scenario(_ name: String, day: Date) -> Scenario? {
         let lowLoads = lowBattery.hours.filter { $0.hour < "19" }.map(\.loads).reduce(0, +)
         check(lowRuns == 0 && lowLoads == 0, "battery 15%: no model runs and no loads in the background", "\(lowRuns) runs, \(lowLoads) loads")
         check(lowBattery.hours.filter { $0.hour >= "19" }.map(\.runs).reduce(0, +) > 0, "battery 15%: what waited is written once the Mac is plugged in")
+        // 03beb17: a first note queued for an open moment while the low battery held its batch can go stale (the person
+        // carried on in the moment). Its turn runs nothing and drops it (`staleErrors`); with no hold nothing goes stale.
+        check(ac.staleTurns == 0 && battery.staleTurns == 0 && lowBattery.staleTurns <= 1 && lowBattery.hours.filter { $0.hour < "19" }.map(\.staleTurns).reduce(0, +) == 0,
+              "stale turns: none on power or at 80%; at 15% at most the one moment open at plug-in, where nothing runs for it",
+              "ac \(ac.staleTurns) battery \(battery.staleTurns) battery-low \(lowBattery.staleTurns)")
 
         let mcp = try await run(scenario("mcp", day: nine)!, day: day, history: [], root: root)
         let perHourOnDemand = perHour(mcp, \.onDemand)

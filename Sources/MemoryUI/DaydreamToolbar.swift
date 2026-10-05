@@ -420,6 +420,7 @@ extension CaptureActions {
         out.openRecall = { dismiss(); base.openRecall() }
         out.quit = base.quit
         out.retryIssue = { dismiss(); base.retryIssue() }
+        out.fixChrome = { dismiss(); base.fixChrome() }
         return out
     }
 }

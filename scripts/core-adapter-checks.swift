@@ -466,7 +466,7 @@ import BrowserBridge
         let commits=await once.calls
         // The owner build reads the Mail subject too, so its line may say what about ("Emailed Sam about Friday meeting.").
         let n7=saved.output.bullets.map(\.text).sorted()
-        check(n7.count==2 && n7[0]=="Drafted a message to Claude." && ["Emailed Sam.","Emailed Sam about Friday meeting."].contains(n7[1]) && commits==2,
+        check(n7.count==2 && n7[1]=="Wrote a message to Claude." && ["Emailed Sam.","Emailed Sam about Friday meeting."].contains(n7[0]) && commits==2,
               "summaries/v3 N7: after a copy refusal the adapter commits the note once more with code-written typing lines (\(saved.output.bullets.map(\.text)))")
     }
     static func typedLeaks(_ text:String) -> Bool {text.contains("quokkamarmalade") || text.contains("garden party")}

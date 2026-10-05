@@ -144,7 +144,9 @@ public struct MenuBarMenu: View {
             return Header(status: status, attention: attention,
                           control: .toggle(on: true, enabled: p.canStop), stateRow: .resume(enabled: p.canResume))
         case .needsPermission(let missing):
-            // perm-1004: the line names what is off and the button says what it turns on (`Turn on Accessibility`).
+            // perm-1004: the button says what it turns on (`Turn on Accessibility`, Accessibility first). int-015: the line
+            // beside it doesn't name it again (`Input Monitoring is off` beside `Turn on Input Monitoring` wrapped the
+            // header to two lines and the panel grew): `Not recording`, or `2 permissions are off` while both are.
             let next = PermissionKind.next(missing)
             let fix: Fix = canOpenPermissions ? .permissions : canSetUp ? .setUp : .systemSettings(next)
             return Header(status: Status(tone: .attention, text: permissionLine(missing)), attention: attention,
@@ -242,14 +244,15 @@ public struct MenuBarMenu: View {
     /// The fix button while which permission is missing isn't known.
     public static let permissionsFixTitle = "Allow…"
 
-    /// `Input Monitoring is off`, `Accessibility is off`, or `Accessibility and Input Monitoring are off` (perm-1004:
-    /// every missing permission named; the button beside it turns on the first, `Turn on Accessibility`).
+    /// The status line beside the permission button, one line: `Not recording` beside `Turn on Accessibility` (or
+    /// `Turn on Input Monitoring`), `2 permissions are off` beside `Turn on Accessibility` while both are (the second is
+    /// named once the first is on; Settings' line names both), and `A permission is off` beside `Allow…` while which
+    /// one isn't known.
     public static func permissionLine(_ missing: Set<PermissionKind>) -> String {
-        let names = PermissionKind.allCases.filter(missing.contains).map(\.title)
-        switch names.count {
-        case 1: return names[0] + " is off"
+        switch PermissionKind.allCases.filter(missing.contains).count {
+        case 1: return "Not recording"
         case 0: return "A permission is off"
-        default: return names.joined(separator: " and ") + " are off"
+        default: return "2 permissions are off"
         }
     }
 
@@ -374,12 +377,16 @@ public struct MenuBarMenu: View {
     }
 
     /// The Chrome pages line, exactly while the presentation has one: "Browser history on (Google Chrome)" while
-    /// Chrome pages are being saved, "Browser history on, but Chrome access is off" while they would be but can't.
+    /// Chrome pages are being saved, "Chrome pages aren't being saved." (with Fix) while they would be but can't.
     /// It is the only live notice that pages are saved, so it is never dropped; one click opens Settings ▸ Apps to
     /// remember, where the switch is.
     public static func chromeLine(_ p: CapturePresentation?) -> String? { p?.browserHistory.text }
     /// Where the Chrome line leads: Settings ▸ Apps to remember (Web pages in Chrome and Chrome access).
     public static let chromeSection = "Recording"
+    /// chromeask-1005: the line is "Chrome pages aren't being saved." and ends in Ask again (refused) or Fix (never
+    /// asked) (`CaptureActions.fixChrome`) instead of a chevron to Settings.
+    public static func chromeFixes(_ p: CapturePresentation?) -> Bool { p?.browserHistory == .needsAccess }
+    public static func chromeFixTitle(_ p: CapturePresentation?) -> String { ChromeAccessNotice.title(askAgain: p?.chromeAskAgain == true) }
 
     /// Up to three of today's top apps with a known bundle (icons only).
     public static func todayApps(_ s: TodaySnapshot) -> [AppTally] {
@@ -591,9 +598,18 @@ public struct MenuBarMenu: View {
             }
             if let typing, typing.shown { typingLine(typing) }
             if let line = Self.chromeLine(presentation) {
-                lineButton(hint: Self.settingsHint(Self.chromeSection), id: "menubar-browser-history",
-                           run: { actions.openSettingsSection(Self.chromeSection) }) {
-                    quietLine(line, symbol: BrowserHistoryLine.symbol)
+                if Self.chromeFixes(presentation) {
+                    // chromeask-1005: one calm line, and Ask again (refused) or Fix (setup's Chrome row).
+                    lineButton(hint: ChromeAccessNotice.hint(askAgain: presentation?.chromeAskAgain == true), id: "menubar-browser-history",
+                               trailing: Self.chromeFixTitle(presentation),
+                               run: { actions.fixChrome() }) {
+                        quietLine(line, symbol: BrowserHistoryLine.symbol)
+                    }
+                } else {
+                    lineButton(hint: Self.settingsHint(Self.chromeSection), id: "menubar-browser-history",
+                               run: { actions.openSettingsSection(Self.chromeSection) }) {
+                        quietLine(line, symbol: BrowserHistoryLine.symbol)
+                    }
                 }
             }
         }
@@ -962,11 +978,9 @@ extension MenuBarMenuRowLabel where Trailing == EmptyView {
     }
 }
 
-/// The fix button as a capsule, like the switch it replaces (macOS 14 and later; macOS 13 keeps the system's shape).
+/// The fix button as a capsule, like the switch it replaces.
 struct MenuBarCapsuleButton: ViewModifier {
-    func body(content: Content) -> some View {
-        if #available(macOS 14, *) { content.buttonBorderShape(.capsule) } else { content }
-    }
+    func body(content: Content) -> some View { content.buttonBorderShape(.capsule) }
 }
 
 /// The whole sentence behind a shortened status line: its tooltip and its VoiceOver hint.

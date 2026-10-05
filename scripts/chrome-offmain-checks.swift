@@ -1,5 +1,7 @@
 import Foundation
 import ApplicationServices
+import AppKit
+import Carbon
 import HistoryCore
 @testable import MemoryCore
 import PrivacyPolicy
@@ -182,6 +184,16 @@ struct OffRun {
     static func main() throws {
         setbuf(stdout, nil)
         check(OwnerTyping.enabled, "chrome-offmain: the owner build")
+        // claude/crashguard-015: secure input and the frontmost app, off the main queue, are the main queue's last read
+        // (never a live HIToolbox/NSWorkspace call there), and fail closed before any main-queue read.
+        let early = DispatchQueue.global().sync { (MainInputFacts.secureInput(), MainInputFacts.frontmostPID()) }
+        check(early.0 == true && early.1 == nil, "main input facts: off the main queue before any main read, secure input reads on, no app in front")
+        let liveFront = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        let liveSecure = IsSecureEventInputEnabled()
+        MainInputFacts.refresh()
+        let later = DispatchQueue.global().sync { (MainInputFacts.secureInput(), MainInputFacts.frontmostPID()) }
+        check(later.0 == liveSecure && later.1 == liveFront, "main input facts: off the main queue, the main queue's last read is answered")
+        check(MainInputFacts.secureInput() == IsSecureEventInputEnabled(), "main input facts: on the main queue, read live")
         EventCapture.appKitCharacters = { event in
             if !MainQueue.isCurrent { appKitOffMain += 1 }
             return EventCapture.eventCharacters(event)

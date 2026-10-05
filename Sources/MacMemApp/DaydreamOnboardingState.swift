@@ -10,14 +10,16 @@ enum DaydreamOnboardingPage: Int, CaseIterable {
 /// Monitoring, never a page of its own. Shown while Google Chrome is installed (and not excluded) and its access isn't
 /// decided; once it was shown, it stays and shows its answer like the other rows. Its Allow asks macOS on the press
 /// only. It never holds Continue, but the page doesn't move on by itself while it is still waiting for a press.
+/// chromeask-1005 (owner 10/5): nor while macOS asks, nor once refused (the row then says where the switch is, and
+/// moving on by itself would hide that): the page moves on by itself only once Chrome is allowed.
 enum DaydreamOnboardingChromeRow {
     /// `answered`: allowed, refused, or refused without a question. `reading`: a read is still running (nothing shows yet).
     static func shown(release: Bool, installed: Bool, chromeExcluded: Bool, answered: Bool, reading: Bool, latched: Bool) -> Bool {
         guard release, installed, !chromeExcluded else { return false }
         return latched || (!answered && !reading)
     }
-    /// The Permissions page stays put (Continue still works) while the row waits for its press.
-    static func holdsPage(shown: Bool, pressed: Bool, answered: Bool) -> Bool { shown && !pressed && !answered }
+    /// The Permissions page stays put (Continue still works) while the row shows anything but Allowed.
+    static func holdsPage(shown: Bool, allowed: Bool) -> Bool { shown && !allowed }
 }
 
 /// The Chrome card for people who finished setup before the row existed (owner, 10/2): setup's Permissions card opens

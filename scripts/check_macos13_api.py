@@ -1,4 +1,5 @@
-"""macOS 13 API lint (plan section 2 rule 5, section 5 I3, amendments I3). Read-only; no app launch.
+"""Deployment-target API lint (plan section 2 rule 5, section 5 I3, amendments I3). Read-only; no app launch.
+Since 0.1.5 the deployment target is macOS 15 (`DEPLOYMENT`); "macOS 13" below reads as the deployment target.
 
 The deployment target is macOS 13 and the build uses SDK 26.5, so any API newer than macOS 13 must sit behind an
 availability check that covers its version, with a macOS 13 path beside it. Over the code of every Swift file in
@@ -52,7 +53,8 @@ EXTRA_FILES = ('scripts/core-production-checks.swift',)
 TARGET_DECL = re.compile(r'\.(target|executableTarget|testTarget)\s*\(')
 SKIPPED_PARTS = {'.build', 'vendor', 'Vendor'}
 GLYPHS = Path('/System/Library/CoreServices/CoreGlyphs.bundle/Contents/Resources/name_availability.plist')
-DEPLOYMENT = (13, 0)
+# 0.1.5 (owner decision): DayDream needs macOS 15, so APIs and SF Symbols up to macOS 15 need no #available.
+DEPLOYMENT = (15, 0)
 
 # (label, pattern over scanned code, macOS version that introduced it). Patterns match modifiers and types, not
 # local names: a leading `.` or `\\.` for members, word boundaries for types.
@@ -213,7 +215,7 @@ def protected_ranges(code, pairs):
 
 
 def covered(offset, ranges):
-    """The highest macOS version an availability check guarantees at `offset` (13.0 when none does)."""
+    """The highest macOS version an availability check guarantees at `offset` (the deployment target when none does)."""
     return max([v for a, b, v in ranges if a <= offset <= b], default=DEPLOYMENT)
 
 
@@ -412,14 +414,14 @@ def main():
     ok(len(declared) >= 10 and not uncovered, 'every Swift target of Package.swift lies inside the scanned folders',
        f'{len(declared)} targets; outside: ' + ', '.join(uncovered))
     ok(files >= 200, f'scanned the code of every Swift file in {", ".join(FOLDERS + EXTRA_FILES)}', f'{files} files')
-    ok(not unprotected, 'every API newer than macOS 13 sits under an #available check that covers its version',
+    ok(not unprotected, 'every API newer than the deployment target (macOS 15) sits under an #available check that covers its version',
        '; '.join(unprotected))
     if symbols is None:
         print(f'LIMIT SF Symbols availability not checked: {GLYPHS} could not be read')
     else:
         ok(len(symbols) > 5000 and symbol_uses >= 50, 'read SF Symbols availability from CoreGlyphs and found the symbol literals',
            f'{len(symbols)} symbols, {symbol_uses} literals')
-        ok(not newer_symbols, 'every SF Symbols name newer than macOS 13.0 has a macOS 13 fallback under #available',
+        ok(not newer_symbols, 'every SF Symbols name newer than the deployment target (macOS 15) sits under #available with a fallback',
            '; '.join(newer_symbols))
         for line in unknown:
             print('NOTE symbol argument is not an SF Symbols name on this Mac (custom or aliased?): ' + line)

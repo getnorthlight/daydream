@@ -293,12 +293,14 @@ public struct MomentSlice: Identifiable, Equatable {
         let generatedBullets = DaydreamNotes.sendsFirst((generated.map(DaydreamNotes.bullets) ?? []).compactMap { bullet -> MomentBullet? in
             let text = DaydreamNotes.tidy(bullet.text, apps: appNames)
             let fallbackLine = codeFallback && CodeFallbackNote.isFallbackLine(bullet.text)
-            return DaydreamNotes.isFiller(text, apps: appNames) && !fallbackLine ? nil : MomentBullet(text: text, interpretation: bullet.interpretation, actionIDs: bullet.actionIDs)
+            // claude/dayeval-1005: never "draft" on screen (`DisplayWords.undraft`), after the filler rules read the stored words.
+            return DaydreamNotes.isFiller(text, apps: appNames) && !fallbackLine ? nil
+                : MomentBullet(text: DisplayWords.undraft(text), interpretation: bullet.interpretation, actionIDs: bullet.actionIDs)
         })
         // claude/summary-1003 (owner): code's place-only lines only when no line says more; each line once.
         let bullets = SummaryLines.tidy(DaydreamNotes.distinctBullets(generatedBullets), cap: .max) { $0.text } + corrections
         let generatedTitle = DaydreamNotes.title(generated, generic: "Activity note")
-            .map { TitleClean.clean(DaydreamNotes.tidy($0, apps: appNames), app: mainApp, site: sites.first ?? "") }
+            .map { DisplayWords.undraft(TitleClean.clean(DaydreamNotes.tidy($0, apps: appNames), app: mainApp, site: sites.first ?? "")) }
 
         let members = Set(note.actionIDs)
         let memberActions = pageActions.filter { members.contains($0.id) }
@@ -430,9 +432,10 @@ public struct TodaySnapshot: Equatable {
 
         // Stale-while-updating: the previous day note while a newer one is written.
         let generated = day.summary.status == "ready" ? day.summary.generated : day.summary.previous
-        let headline = DaydreamNotes.title(generated, generic: "Day summary")
+        let headline = DaydreamNotes.title(generated, generic: "Day summary").map(DisplayWords.undraft)
         let dayCorrections = DaydreamNotes.corrections(day.summary.corrections, kind: "day", preferring: nil)
-        let bullets = (headline == nil ? [] : generated.map(DaydreamNotes.bullets) ?? []) + dayCorrections
+        let bullets = (headline == nil ? [] : (generated.map(DaydreamNotes.bullets) ?? []).map {
+            MomentBullet(text: DisplayWords.undraft($0.text), interpretation: $0.interpretation, correction: $0.correction, actionIDs: $0.actionIDs) }) + dayCorrections
 
         var ready = 0, pending = 0, tooLong = 0
         for moment in moments {

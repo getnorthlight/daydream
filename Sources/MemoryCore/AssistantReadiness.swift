@@ -50,9 +50,11 @@ extension MemoryStore {
     }
 
     /// The setup fields `assistantStatus` adds. `access` is nil where no AI app's key is at hand (then nothing is said
-    /// about a connection).
-    public func assistantReadiness(access: AssistantAccess?, now: Date = Date()) throws -> [String:String] {
+    /// about a connection). `sharePolicy`: what AI apps get of typed words; nil asks the running app over its bridge
+    /// (`AgentSharePolicy.current`), so the typing line and `shared` say what the app enforces now (agent-tools v2).
+    public func assistantReadiness(access: AssistantAccess?, now: Date = Date(), sharePolicy: AgentSharePolicy? = nil) throws -> [String:String] {
         let zone = TimeZone.current
+        let share = sharePolicy ?? AgentSharePolicy.current(bridge: AgentBridgeSource(home: home))
         let state = try captureStatus(now: now)["state"] ?? "off"
         let saved = try policy(), typed = try typedTextPolicy()
         let empty = try latestActionAt(now: now) == nil
@@ -73,7 +75,8 @@ extension MemoryStore {
         }
         if let connectionProblem { result["connected"] = "no: " + connectionProblem }
 
-        // Typing: switched on is not the same as working; only a saved typing row verifies it.
+        // Typing: switched on is not the same as working; only a saved typing row verifies it. What AI apps get of the
+        // words is the share policy's own line (`AgentSharePolicy.typedWordsLine`), never a separate claim.
         var verified = false
         if !saved.typingOn {
             result["typing"] = "off: DayDream isn't saving typing. The person can turn typed text on in DayDream Settings › Apps to remember."
@@ -84,11 +87,14 @@ extension MemoryStore {
             result["typing"] = "paused\(until): typing isn't saved until then; other activity still is."
         } else if let last = try lastSavedTyping(now: now) {
             verified = true
-            result["typing"] = "on and working: DayDream last saved typing \(AssistantView.when(last, zone: zone)) (AI apps get where and about how much, never the words)."
+            result["typing"] = "on and working: DayDream last saved typing \(AssistantView.when(last, zone: zone))."
         } else {
             result["typing"] = "switched on, not confirmed yet: DayDream hasn't saved any typing in the last 24 hours. It's confirmed once the person types in an app where typed text is recorded while recording is on."
         }
+        if saved.typingOn, let line = result["typing"] { result["typing"] = line + " " + share.typedWordsLine }
         result["typing_verified"] = verified ? "yes" : "no"
+        // What AI apps get, generated from the same policy the app's bridge applies (`AgentSharePolicy.statusLines`).
+        result["shared"] = share.statusLines().joined(separator: " ")
 
         // Chrome pages.
         if !ReleaseFeatures.chromePageHistory {
@@ -136,10 +142,10 @@ extension MemoryStore {
         // Example questions that fit what is on now, each answered by a tool that exists.
         let notesOn = writer == "local" || writer == "cloud"
         var examples = ["What did I work on yesterday?", "Where did I leave off on [a project or file]?", "When did I last have [a document] open?",
-                        "Draft my standup from yesterday."]
+                        "Write my standup from yesterday."]
         if ReleaseFeatures.chromePageHistory && saved.browserPagesOn { examples.append("What was that page I had open in Chrome about [a topic]?") }
         if notesOn { examples.append("What did I do this week?") }
-        if notesOn && saved.typingOn { examples.append("What did I ask an AI app about [a topic]?") }
+        if saved.typingOn && (notesOn || share.typedWords) { examples.append("What did I ask an AI app about [a topic]?") }
         result["examples"] = examples.joined(separator: " | ") + (empty ? " (These work once there is some activity.)" : "")
         return result
     }

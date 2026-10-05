@@ -151,7 +151,7 @@ func runLevelChecks(home: URL) throws {
     try check(momentKids.count == 3 && (momentKids[2]["title"] as? String) == "Export bug", "drill: block -> its moments")
     let momentNode = object(try store.assistantRecall(level: nil, when: nil, open: momentKids[2]["open"] as? String, query: nil, timezone: zone, now: now))
     let lineKids = momentNode["lines"] as? [[String: Any]] ?? []
-    try check(lineKids.first?["text"] as? String == "Drafted an email to Priya about the export bug." && (lineKids.first?["when"] as? String ?? "").contains("9:40"), "drill: moment -> its lines, each with its time")
+    try check(lineKids.first?["text"] as? String == "Wrote an email to Priya about the export bug." && (lineKids.first?["when"] as? String ?? "").contains("9:40"), "drill: moment -> its lines, each with its time")
     let afternoon = object(try store.assistantRecall(level: "block", when: "thursday afternoon", open: nil, query: nil, timezone: zone, now: now))
     try check((afternoon["blocks"] as? [[String: Any]])?.map { $0["title"] as? String ?? "" } == [validB.title], "recall block for \"thursday afternoon\" gives only that stretch")
     let found = object(try store.assistantRecall(level: nil, when: nil, open: nil, query: "email export", timezone: zone, now: now))

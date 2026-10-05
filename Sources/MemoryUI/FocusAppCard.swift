@@ -568,9 +568,10 @@ public enum FocusAppCard {
     }
 
     /// VoiceOver: "Texts, 5:14 to 5:22 PM, Texted Q7 about moving dinner to 7:30."
-    public static func accessibilityLabel(_ members: [MomentSlice], timeZone: TimeZone) -> String {
+    /// `line`: `collapsedLine(members)` when the caller already made it (a card's header makes it once per draw).
+    public static func accessibilityLabel(_ members: [MomentSlice], timeZone: TimeZone, line: String? = nil) -> String {
         guard let start = members.map(\.start).min(), let end = members.map(\.end).max() else { return title(members) }
-        return [title(members), DaydreamFormat.spokenRange(start, end, timeZone), collapsedLine(members)]
+        return [title(members), DaydreamFormat.spokenRange(start, end, timeZone), line ?? collapsedLine(members)]
             .filter { !$0.isEmpty }.joined(separator: ", ")
     }
 }

@@ -23,6 +23,9 @@ struct DayReviewSource {
     var actionIDs: [String]
     var start: String
     var end: String
+    /// claude/dayeval-1005: the thread's typed AI prompts and document words (ids only, never words), which only the writer
+    /// on this Mac opens when it writes the clause (`reviewTypedFacts`).
+    var typedIDs: [String] = []
 }
 
 extension MemoryStore {
@@ -51,7 +54,7 @@ extension MemoryStore {
 
     /// Saves one clause the writer wrote and checked (`DayReviewClauses.validate`). Core checks it again: every action it
     /// was written from is still here, and it copies nothing the person typed (TypedVerbatimGuard).
-    @discardableResult public func commitReviewClause(_ r: DayReviewClauseRequest, text: String, generator: String = DayReviewClauses.version, now: Date = Date()) throws -> DayReviewClause {
+    @discardableResult public func commitReviewClause(_ r: DayReviewClauseRequest, text: String, generator: String = DayReviewClauses.activeVersion, now: Date = Date()) throws -> DayReviewClause {
         guard try hasReviewClauses() else { throw MemError.invalid("Review clauses unavailable") }
         let ids = Array(Set(r.actionIDs)).sorted()
         let typed = try citesTypedText(ids)
@@ -177,6 +180,15 @@ extension MemoryStore {
         }
         let personKinds: Set<String> = ["texts", "chat", "slack", "email"]
         let workKinds: Set<String> = ["code", "ai", "pr", "doc", "web", "meeting"]
+        // claude/dayeval-1005: the measured changes (DayReviewOptions); [] is today-rank-1005's card.
+        let opts = DayReview.options
+        let selfWords: Set<String> = opts.contains(.projects) ? Self.reviewSelfWords : []
+        // A thread's main app (the one most of its actions are in).
+        func mainApp(_ ids: [String]) -> String {
+            var n = [String: Int]()
+            for m in ids { for a in byMoment[m]?.actionIDs ?? [] { if let app = assembled.actions[a]?.app, !app.isEmpty { n[app, default: 0] += 1 } } }
+            return n.max { ($0.value, $1.key) < ($1.value, $0.key) }?.key ?? ""
+        }
 
         // Projects: a name shared by two or more pieces of work ("daydream" in a Claude Code session's title, a GitHub repo
         // and a terminal folder) makes them one thread; each piece goes with its heaviest shared name.
@@ -186,7 +198,7 @@ extension MemoryStore {
             var text = t.label
             for m in t.momentIDs { if let e = plan.momentEntity[m] { text += " " + (e.project ?? "") + " " + e.label } }
             return Set(ThreadEntities.tokens(text).filter { $0.count >= 4 && Int($0) == nil && !ThreadEntities.stopWords.contains($0)
-                && !ThreadEntities.commonWords.contains($0) && !Self.reviewGeneric.contains($0) && !peopleWords.contains($0) })
+                && !ThreadEntities.commonWords.contains($0) && !Self.reviewGeneric.contains($0) && !peopleWords.contains($0) && !selfWords.contains($0) })
         }
         var tokenThreads = [String: Set<String>](), weight = [String: Int](), wordsOf = [String: Set<String>]()
         for t in threads {
@@ -204,12 +216,17 @@ extension MemoryStore {
         // ~/daydream, a PR on acme/daydream): then it is that project's thread too.
         let projectCounts = Dictionary(projectOf.values.map { ($0, 1) }, uniquingKeysWith: +)
         projectOf = projectOf.filter { (projectCounts[$0.value] ?? 0) >= 2 }
+        // claude/dayeval-1005: a folder's own spelling for its name ("atlas-api", never "Atlasapi").
+        var projectSpelling = [String: String]()
         for t in threads where projectOf[t.key] == nil && workKinds.contains(t.kind) {
             var named = [String: Int]()
             for m in t.momentIDs { if let p = plan.momentEntity[m]?.project, !p.isEmpty { named[p, default: 0] += 1 } }
             guard let best = named.max(by: { ($0.value, $1.key) < ($1.value, $0.key) })?.key else { continue }
             let tok = ThreadEntities.tokens(best).joined()
-            if !tok.isEmpty, !Self.reviewGeneric.contains(tok), !peopleWords.contains(tok) { projectOf[t.key] = tok }
+            if !tok.isEmpty, !Self.reviewGeneric.contains(tok), !peopleWords.contains(tok), !selfWords.contains(tok) {
+                projectOf[t.key] = tok
+                if best.contains("-") || best.contains("_") || best.contains(".") { projectSpelling[tok] = best }
+            }
         }
 
         // Groups.
@@ -222,14 +239,27 @@ extension MemoryStore {
         let labels = threads.map(\.label)
         for t in threads {
             if let tok = projectOf[t.key] {
-                add("project:" + tok, Self.projectName(tok, in: labels), "project", t)
+                add("project:" + tok, projectSpelling[tok].map { ThreadEntities.projectName($0) } ?? Self.projectName(tok, in: labels), "project", t)
             } else if personKinds.contains(t.kind), let who = (t.people.first ?? (t.kind == "slack" ? t.places.first : nil)), !t.key.hasPrefix("texts:?") {
                 let name = who.hasPrefix("#") ? who : ThreadEntities.capitalized(who)
                 add("person:" + ThreadEntities.norm(who), name, "person", t)
+            } else if opts.contains(.workSites), t.kind == "web", let host = Self.pageHost(t.key), !host.isEmpty,
+                      DayReview.category(kind: "web", key: t.key, channel: nil, options: opts) == .work {
+                // claude/dayeval-1005: a work site's pages are one thread ("lakeviewlearn.com: Unit 2 Reader and Unit 2 Quiz").
+                add("site:" + host, ThreadEntities.friendlyHosts[host] ?? Self.siteLabel(host), "site", t)
+            } else if opts.contains(.projects), Self.toolThread(t, app: mainApp(t.momentIDs), selfWords: selfWords) {
+                // claude/dayeval-1005: a terminal in the home folder, a remote screen, a camera: the app, not a piece of work.
+                let app = mainApp(t.momentIDs)
+                add("app:" + app.lowercased(), app, "app", t)
             } else {
                 add(t.key, Self.reviewDisplay(t), t.kind, t)
             }
         }
+
+        // claude/dayeval-1005: results the records show (a confirmation page, a note's own "Submitted …"), by group.
+        var groupOfMoment = [String: String]()
+        for key in order { for t in groups[key]?.members ?? [] { for m in t.momentIDs where groupOfMoment[m] == nil { groupOfMoment[m] = key } } }
+        let outcomes = opts.contains(.outcomes) ? Self.reviewOutcomes(moments: active, actions: assembled.actions, groupOf: groupOfMoment) : [:]
 
         // Each group's facts, items and score.
         var out = [DayReviewThread](), sources = [String: DayReviewSource]()
@@ -261,11 +291,23 @@ extension MemoryStore {
                 return (ms.map(\.start).min() ?? "", ms.map(\.end).max() ?? "")
             }
             func source(_ clauseKey: String, lead: String, name: String, colon: Bool, ids: [String], sendCount: Int, askCount: Int) {
-                let n = notes(ids)
-                let noted = ids.compactMap { byMoment[$0] }.filter { ($0.generated ?? $0.previous) != nil }.count
+                // claude/dayeval-1005 (owner 10/05: the day card is the only written summary): with `factPacket` the clause is
+                // written from facts code read from the records, never from moment notes.
+                let packet = opts.contains(.factPacket)
+                let n = packet ? Self.reviewPacket(ids, byMoment: byMoment, actions: assembled.actions, plan: plan, typed: typed) : notes(ids)
+                let typedIDs = packet && opts.contains(.typedFacts) ? Self.reviewTypedIDs(ids, byMoment: byMoment, typed: typed) : []
+                // No title that says more than the thread's own name and nothing typed: nothing for the model to add, so no
+                // call (code's line stands).
+                if packet, typedIDs.isEmpty {
+                    let named = Set(ThreadEntities.tokens(name + " " + lead))
+                    let said = n.filter { $0.hasPrefix("titles:") }.flatMap { ThreadEntities.tokens(String($0.dropFirst(7))) }
+                    if !said.contains(where: { $0.count >= 3 && !named.contains($0) && !ThreadEntities.stopWords.contains($0) }) { return }
+                }
+                // With a packet, a material change is a change in what the titles say or in what was typed (a stable hash).
+                let noted = packet ? Self.stableHash((n.filter { $0.hasPrefix("titles:") } + typedIDs).joined(separator: "|")) % 1_000_000 : ids.compactMap { byMoment[$0] }.filter { ($0.generated ?? $0.previous) != nil }.count
                 let (s, e) = span(ids)
                 sources[clauseKey] = DayReviewSource(lead: lead, name: name, colon: colon, notes: n, signature: "s\(sendCount)|p\(askCount / 10)|m\(noted)",
-                                                     actionIDs: ids.flatMap { byMoment[$0]?.actionIDs ?? [] }, start: s, end: e)
+                                                     actionIDs: ids.flatMap { byMoment[$0]?.actionIDs ?? [] }, start: s, end: e, typedIDs: typedIDs)
             }
             var items = [DayReviewItem]()
             switch g.kind {
@@ -310,9 +352,30 @@ extension MemoryStore {
                         items.append(DayReviewItem(id: clauseKey, lead: "Posted on " + site, quote: s.id, quoteAlways: true, score: s.effort, moments: momentIDs))
                     }
                 }
-                if items.isEmpty { items.append(DayReviewItem(id: key + "#read", lead: "Read", tail: "posts on " + site, score: score, moments: momentIDs)) }
+                if items.isEmpty { items.append(DayReviewItem(id: key + "#read", lead: "Read", tail: "posts on " + site, score: score, moments: momentIDs, filler: true)) }
             case "video", "web", "search":
                 items += try pageItems(g.kind, key: key, members: g.members, momentIDs: momentIDs, byMoment: byMoment, actions: assembled.actions, plan: plan)
+            case "site":
+                // The site's pages, most time first: "Worked on Canvas: Homework 4 and Quiz 3".
+                let host = String(key.dropFirst(5))
+                let pages = g.members.sorted { ($0.seconds, $1.key) > ($1.seconds, $0.key) }
+                    .map { Self.sitePage(Self.reviewDisplay($0)) }
+                    .filter { !$0.isEmpty && $0.count <= 40 && $0.lowercased() != g.name.lowercased() && !$0.lowercased().contains(host) && !$0.contains(".") }
+                    .reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+                if opts.contains(.workSites) {
+                    // claude/dayeval-1005 (owner 10/04): plain words. The site by its name; pages that only name the app
+                    // ("Lesson Viewer") are left out, and coursework says so ("Did coursework on Lakeviewlearn").
+                    let name = Self.plainSite(host, titles: pages)
+                    let topics = pages.filter { !Self.chromePage($0) }
+                    let school = pages.joined(separator: " ").lowercased().split(separator: " ")
+                        .contains { ["course", "courses", "assessment", "assignment", "student", "quiz", "homework", "lesson", "exam"].contains(String($0)) }
+                    let lead = topics.isEmpty && school ? "Did coursework on " + name : "Worked on " + name
+                    items.append(DayReviewItem(id: key, lead: lead, colon: !topics.isEmpty,
+                                               tail: topics.isEmpty ? nil : LevelThreads.names(Array(topics.prefix(2))), score: score, moments: momentIDs))
+                } else {
+                    items.append(DayReviewItem(id: key, lead: "Worked on " + g.name, colon: !pages.isEmpty,
+                                               tail: pages.isEmpty ? nil : LevelThreads.names(Array(pages.prefix(2))), score: score, moments: momentIDs))
+                }
             default:
                 let project = g.kind == "project" ? g.name : nil
                 for t in g.members {
@@ -321,7 +384,8 @@ extension MemoryStore {
                     let own = rows.filter { ownActions.contains($0.id) }
                     let ownAsks = own.filter { $0.sent && $0.ask }
                     let label = Self.reviewDisplay(t)
-                    let about = project ?? Self.workName(t, label: label)
+                    // claude/dayeval-1005: a project's piece by its own name when it says more ("Tallybird pricing page review").
+                    let about = project.map { opts.contains(.projects) ? Self.projectDetail(label, project: $0) : $0 } ?? Self.workName(t, label: label)
                     let s = Double(t.seconds) / 60 + Double(own.reduce(0) { $0 + $1.words }) / DayReview.wordsPerPoint + Double(ownAsks.count) * DayReview.askSend
                     let used = Self.unique(ownActions.sorted().compactMap { assembled.actions[$0] }.sorted { ($0.at, $0.id) < ($1.at, $1.id) }.map(\.app).filter { !$0.isEmpty })
                     // The apps the work was done in: a browser only when nothing else was used (it has its own lines).
@@ -333,8 +397,10 @@ extension MemoryStore {
                         // its ask read "Asked Claude about Claude". No "about …" when it only names the tool, the app or
                         // the site again: "Asked Claude: “…”".
                         let host = ThreadEntities.host(ask.site)
-                        let topic = DayReview.topic(about, echoing: [tool, ask.app, ThreadEntities.friendlyHosts[host] ?? host] + DayReview.askPlaces)
-                        items.append(DayReviewItem(id: t.key, lead: "Asked " + tool, tail: topic.map { "about " + $0 }, clauseKey: t.key, quote: ask.id, score: s, moments: ids))
+                        // claude/dayeval-1005: "Claudecode" (a terminal title's tool, run together) names the tool too.
+                        let topic = DayReview.topic(about, echoing: [tool, tool.replacingOccurrences(of: " ", with: ""), ask.app, ThreadEntities.friendlyHosts[host] ?? host] + DayReview.askPlaces)
+                        items.append(DayReviewItem(id: t.key, lead: "Asked " + tool, tail: topic.map { "about " + (opts.contains(.projects) ? DayReview.lowerLead($0) : $0) },
+                                                   clauseKey: t.key, quote: ask.id, score: s, moments: ids))
                         source(t.key, lead: "Asked " + tool, name: about, colon: false, ids: ids, sendCount: 0, askCount: ownAsks.count)
                         continue
                     }
@@ -349,53 +415,356 @@ extension MemoryStore {
                                                        score: s * 0.5, moments: prMoments))
                         }
                     }
-                    switch t.kind {
+                    switch g.kind == "app" ? "app" : t.kind {
                     case "pr":
                         let url = try reviewLink(forThread: ids, byMoment: byMoment, actions: assembled.actions)
                         items.append(DayReviewItem(id: t.key, lead: "Read", link: DayReviewLink(title: label, url: url), tail: "on GitHub", score: s, moments: ids))
                     case "web":
                         let url = try reviewLink(forThread: ids, byMoment: byMoment, actions: assembled.actions)
-                        let site = Self.siteName(t.label, key: t.key)
+                        // claude/dayeval-1005: a topic thread led by an email or a document has no host in its key: its pages' own.
+                        // The host of the page the line names comes first: a thread can span a school's page and its tools' pages.
+                        let pageActs = ids.flatMap { byMoment[$0]?.actionIDs ?? [] }.compactMap { assembled.actions[$0] }
+                        let pageHosts = (pageActs.filter { $0.title.localizedCaseInsensitiveContains(label) } + pageActs).map { ThreadEntities.host($0.site) }.filter { !$0.isEmpty }
+                        let keyed = Self.pageHost(t.key) != nil
+                        let site = keyed || pageHosts.isEmpty || !opts.contains(.workSites) ? Self.siteName(t.label, key: t.key)
+                            : Self.brand(pageHosts[0]) ?? ThreadEntities.friendlyHosts[pageHosts[0]] ?? pageHosts[0]
                         if t.key.hasPrefix("site:") || label == site {
-                            items.append(DayReviewItem(id: t.key, lead: "Read", tail: site, score: s, moments: ids))
+                            // claude/dayeval-1005: coursework or a work tool's site is work, even with no page named.
+                            let hosts = Set(ids.flatMap { byMoment[$0]?.actionIDs ?? [] }.compactMap { assembled.actions[$0].map { ThreadEntities.host($0.site) } })
+                            let workRead = opts.contains(.workSites) && (DayReview.category(kind: "site", key: t.key, channel: nil, options: opts) == .work
+                                || hosts.contains { DayReview.workSite(host: $0, title: label) })
+                            items.append(DayReviewItem(id: t.key, lead: "Read", tail: site, score: s, moments: ids, filler: !workRead))
                         } else {
-                            items.append(DayReviewItem(id: t.key, lead: "Read", link: DayReviewLink(title: label, url: url), tail: "on " + site, score: s, moments: ids))
+                            // claude/dayeval-1005 (owner 10/04: plain words): a site by its name, left out when the title names it.
+                            let place = opts.contains(.workSites) && site.contains(".") ? Self.plainSite(site, titles: [label]) : site
+                            let named = opts.contains(.workSites) && label.lowercased().contains(place.lowercased())
+                            items.append(DayReviewItem(id: t.key, lead: "Read", link: DayReviewLink(title: label, url: url), tail: named ? nil : "on " + place, score: s, moments: ids))
                         }
                     case "doc":
                         let wrote = own.contains { $0.words > 0 }
-                        items.append(DayReviewItem(id: t.key, lead: wrote ? "Wrote" : "Read", tail: label, score: s, moments: ids))
+                        // claude/dayeval-1005: a document whose words were typed (typed facts, the writer on this Mac) gets a
+                        // clause from them: "Wrote notes on the catalase lab"; else code's line stands.
+                        let typedDoc = wrote && opts.contains(.factPacket) && opts.contains(.typedFacts)
+                            && !Self.reviewTypedIDs(ids, byMoment: byMoment, typed: typed).isEmpty
+                        if typedDoc { source(t.key, lead: "Wrote", name: label, colon: false, ids: ids, sendCount: 0, askCount: 0) }
+                        if opts.contains(.projects) {
+                            // claude/dayeval-1005: an untitled document by what its notes say it is, else "a document in TextEdit";
+                            // a project's window titled only with the project's name says nothing more (filler).
+                            let blank = DayReview.topic(label.filter { !$0.isNumber }, echoing: apps + ["untitled", "document", "new", "note", "notes"]) == nil
+                                || label.range(of: #"^(?i)(untitled|new document|document\d*|new note)( \d+)?$"#, options: .regularExpression) != nil
+                            if blank {
+                                let named = notes(ids).lazy.map { $0.components(separatedBy: ": ").first ?? $0 }
+                                    .first { !Self.recallFiller($0) && DayReview.topic($0, echoing: apps + [label, "untitled"]) != nil }
+                                let app = apps.first ?? mainApp(ids)
+                                items.append(DayReviewItem(id: t.key, lead: wrote ? "Wrote" : "Read", tail: named ?? ("a document" + (app.isEmpty ? "" : " in " + app)),
+                                                           clauseKey: typedDoc ? t.key : nil, score: s, moments: ids, filler: named == nil && !wrote))
+                                continue
+                            }
+                            if let project, DayReview.topic(label, echoing: [project] + apps) == nil {
+                                items.append(DayReviewItem(id: t.key, lead: wrote ? "Wrote" : "Read", tail: label, score: s, moments: ids, filler: true))
+                                continue
+                            }
+                        }
+                        // claude/dayeval-1005: ten minutes or more in a design, office or code app is work on the file, typed or
+                        // not ("Worked on Checkout Redesign in Figma"), never "Read".
+                        let maker = apps.first { app in let a = app.lowercased(); return (DayReview.workApps.contains(a) || DayReview.moreWorkApps.contains(a))
+                            && !DayReview.readerApps.contains(a) }
+                        if opts.contains(.projects), !wrote, t.seconds >= 600, let maker {
+                            items.append(DayReviewItem(id: t.key, lead: "Worked on " + label, tail: "in " + maker, score: s, moments: ids))
+                            continue
+                        }
+                        items.append(DayReviewItem(id: t.key, lead: wrote ? "Wrote" : "Read", tail: opts.contains(.projects) ? DayReview.titleAsObject(label) : label,
+                                                   clauseKey: typedDoc ? t.key : nil, score: s, moments: ids))
+                    case "email" where t.key == "email" && opts.contains(.filler):
+                        // claude/dayeval-1005: a mailbox with no subject or person named is "Read email", never "Worked on
+                        // Email in Google Chrome"; filler under twenty minutes.
+                        let wrote = own.contains { $0.sent || $0.words > 0 }
+                        items.append(DayReviewItem(id: t.key, lead: wrote ? "Wrote" : "Read", tail: "email", score: s, moments: ids,
+                                                   filler: !wrote && t.seconds < 1200))
                     case "meeting":
-                        items.append(DayReviewItem(id: t.key, lead: "Joined", tail: label, score: s, moments: ids))
+                        // claude/dayeval-1005: the meeting by its own name, not the app's ("Zoom Meeting - Design Crit" is "Design Crit").
+                        let named = label.replacingOccurrences(of: #"^(?i)(zoom meeting|zoom|google meet|meet|microsoft teams|teams)\s*[-–—:|]\s*"#,
+                                                               with: "", options: .regularExpression)
+                        items.append(DayReviewItem(id: t.key, lead: "Joined", tail: named.isEmpty ? label : named, score: s, moments: ids))
                     case "app":
-                        items.append(DayReviewItem(id: t.key, lead: "Used", tail: label, score: s, moments: ids))
+                        items.append(DayReviewItem(id: t.key, lead: "Used", tail: g.kind == "app" ? g.name : label, score: s, moments: ids, filler: true))
+                    case "texts" where opts.contains(.filler) || opts.contains(.texting),
+                         "chat" where (opts.contains(.filler) || opts.contains(.texting)) && DayReview.category(kind: "chat", key: t.key, channel: nil, options: opts) == .personal:
+                        // claude/dayeval-1005: a conversation with no one named is the texting line's, never "Worked on Texts".
+                        let sent = own.contains { $0.sent && $0.person }
+                        items.append(DayReviewItem(id: t.key, lead: sent ? "Texted" : "Read", tail: sent ? "someone" : "texts", score: s, moments: ids, filler: true))
                     default:
                         // Code, an AI chat read, anything worked on: "Worked on DayDream: <clause>", else "… in Xcode".
                         // claude/today-rank-1005: an AI app's own thread read with no ask ("Worked on Claude: in Claude.") is "Used
                         // Claude", the sentence going on after it, as "Asked Claude" does (today-copy-1004's echo rule).
                         if DayReview.topic(about, echoing: apps + DayReview.askPlaces) == nil {
                             let lead = "Used " + about
-                            items.append(DayReviewItem(id: t.key, lead: lead, clauseKey: t.key, score: s, moments: ids))
+                            items.append(DayReviewItem(id: t.key, lead: lead, clauseKey: t.key, score: s, moments: ids, filler: true))
                             source(t.key, lead: lead, name: about, colon: false, ids: ids, sendCount: 0, askCount: 0)
                             continue
                         }
                         let lead = "Worked on " + about
                         items.append(DayReviewItem(id: t.key, lead: lead, colon: true, tail: apps.isEmpty ? nil : "in " + LevelThreads.names(Array(apps.prefix(2))),
                                                    clauseKey: t.key, score: s, moments: ids))
-                        source(t.key, lead: lead, name: about, colon: true, ids: ids, sendCount: 0, askCount: 0)
+                        // claude/dayeval-1005: a project's line stands for the whole project (its other pieces fold into it on the
+                        // card), so its facts are the project's.
+                        source(t.key, lead: lead, name: about, colon: true, ids: g.kind == "project" && opts.contains(.factPacket) ? momentIDs : ids,
+                               sendCount: 0, askCount: 0)
                     }
                 }
                 items.sort { ($0.score, $1.id) > ($1.score, $0.id) }
             }
+            if let o = outcomes[key] {
+                // The result leads the thread, and counts like a high-stakes send.
+                items.insert(DayReviewItem(id: key + "#outcome", lead: o.verb, tail: o.object, score: score + DayReview.stakesBoost, moments: o.moments), at: 0)
+                score += DayReview.stakesBoost
+            }
             guard !items.isEmpty else { continue }
             // claude/today-rank-1005: the thread's category for the card's order (a person's by the channel they were met in).
             let channel = g.members.first.map { $0.key.hasPrefix("chat:teams") ? "teams" : $0.kind }
-            let category = DayReview.category(kind: g.kind, key: key, channel: channel, name: g.name)
+            let category = g.kind == "site" ? DayReview.Category.work : DayReview.category(kind: g.kind, key: key, channel: channel, name: g.name)
+            let ends = momentIDs.compactMap { byMoment[$0]?.end }
             out.append(DayReviewThread(key: key, name: g.name, kind: g.kind, seconds: seconds, words: words, personSends: personSends.count, asks: asks.count,
                                        sendHours: hours, stakes: Array(Set(stakes)).sorted { $0.rawValue < $1.rawValue }, score: score, items: items, moments: momentIDs,
-                                       category: category.rawValue))
+                                       category: category.rawValue, person: g.kind == "person" && category == .personal ? DayReview.textingName(g.name) : nil,
+                                       lastEnd: ends.max(), dayPart: Self.dayPart(momentIDs.compactMap { byMoment[$0].map { ($0.start, $0.end) } }, timezone: timezone)))
         }
         out.sort { ($0.score, $1.key) > ($1.score, $0.key) }
-        return (DayReviewFacts(day: day, threads: out, clauses: [:], activeSeconds: activeSeconds, personSends: personSendsDay), sources)
+        var facts = DayReviewFacts(day: day, threads: out, clauses: [:], activeSeconds: activeSeconds, personSends: personSendsDay)
+        if opts.contains(.leftOff) { (facts.leftOff, facts.leftOffThread) = Self.reviewLeftOff(out, byMoment: byMoment, actions: assembled.actions, plan: plan, groups: groups.mapValues(\.members)) }
+        return (facts, sources)
+    }
+
+    // MARK: claude/dayeval-1005
+
+    /// The facts a clause is written from (`DayReviewOptions.factPacket`): the thread's window and page titles, most time
+    /// first, as code cleans them (no ids, no paths, no conversation names); its apps and sites; and what was typed, asked
+    /// or sent, counted by code. Values only: never a typed word.
+    static func reviewPacket(_ ids: [String], byMoment: [String: ActivityNote], actions: [String: CanonicalAction], plan: ThreadPlan,
+                             typed: [String: ReviewTyped]) -> [String] {
+        var titleTime = [String: Double](), apps = [String](), sites = [String]()
+        var asks = 0, sends = 0, drafts = 0, words = 0
+        for m in ids {
+            for id in byMoment[m]?.actionIDs ?? [] {
+                guard let a = actions[id] else { continue }
+                if !a.app.isEmpty, !apps.contains(a.app) { apps.append(a.app) }
+                let host = ThreadEntities.host(a.site)
+                if !host.isEmpty { let n = ThreadEntities.friendlyHosts[host] ?? host; if !sites.contains(n) { sites.append(n) } }
+                if let t = typed[id] {
+                    words += t.words
+                    if t.sent && t.ask { asks += 1 } else if t.sent && t.person { sends += 1 } else if !t.sent { drafts += 1 }
+                    continue
+                }
+                guard !MessagesMomentIdentity.applies(a) else { continue }
+                var title = withoutIDs(TitleClean.clean(a.title, app: a.app, site: a.site))
+                // claude/dayeval-1005: a path in a title gives way to the rest of it ("~/daydream — swift build" is "swift build").
+                if title.contains("/") || title.contains("~") {
+                    title = ThreadEntities.segments(title).filter { !$0.contains("/") && !$0.contains("~") }.joined(separator: " - ")
+                }
+                for sep in [" — ", " - ", " | ", " · "] where title.components(separatedBy: sep).count > 2 { title = title.components(separatedBy: sep).prefix(2).joined(separator: sep) }
+                let lower = title.lowercased()
+                guard title.count >= 3, title.count <= 80, !title.contains("/"), !title.contains("~"), !Privacy.secret(title),
+                      lower != a.app.lowercased(), lower != host, !["new tab", "untitled", "home", "inbox"].contains(lower) else { continue }
+                titleTime[title, default: 0] += max(plan.dwell[id] ?? 0, 1)
+            }
+        }
+        let titles = titleTime.sorted { ($0.value, $1.key) > ($1.value, $0.key) }.prefix(6).map(\.key)
+        var out = [String]()
+        if !titles.isEmpty { out.append("titles: " + titles.joined(separator: "; ")) }
+        if !apps.isEmpty { out.append("apps: " + apps.prefix(4).joined(separator: ", ")) }
+        if !sites.isEmpty { out.append("sites: " + sites.prefix(4).joined(separator: ", ")) }
+        var did = [String]()
+        if asks > 0 { did.append("asked an AI app \(asks) times") }
+        if sends > 0 { did.append("sent \(sends) messages") }
+        // Owner 10/04: whether something typed was sent isn't known well enough to say ("draft" was usually wrong).
+        _ = drafts
+        if words > 0 { did.append("typed about \(words) words") }
+        out.append("typed or sent: " + (did.isEmpty ? "nothing" : did.joined(separator: ", ")))
+        return out
+    }
+
+    /// claude/dayeval-1005: a site page's short name: "lab2.pdf: CHEM 101 10,12 (Fall 2026) Intro Chemistry" is
+    /// "CHEM 101 Intro Chemistry" (a file name before a colon gives way, parentheses and section lists go).
+    static func sitePage(_ display: String) -> String {
+        let parts = display.components(separatedBy: ": ").map { $0.trimmingCharacters(in: .whitespaces) }
+        var p = parts.first ?? ""
+        if parts.count > 1, p.range(of: #"\.[A-Za-z0-9]{2,4}$"#, options: .regularExpression) != nil { p = parts[1] }
+        p = p.replacingOccurrences(of: #"\([^)]*\)"#, with: "", options: .regularExpression)
+        p = p.split(separator: " ").filter { w in !(w.contains(",") && w.allSatisfy { $0.isNumber || $0 == "," }) }.joined(separator: " ")
+        return p.trimmingCharacters(in: .whitespaces)
+    }
+    /// A page thread's host ("page:canvas.lakeview.edu|…", "topic:page:…").
+    static func pageHost(_ key: String) -> String? {
+        let k = key.hasPrefix("topic:") ? String(key.dropFirst(6)) : key
+        for p in ["page:", "site:"] where k.hasPrefix(p) { return String(k.dropFirst(p.count).split(separator: "|").first ?? "").lowercased() }
+        return nil
+    }
+    /// A host as a name: "canvas.lakeview.edu" -> "Canvas", "lakeviewlearn.com" stays.
+    /// claude/dayeval-1005: a work tool's hosts by the tool's name ("acme.lightning.force.com" is Salesforce).
+    static let brandHosts: [(String, String)] = [("force.com", "Salesforce"), ("salesforce.com", "Salesforce"), ("atlassian.net", "Jira"),
+        ("sharepoint.com", "SharePoint"), ("hubspot.com", "HubSpot"), ("zendesk.com", "Zendesk"), ("linear.app", "Linear"), ("figma.com", "Figma"),
+        ("notion.so", "Notion"), ("docs.google.com", "Google Docs"), ("sheets.google.com", "Google Sheets"), ("slides.google.com", "Google Slides"),
+        ("instructure.com", "Canvas"), ("gradescope.com", "Gradescope"), ("quizlet.com", "Quizlet"), ("overleaf.com", "Overleaf")]
+    static func brand(_ host: String) -> String? {
+        var h = host.lowercased(); if h.hasPrefix("www.") { h.removeFirst(4) }
+        return brandHosts.first { h == $0.0 || h.hasSuffix("." + $0.0) }?.1
+    }
+    /// claude/dayeval-1005 (owner 10/04: "plain words"): a site by its name, never its host: a known tool's name, else the
+    /// host's own name ("en.wikipedia.org" is "Wikipedia", "lakeviewlearn.com" "Lakeviewlearn"), spelled as the site's pages spell it
+    /// ("courses.northlake.edu" is "NorthLake" when a page says "NorthLake").
+    public static func plainSite(_ host: String, titles: [String] = []) -> String {
+        var h = host.lowercased(); if h.hasPrefix("www.") { h.removeFirst(4) }
+        if let b = brand(h) ?? ThreadEntities.friendlyHosts[h] { return b }
+        let tool = siteLabel(h)
+        if tool != h { return tool }
+        var labels = h.split(separator: ".").map(String.init)
+        guard labels.count >= 2 else { return host }
+        labels.removeLast()
+        if ["co", "ac", "com", "org", "edu", "gov", "net"].contains(labels.last ?? ""), labels.count >= 2 { labels.removeLast() }
+        let name = labels.last ?? h
+        guard name.count >= 3, name.allSatisfy({ $0.isLetter || $0 == "-" }) else { return host }
+        for t in titles {
+            for w in t.split(whereSeparator: { !$0.isLetter && $0 != "-" }) where w.lowercased() == name { return String(w) }
+        }
+        return ThreadEntities.capitalized(name)
+    }
+    /// A page named by the app it is ("Lesson Viewer", "Student Portal", "Register"): never a topic.
+    public static func chromePage(_ page: String) -> Bool {
+        let words = page.lowercased().split(separator: " ").map(String.init)
+        let chrome: Set<String> = ["player", "library", "register", "login", "log", "sign", "home", "dashboard", "portal", "settings", "account",
+                                   "profile", "instruction", "instructions", "viewer", "launcher", "loading", "welcome", "overview"]
+        return words.count <= 4 && words.contains { chrome.contains($0) }
+    }
+    static func siteLabel(_ host: String) -> String {
+        if let b = brand(host) { return b }
+        var h = host; if h.hasPrefix("www.") { h.removeFirst(4) }
+        let first = h.split(separator: ".").first.map(String.init) ?? h
+        return DayReview.workHostWords.contains(first) || (h.split(separator: ".").count == 2 && DayReview.workHostWords.contains { $0.count >= 5 && first == $0 })
+            ? ThreadEntities.capitalized(first) : h
+    }
+    /// claude/dayeval-1005: the part of the day holding 60% or more of these spans' time ("morning" 5-12, "afternoon"
+    /// 12-17, "evening" 17-22, "night"), nil when none does.
+    public static func dayPart(_ spans: [(String, String)], timezone: String) -> String? {
+        let c = calendar(timezone)
+        var by = [String: Double](), total = 0.0
+        for (a, b) in spans {
+            guard let s = timestamp(a), let e = timestamp(b), e > s else { continue }
+            var t = s
+            while t < e {
+                let next = min(e, t.addingTimeInterval(300))
+                let h = c.component(.hour, from: t)
+                let part = h >= 5 && h < 12 ? "morning" : h >= 12 && h < 17 ? "afternoon" : h >= 17 && h < 22 ? "evening" : "night"
+                by[part, default: 0] += next.timeIntervalSince(t); total += next.timeIntervalSince(t); t = next
+            }
+        }
+        guard total > 0, let best = by.max(by: { ($0.value, $1.key) < ($1.value, $0.key) }), best.value >= total * 0.6 else { return nil }
+        return best.key
+    }
+    /// A window title without the ids test tools and files carry ("QA Mini-eb5cd00d-bb5b-…-B" -> "QA Mini").
+    static func withoutIDs(_ label: String) -> String {
+        var s = label.replacingOccurrences(of: #"[-_ ]?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F\[\]a-z]{6,}(-[A-Z])?"#, with: "", options: .regularExpression)
+        s = s.replacingOccurrences(of: #"\b[0-9a-f]{12,}\b"#, with: "", options: .regularExpression)
+        return s.trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: "-_·|")))
+    }
+
+    /// The person's own account and name: their home folder is never a project ("~" in Terminal is "jamielin").
+    static let reviewSelfWords: Set<String> = Set(ThreadEntities.tokens(NSUserName() + " " + NSFullUserName()).filter { $0.count >= 3 })
+    /// A thread that is the app it was in, not a piece of work: a terminal in the home folder, a remote screen, a camera.
+    static func toolThread(_ t: LevelThread, app: String, selfWords: Set<String>) -> Bool {
+        if DayReview.toolApps.contains(app.lowercased()) && ["doc", "app", "web"].contains(t.kind) { return true }
+        if t.kind == "code" {
+            let words = Set(ThreadEntities.tokens(workName(t, label: t.label)))
+            return !words.isEmpty && words.isSubset(of: selfWords)
+        }
+        return false
+    }
+    /// A project's piece by its own name when it names more than the project ("tallybird pricing page review" ->
+    /// "Tallybird pricing page review"); the project's name when it says nothing more or is too long.
+    static func projectDetail(_ label: String, project: String) -> String {
+        let projectTokens = Set(ThreadEntities.tokens(project))
+        let base = label.hasSuffix(" code") ? String(label.dropLast(5)) : label
+        let extra = ThreadEntities.tokens(base).filter { !projectTokens.contains($0) && !ThreadEntities.stopWords.contains($0) && $0.count >= 3 && Int($0) == nil }
+        // claude/dayeval-1005: only a name that has the project's own in it ("Tallybird pricing page review"); a pull request or
+        // a ticket title alone loses which project it was ("Worked on PR #77: …" for atlas-api).
+        let baseTokens = Set(ThreadEntities.tokens(base).flatMap { [$0, $0.replacingOccurrences(of: "-", with: "")] })
+        guard !extra.isEmpty, !projectTokens.isDisjoint(with: baseTokens) || projectTokens.contains(where: { p in baseTokens.contains { $0.replacingOccurrences(of: "-", with: "") == p } }), base.count <= 48, !base.contains("/"), !base.contains("~"), !base.contains("—") else { return project }
+        // The project's own spelling inside the piece's name.
+        var words = base.split(separator: " ", omittingEmptySubsequences: false).map(String.init)
+        for (i, w) in words.enumerated() where ThreadEntities.tokens(w) == Array(projectTokens) && projectTokens.count == 1 { words[i] = project }
+        return words.joined(separator: " ")
+    }
+
+    /// Results a window's own title shows (a confirmation page) or a note's own line states, first by the records.
+    static let outcomePatterns: [(String, String)] = [
+        ("Submitted", #"(?i)\b(submission (successful|received|complete|confirmed)|successfully submitted|submitted successfully|(application|assignment|form|response|quiz|exam|homework|answers?) (has been |was )?(submitted|received)|thank you for (your )?(submission|submitting|applying)|your response has been recorded)\b"#),
+        ("Signed", #"(?i)\b((signing|document|envelope) (is )?(complete|completed)|you('ve| have) (finished|completed) signing|signed successfully|all parties have signed)\b"#),
+        ("Ordered", #"(?i)\b(order (confirmed|placed|confirmation|received)|thank you for your (order|purchase))\b"#),
+        ("Paid", #"(?i)\b(payment (successful|received|complete|completed|confirmed)|paid successfully|receipt for your payment)\b"#),
+        ("Booked", #"(?i)\b((booking|reservation|appointment) (is )?confirmed|you('re| are) booked)\b"#),
+        ("Registered", #"(?i)\b(registration (complete|confirmed|successful)|you('re| are) registered)\b"#),
+        ("Deployed", #"(?i)\b((deployment|deploy) (succeeded|successful|complete)|published successfully|your (site|app) is live)\b"#),
+    ]
+    static let outcomeVerbs: Set<String> = ["Submitted", "Signed", "Ordered", "Paid", "Booked", "Registered", "Deployed", "Published", "Merged",
+                                            "Shipped", "Fixed", "Sent", "Released", "Finished", "Completed", "Applied", "Filed"]
+    static func outcomeVerb(_ title: String) -> String? {
+        outcomePatterns.first { title.range(of: $0.1, options: .regularExpression) != nil }?.0
+    }
+    /// Each group's result: a confirmation page's verb with what it confirmed (the page just before it in the same app or
+    /// site: "Submitted Homework 3"), else a note line that starts with a result verb, as the note says it.
+    static func reviewOutcomes(moments: [ActivityNote], actions: [String: CanonicalAction], groupOf: [String: String]) -> [String: (verb: String, object: String?, moments: [String])] {
+        var out = [String: (verb: String, object: String?, moments: [String])]()
+        var momentOf = [String: String]()
+        for m in moments { for a in m.actionIDs { momentOf[a] = m.id } }
+        let rows = moments.flatMap(\.actionIDs).compactMap { actions[$0] }.filter { $0.kind != "keyboard.text_input" && !$0.title.isEmpty }
+            .sorted { ($0.at, $0.id) < ($1.at, $1.id) }
+        for (i, a) in rows.enumerated() {
+            guard let verb = outcomeVerb(a.title), let mid = momentOf[a.id] else { continue }
+            // What it confirmed: the last other page in the same app and site within half an hour before it.
+            var object: String? = nil, objectMoment: String? = nil
+            let at = timestamp(a.at)
+            for p in rows[..<i].reversed() {
+                guard let pt = timestamp(p.at), let t = at, t.timeIntervalSince(pt) <= 1800 else { break }
+                guard p.app == a.app, p.site == a.site, outcomeVerb(p.title) == nil else { continue }
+                let name = TitleClean.clean(p.title, app: p.app, site: p.site).components(separatedBy: " | ").first?.components(separatedBy: " - ").first?
+                    .trimmingCharacters(in: .whitespaces) ?? ""
+                if !name.isEmpty, name.count <= 60, name.lowercased() != a.app.lowercased() { object = name; objectMoment = momentOf[p.id]; break }
+            }
+            let site = ThreadEntities.friendlyHosts[ThreadEntities.host(a.site)] ?? ThreadEntities.host(a.site)
+            let key = objectMoment.flatMap { groupOf[$0] } ?? groupOf[mid]
+            guard let key, out[key] == nil else { continue }
+            out[key] = (verb, object ?? (site.isEmpty ? "in " + a.app : "on " + site), [objectMoment, mid].compactMap { $0 })
+        }
+        for m in moments {
+            guard let key = groupOf[m.id], out[key] == nil, let note = m.generated ?? m.previous else { continue }
+            for line in note.output.bullets.map(\.text) {
+                let words = line.split(separator: " ").map(String.init)
+                guard let first = words.first, outcomeVerbs.contains(first), words.count >= 2, words.count <= 14 else { continue }
+                var rest = words.dropFirst().joined(separator: " ")
+                while let last = rest.last, ".;,".contains(last) { rest.removeLast() }
+                out[key] = (first, rest, [m.id]); break
+            }
+        }
+        return out
+    }
+
+    /// "Left off in Ghostty: Tallybird pricing page review": the day's last piece of work, the moment it ended in.
+    static func reviewLeftOff(_ threads: [DayReviewThread], byMoment: [String: ActivityNote], actions: [String: CanonicalAction], plan: ThreadPlan,
+                              groups: [String: [LevelThread]]) -> (DayReviewItem?, String?) {
+        guard let t = threads.filter({ $0.rankCategory == .work && $0.lastEnd != nil }).max(by: { ($0.lastEnd!, $1.key) < ($1.lastEnd!, $0.key) }),
+              let m = t.moments.compactMap({ byMoment[$0] }).max(by: { ($0.end, $0.id) < ($1.end, $1.id) }) else { return (nil, nil) }
+        let member = groups[t.key]?.first { $0.momentIDs.contains(m.id) }
+        var n = [String: Int]()
+        for a in m.actionIDs { if let app = actions[a]?.app, !app.isEmpty { n[app, default: 0] += 1 } }
+        let app = n.max { ($0.value, $1.key) < ($1.value, $0.key) }?.key ?? ""
+        var label = member.map { reviewDisplay($0) } ?? t.name
+        if t.kind == "project" { label = projectDetail(label, project: t.name) }
+        let site = member.flatMap { $0.kind == "web" ? siteName($0.label, key: $0.key) : nil }
+        let place = site ?? app
+        let says = DayReview.topic(label, echoing: [place, app] + DayReview.askPlaces)
+        guard !place.isEmpty, says != nil else { return (nil, nil) }
+        let item = DayReviewItem(id: "leftoff|" + t.key + "|" + (member?.key ?? ""), lead: "Left off " + (site != nil ? "on " : "in ") + place,
+                                 colon: true, tail: says, score: 0, moments: [m.id])
+        return (item, t.key)
     }
 
     /// Words that name a kind of work, an app or a place, never a project.
@@ -421,16 +790,19 @@ youtube reddit twitter slack zoom figma notion untitled shell bash zsh users use
     /// A planner thread's name for a bullet, never a raw window title.
     static func reviewDisplay(_ t: LevelThread) -> String {
         if conversationKinds.contains(t.kind), !t.people.isEmpty { return LevelThreads.channelLabel(t.kind, people: t.people, places: t.places) }
-        return TitleClean.label(ThreadEntities.capitalized(t.label))
+        let label = TitleClean.label(ThreadEntities.capitalized(t.label))
+        return DayReview.options.contains(.projects) ? withoutIDs(label) : label
     }
     /// What a piece of work is named by when it isn't part of a project: a code thread without its " code".
     static func workName(_ t: LevelThread, label: String) -> String {
         label.hasSuffix(" code") ? String(label.dropLast(5)) : label
     }
-    static func siteName(_ label: String, key: String) -> String {
+    static func siteName(_ label: String, key rawKey: String) -> String {
         var host = ""
+        let key = DayReview.options.contains(.workSites) && rawKey.hasPrefix("topic:") ? String(rawKey.dropFirst(6)) : rawKey
         for p in ["site:", "page:", "video:", "social:"] where key.hasPrefix(p) { host = String(key.dropFirst(p.count).split(separator: "|").first ?? "") }
         if let known = ThreadEntities.friendlyHosts[host] { return known }
+        if DayReview.options.contains(.workSites), let b = brand(host) { return b }
         if key.hasPrefix("social:") { return host == "x" ? "X" : ThreadEntities.capitalized(host) }
         if !host.isEmpty { return host }
         return label
@@ -463,7 +835,9 @@ youtube reddit twitter slack zoom figma notion untitled shell bash zsh users use
         let ranked = titles.sorted { kind == "search" ? ($0.value.last, $1.key) > ($1.value.last, $0.key) : ($0.value.seconds, $1.key) > ($1.value.seconds, $0.key) }
         var items = [DayReviewItem]()
         for (title, x) in ranked.prefix(4) {
-            let siteName = ThreadEntities.friendlyHosts[x.site] ?? (site.isEmpty ? x.site : site)
+            // claude/dayeval-1005: a topic thread's key names no site ("topic:email:…"): the page's own host, by its tool's name.
+            let siteName = ThreadEntities.friendlyHosts[x.site] ?? (DayReview.options.contains(.workSites) ? Self.brand(x.site) : nil)
+                ?? (site.isEmpty || (DayReview.options.contains(.workSites) && Self.pageHost(key) == nil && !x.site.isEmpty) ? x.site : site)
             switch kind {
             case "search":
                 // A search's words come from its window title; a query with anything a scrubber would hold back isn't shown.
@@ -475,13 +849,23 @@ youtube reddit twitter slack zoom figma notion untitled shell bash zsh users use
                                            tail: "on " + siteName, score: x.seconds / 60, moments: x.moments))
             default:
                 let url = try reviewLinks([x.action])[x.action]
-                items.append(DayReviewItem(id: key + "|" + title, lead: "Read", link: DayReviewLink(title: title, url: url), tail: "on " + siteName,
+                var shownTitle = title, place = siteName
+                if DayReview.options.contains(.workSites) {
+                    // claude/dayeval-1005 (owner 10/04): "Read Kite on Wikipedia", never "Kite - Wikipedia on en.wikipedia.org".
+                    if place.contains(".") { place = Self.plainSite(place, titles: [title]) }
+                    for sep in [" - ", " | ", " — ", " · "] where shownTitle.lowercased().hasSuffix((sep + place).lowercased()) {
+                        shownTitle = String(shownTitle.dropLast(sep.count + place.count))
+                    }
+                }
+                let named = DayReview.options.contains(.workSites) && shownTitle.lowercased().contains(place.lowercased())
+                items.append(DayReviewItem(id: key + "|" + title, lead: "Read", link: DayReviewLink(title: shownTitle, url: url), tail: named ? nil : "on " + place,
                                            score: x.seconds / 60, moments: x.moments))
             }
         }
         if items.isEmpty {
             let lead = kind == "video" ? "Watched" : kind == "search" ? "Searched" : "Read"
-            items.append(DayReviewItem(id: key + "#site", lead: lead, tail: site, score: 0, moments: momentIDs))
+            // claude/dayeval-1005: a site or "Web searches" with no page or query to name is filler ("Searched Web searches").
+            items.append(DayReviewItem(id: key + "#site", lead: lead, tail: site, score: 0, moments: momentIDs, filler: true))
         }
         return items
     }
@@ -578,15 +962,17 @@ youtube reddit twitter slack zoom figma notion untitled shell bash zsh users use
                 for item in shown {
                     guard let key = item.clauseKey, let src = built.sources[key], !src.notes.isEmpty, !src.actionIDs.isEmpty,
                           !skipping.contains(key + "|" + src.signature) else { continue }
-                    if let s = stored[key], s.generator == DayReviewClauses.version {
+                    if let s = stored[key], s.generator == DayReviewClauses.activeVersion {
                         if s.signature == src.signature { continue }
                         if !final, let at = timestamp(s.writtenAt), now.timeIntervalSince(at) < DayReview.clauseEvery {
                             recheck = min(recheck, at.addingTimeInterval(DayReview.clauseEvery))
                             continue
                         }
                     }
-                    out.append(DayReviewClauseRequest(day: day, timezone: timezone, key: key, lead: src.lead, name: src.name, colon: src.colon, notes: src.notes,
-                                                      signature: src.signature, actionIDs: src.actionIDs, start: src.start, end: src.end))
+                    var r = DayReviewClauseRequest(day: day, timezone: timezone, key: key, lead: src.lead, name: src.name, colon: src.colon, notes: src.notes,
+                                                   signature: src.signature, actionIDs: src.actionIDs, start: src.start, end: src.end)
+                    r.typedIDs = src.typedIDs.isEmpty ? nil : src.typedIDs
+                    out.append(r)
                     if out.count >= limit { return out }
                 }
             }
@@ -610,6 +996,42 @@ youtube reddit twitter slack zoom figma notion untitled shell bash zsh users use
 
     // MARK: quotes (the DayDream app only)
 
+    /// FNV-1a, the same in every process (Swift's `Hasher` is seeded per process).
+    static func stableHash(_ s: String) -> Int {
+        var h: UInt64 = 0xcbf29ce484222325
+        for byte in s.utf8 { h = (h ^ UInt64(byte)) &* 0x100000001b3 }
+        return Int(h & 0x7fffffffffffffff)
+    }
+    /// claude/dayeval-1005 (owner: typed words are read by the summarizer on this Mac): a thread's typed rows a clause may
+    /// be written from: prompts to an AI app and words written in a document, the latest last (at most `typedFactRows`).
+    /// Never a message, an email or a post to a person, a search or a form.
+    static func reviewTypedIDs(_ ids: [String], byMoment: [String: ActivityNote], typed: [String: ReviewTyped]) -> [String] {
+        let rows = ids.flatMap { byMoment[$0]?.actionIDs ?? [] }.compactMap { typed[$0] }.filter { $0.ask || $0.surface == "writing" }
+        return Array(rows.sorted { ($0.at, $0.id) < ($1.at, $1.id) }.suffix(DayReview.typedFactRows).map(\.id))
+    }
+    /// The typed facts of a clause request, for the writer on this Mac only (`writer` .local; a cloud writer gets none):
+    /// "asked: …" for a prompt, "wrote: …" for a document's words, opened with the local writer's disclosure (typing on,
+    /// a ready key, the safe-typing consent), whitespace folded, cut to `typedFactChars`, and only when the secret scrubber
+    /// keeps every word. Lines go to the model's evidence and its checker; nothing is saved but the checked clause, which
+    /// core refuses when it repeats typed words (`commitReviewClause`).
+    public func reviewTypedFacts(_ r: DayReviewClauseRequest, writer: TypedWriterKind, now: Date = Date()) throws -> [String] {
+        guard writer == .local, DayReview.options.contains(.typedFacts), let ids = r.typedIDs, !ids.isEmpty, typedVaultState == .ready else { return [] }
+        let u = "$.captureProvenance.unit."
+        var surfaces = [String: String]()
+        for row in try rows("SELECT id,coalesce(json_extract(body,'\(u)surface'),'') FROM records WHERE id IN (SELECT value FROM json_each(?))", [json(ids)]) {
+            surfaces[row[0]] = row[1]
+        }
+        var out = [String]()
+        for id in ids where r.actionIDs.contains(id) {
+            guard let words = try hydrateTypedText(id, disclosure: TypedWriterKind.local.disclosure, now: now),
+                  case .keep(_, let redactions) = TypedSecretScrubber.scrub(words), redactions.isEmpty,
+                  !words.contains(TypedSecretScrubber.marker) else { continue }
+            let line = MomentPromptText.clean(words, limit: DayReview.typedFactChars)
+            guard line.count >= 8 else { continue }
+            out.append((["ai", "aiTool"].contains(surfaces[id] ?? "") ? "asked: " : "wrote: ") + line)
+        }
+        return out
+    }
     /// The quoted rows' words, on this Mac only: opened with the owner disclosure (`hydrateTypedText`: typing on, a ready
     /// key in this process, the record still shown and kept), whitespace folded to single spaces, and only when the secret scrubber
     /// would keep every word. Empty in a process without a ready key (every MCP and CLI process). Writes nothing.

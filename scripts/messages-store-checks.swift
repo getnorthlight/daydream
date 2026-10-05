@@ -120,8 +120,8 @@ import PrivacyPolicy
         // compose-send/v1: the one line every view uses.
         func line(_ id:String) throws -> String? {try store.read(id).flatMap {ComposeView.line($0.evidence)}}
         check(try [s1,s2,s3].map(line) == Array(repeating:"Sent to Sam",count:3),"compose-send: three sends read Sent to Sam")
-        check(try line(draftReturn) == "Draft to Sam (not sent)","compose-send: the unsent draft reads Draft to Sam (not sent)")
-        check(try line(anon) == "Draft in Messages (not sent)" && line(labelled) == "Sent to someone","compose-send: New Message: no borrowed name")
+        check(try line(draftReturn) == "Typed to Sam","compose-send: words not sent read Typed to Sam, never draft")
+        check(try line(anon) == "Typed in Messages" && line(labelled) == "Sent to someone","compose-send: New Message: no borrowed name")
         check(try line(toMaya) == "Sent to Maya","compose-send: the second conversation")
         check(try unit(s1)?.confirm == "fieldCleared" && unit(draftReturn)?.confirm == nil,"compose-send: the confirmation is stored")
         // claude/messages2-1003 (owner 10/3: "the card knows who"): a conversation known only by its number or address
@@ -134,7 +134,7 @@ import PrivacyPolicy
         let em=try message(chars("see you there"),title:"sam@example.com",focus:"composer-mail",sent:"See you there")
         check(try line(em) == "Sent to sam@example.com","messages2-1003: an address conversation is named by its address")
         let numDraft=try message(chars("maybe later"),title:"+15550100142",focus:"composer-num2",sent:"Maybe later",cleared:false)
-        check(try line(numDraft) == "Draft to "+num+" (not sent)","messages2-1003: a number conversation's draft names it too")
+        check(try line(numDraft) == "Typed to "+num,"messages2-1003: a number conversation's unsent words name it too")
         // Never from a search box, a To box or a New Message window, whatever the title.
         let numSearch=try message(chars("dinner"),title:"+15550100142",labels:["Search"],focus:"search-num",sent:"dinner")
         check(try store.read(numSearch).flatMap {ComposeView.outcome($0.evidence)}?.destination.name == nil && store.typedUnit(numSearch)?.to == nil,"messages2-1003: a search box never names a number")

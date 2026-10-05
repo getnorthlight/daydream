@@ -48,7 +48,8 @@ public enum BrowserTypingTiming {
     /// A proof older than this cannot admit a key or a save (CaptureGate.ttlNanoseconds).
     public static let proofTTLNanoseconds: UInt64 = 1_000_000_000
     /// A key (or Return) processed later than this after it was typed is
-    /// dropped with its burst (the tap's input-lag bound, both designs).
+    /// dropped with its burst (the tap's input-lag bound, both designs); the text
+    /// admitted before a late key is parked at the gap (claude/axjoin-1005).
     /// fix/chrome-root: in the synchronous design "processed" is when the key's join STARTED (`checkedAt`): the join
     /// itself takes longer than this on a real Mac (`joinBudgetNanoseconds`), and it describes the moment after
     /// the key either way (`fresh`: it started after the key was typed).
@@ -749,6 +750,14 @@ public struct ChromeAXAccess<Node> {
     public var children: (Node) -> [Node]?
     /// C1 option 1: transient element references, scoped to the proven page; nil means unsupported/error.
     public var formSearch: (Node, BrowserFormSearch, Int) -> [Node]?
+    /// claude/xtyping-1005: asks Chrome's application element its role (AXRole), nothing else; true when it answered.
+    /// Chrome builds its accessibility tree (its own windows and every page's) only once an assistive client asks the
+    /// application its role (Chromium's `BrowserCrApplication -accessibilityRole`: basic mode, never the screen-reader
+    /// mode; no attribute is ever set, so neither the enhanced-UI nor the manual-accessibility switch). Until then Accessibility
+    /// names no focused application while Chrome is in front and Chrome names no focused element, so every join was
+    /// refused (`notFocused`). Asked only after every window answered "normal" (`BrowserTypingJoin.read`, `wake`).
+    /// The default (fixtures) asks nothing.
+    public var wake: () -> Bool = { false }
     /// fix/chrome-large-pages (owner-approved 2026-10-02): ON in production and QA. A walk that runs out of its node
     /// budget (`exhausted`) is answered by the bounded page search (`BrowserFormScan.search`); every other walk answer
     /// (password, reveal, unreadable incl. the child cap, late) is never downgraded, and a search that can't finish,
@@ -756,6 +765,19 @@ public struct ChromeAXAccess<Node> {
     /// larger than the walk's 64 nodes (Google, X, Gmail, Reddit) was refused. C-8's live hidden-case evidence is
     /// still open; checks may switch this off to reproduce the old refusal.
     public var formSearchRecoveryEnabled = true
+    /// claude/axjoin-1005 (the Accessibility join, `BrowserTypingJoin.read` with `viaAccessibility`). nil in an adapter
+    /// that doesn't offer them: the join then takes the full Apple Events read, unchanged.
+    /// A window's AXDocument: the address of its active tab, from Chrome's browser process (compared with the page's
+    /// AXURL, as the tab's Apple Events URL was). Asked only of the focused window, after every window answered "normal".
+    public var document: ((Node) -> String?)? = nil
+    /// A window's identity for its lifetime (the window server's number), as text; nil when it can't be read.
+    public var windowIdentity: ((Node) -> String?)? = nil
+    /// An element's Chromium view classes (AXDOMClassList; for Chrome's own views, the view's class name). nil on error.
+    public var viewClasses: ((Node) -> [String]?)? = nil
+    /// Whether an element has an accessible description (AXCustomContent present), never what it says. nil on error.
+    public var described: ((Node) -> Bool?)? = nil
+    /// Every seam the Accessibility join needs is wired.
+    public var offersAccessibilityJoin: Bool { document != nil && windowIdentity != nil && viewClasses != nil && described != nil }
     public init(frontmostPID: @escaping () -> Int32?, systemFocusedPID: @escaping () -> Int32?, secureInput: @escaping () -> Bool,
                 focusedWindow: @escaping () -> Node?, windows: @escaping () -> [Node]?, focusedElement: @escaping () -> Node?,
                 owner: @escaping (Node) -> Int32?, role: @escaping (Node) -> String?, subrole: @escaping (Node) -> String?,
@@ -802,6 +824,9 @@ public struct ChromeJoinEnvironment {
     public var automationPermitted: (Int32) -> Bool
     /// Cheap re-check that the target was not relaunched during the join (pid + launch date).
     public var launchIdentity: (Int32) -> String?
+    /// claude/axjoin-1005: whether this Chrome build takes the Accessibility join (`ChromeAXJoinPolicy.validated`).
+    /// false (the default, fixtures): the full Apple Events join.
+    public var accessibilityJoin: (ChromeTargetFacts) -> Bool = { _ in false }
     public init(now: @escaping () -> UInt64, enabled: @escaping () -> Bool, target: @escaping () -> ChromeTargetFacts?,
                 automationPermitted: @escaping (Int32) -> Bool, launchIdentity: @escaping (Int32) -> String?) {
         self.now = now; self.enabled = enabled; self.target = target; self.automationPermitted = automationPermitted
@@ -1217,16 +1242,49 @@ public final class BrowserTypingJoin<Node> {
         guard e.enabled() else { return .denied(.disabled) }
         guard let target = e.target(), ChromeTargetPolicy.accepts(target) else { return .denied(.untrustedTarget) }
         guard e.automationPermitted(target.pid) else { return .denied(.noPermission) }
+        // claude/axjoin-1005: a validated Chrome build takes the Accessibility join (both reads the same way).
+        var viaAX = e.accessibilityJoin(target) && ax.offersAccessibilityJoin
         let first: Read
-        switch read(e, ae, ax, target, confirming: false, field: field, anyFocus: anyFocus, deadline: deadline) { case .failure(let d): return .denied(d); case .success(let r): first = r }
+        axUnproven = false
+        switch read(e, ae, ax, target, confirming: false, field: field, anyFocus: anyFocus, deadline: deadline, viaAccessibility: viaAX) {
+        case .failure(let d):
+            // A window with no profile button to read (a popup, Picture-in-Picture) is not proven normal by
+            // Accessibility; its title had no Incognito/Guest tag. Such a join is the full Apple Events join instead, as
+            // before this change (its mode, bounds, name, tab and URL by Apple Events). Any other refusal stands.
+            guard viaAX, d == .notNormal, axUnproven else { return .denied(d) }
+            viaAX = false
+            switch read(e, ae, ax, target, confirming: false, field: field, anyFocus: anyFocus, deadline: deadline) {
+            case .failure(let d): return .denied(d); case .success(let r): first = r }
+        case .success(let r): first = r
+        }
         // Blocks win before the confirming read: a blocked page gets no second look.
         guard case .allowed(let origin) = BrowserTypingSites.evaluate(first.url, blockList: blockList, alwaysBlocked: alwaysBlocked),
               BrowserTypingSites.evaluate(first.axURL, blockList: blockList, alwaysBlocked: alwaysBlocked) == .allowed(origin: origin),
               sites(first.url), sites(first.axURL)
         else { return .denied(.blockedSite) }
         let second: Read
-        switch read(e, ae, ax, target, confirming: true, field: field, anyFocus: anyFocus, deadline: deadline) { case .failure(let d): return .denied(d); case .success(let r): second = r }
-        guard unchanged(first, second, ax) else { return .denied(.changed) }
+        // claude/axjoin-1005: the Accessibility join's confirming read asks no window list or mode before its page reads:
+        // the first read's (moments ago) opens the join, and the confirming read's own re-read after all page content
+        // closes it (step 10), so every window's mode still brackets every Accessibility read, with 4 Apple Events a
+        // join instead of 6. The full join's confirming read is unchanged.
+        let confirmed = viaAX
+            ? (e.enabled() && focused(ax, target.pid)
+                ? readAccessibility(e, ae, ax, target, ids: first.ids, confirming: true, field: field, anyFocus: anyFocus,
+                                    late: { e.now() > deadline }, step: { _ in })
+                : .failure(e.enabled() ? .notFocused : .disabled))
+            : read(e, ae, ax, target, confirming: true, field: field, anyFocus: anyFocus, deadline: deadline, viaAccessibility: false)
+        switch confirmed { case .failure(let d): return .denied(d); case .success(let r): second = r }
+        // claude/axjoin-1005 (owner laptop 10/04, an X reply: `changed` and `window.titleUnmatched`; X rewrites its title,
+        // an unread count "(3) ", a post's "… on X: …"): a title that changed between the reads is not a changed window or
+        // page where the title bound nothing. The Accessibility join binds the window by its number and the page by
+        // AXDocument == AXURL and the same web area; the full join, when exactly one listed window has the focused
+        // window's bounds in both reads, binds it by bounds (step 9), and the page by the tab's id and address. The
+        // window list, bounds, Accessibility windows, window, tab, both addresses, web area and field chain must still be
+        // the same. Only where several same-bounds windows made the title decide (step 9) must it be the same in both.
+        // A title that changed is not saved as the place (site only).
+        let titlesBind = !viaAX && (first.candidates.count > 1 || second.candidates.count > 1)
+        guard unchanged(first, second, ax, titles: titlesBind) else { return .denied(.changed) }
+        let titleSettled = first.title == second.title
         let ended = e.now()
         guard ended >= began, ended - began <= BrowserTypingTiming.joinBudgetNanoseconds else { return .denied(.timeout) }
 
@@ -1242,7 +1300,7 @@ public final class BrowserTypingJoin<Node> {
             documentID: documentID, focusID: focusID, targetIdentity: target.launchIdentity, role: first.role,
             subrole: first.subrole, checkedAt: began)
         proof.sendField = first.sendField; proof.sendPlace = first.sendPlace
-        proof.pageTitle = WebTypingTitle.clean(first.pageName, url: first.url, origin: origin)
+        proof.pageTitle = WebTypingTitle.clean(titleSettled ? first.pageName : "", url: first.url, origin: origin)
         proof.composeRoute = first.composeRoute; proof.replyLabels = first.replyLabels
         proof.titleObservedAt = first.titleObservedAt
         if !anyFocus {
@@ -1312,12 +1370,37 @@ public final class BrowserTypingJoin<Node> {
     func focused(_ ax: ChromeAXAccess<Node>, _ pid: Int32) -> Bool {
         ax.frontmostPID() == pid && ax.systemFocusedPID() == pid && !ax.secureInput()
     }
+    /// claude/xtyping-1005: Chrome is in front with no secure input, and Accessibility names no focused application at
+    /// all (not another one): Chrome's accessibility is asleep (`ChromeAXAccess.wake`).
+    static func asleep(_ ax: ChromeAXAccess<Node>, _ pid: Int32) -> Bool {
+        ax.frontmostPID() == pid && ax.systemFocusedPID() == nil && !ax.secureInput()
+    }
+
+    /// claude/xtyping-1005: wakes Chrome's accessibility when Chrome comes to the front (or is in front when recording
+    /// starts, or after it relaunched), so the first key of a page finds it awake: the same checks as a join before any
+    /// read (consent, the signed target, Automation already granted, Chrome in front with no secure input), then the
+    /// mode gate (window IDs, every window "normal"), then Chrome's role (`ChromeAXAccess.wake`). Nothing about a
+    /// window, page or field is read and nothing is proven: keys still take a full join. Cheap and idempotent: when
+    /// Chrome is already awake it stops before any Apple Event. True when Chrome answered.
+    public func wake(environment e: ChromeJoinEnvironment, appleEvents ae: (ChromeJoinRequest) -> ChromeJoinReply?,
+                     accessibility ax: ChromeAXAccess<Node>) -> Bool {
+        guard design == .synchronous, e.enabled(), let target = e.target(), ChromeTargetPolicy.accepts(target),
+              e.automationPermitted(target.pid) else { return false }
+        // Already awake (Accessibility names Chrome focused), or another app focused: nothing to do, no Apple Event.
+        guard Self.asleep(ax, target.pid) else { return false }
+        guard case .ids(let ids)? = ae(.windowIDs), !ids.isEmpty, ids.count <= BrowserTypingTiming.maxWindows,
+              Set(ids).count == ids.count, ids.allSatisfy(ChromeAppleEvents.validID) else { return false }
+        guard case .texts(let modes)? = ae(.modes), modes.count == ids.count, modes.allSatisfy({ $0 == "normal" }) else { return false }
+        guard e.enabled() else { return false }
+        return ax.wake()
+    }
 
     /// One full read. Order matters and is asserted by call-recording tests
     /// and scripts/check_browser_boundary.py.
     private func read(_ e: ChromeJoinEnvironment, _ ae: (ChromeJoinRequest) -> ChromeJoinReply?, _ ax: ChromeAXAccess<Node>,
                       _ target: ChromeTargetFacts, confirming: Bool,
-                      field: (String, BrowserTypingFieldLabels) -> Bool, anyFocus: Bool, deadline: UInt64) -> Result<Read, BrowserTypingDenial> {
+                      field: (String, BrowserTypingFieldLabels) -> Bool, anyFocus: Bool, deadline: UInt64,
+                      viaAccessibility: Bool = false) -> Result<Read, BrowserTypingDenial> {
         func late() -> Bool { e.now() > deadline }
         // claude/typing-1004: which window or frame step refused, in the always-on tally (`WebTypingRefusals.step`):
         // a full join's first read only, never a click join's or the confirming read's, never a privacy fact.
@@ -1325,7 +1408,17 @@ public final class BrowserTypingJoin<Node> {
         func step(_ name: StaticString) { if tally { WebTypingRefusals.shared.step(name) } }
         // 0. Still enabled, Chrome frontmost and focused, no secure input.
         guard e.enabled() else { return .failure(.disabled) }
-        guard focused(ax, target.pid) else { return .failure(.notFocused) }
+        // claude/xtyping-1005 (owner laptop 10/04, public 0.1.4: nothing typed on X was saved; reproduced with a fresh
+        // Chrome 154): Chrome's accessibility is off until an assistive client asks its application element its role.
+        // Then, with Chrome in front and no secure input, Accessibility names NO focused application (and Chrome no
+        // focused element): every join was refused here, `notFocused`, and nothing said why (a repeat isn't counted).
+        // Such a read goes on to the mode gate (steps 1-2: nothing about any window or page is read before it), then
+        // wakes Chrome (`ChromeAXAccess.wake`: its role, nothing else) and is refused `notFocused` as before; the next
+        // key finds Chrome awake (about 30 ms) and every check below is unchanged. Anything else that isn't focused
+        // (another app in front or focused, secure input, a focused app that can't be read) is refused as before.
+        let inFocus = focused(ax, target.pid)
+        let asleep = !inFocus && Self.asleep(ax, target.pid)
+        guard inFocus || asleep else { return .failure(.notFocused) }
         // 1. Window identities only.
         guard case .ids(let ids)? = ae(.windowIDs), !ids.isEmpty, ids.count <= BrowserTypingTiming.maxWindows,
               Set(ids).count == ids.count, ids.allSatisfy(ChromeAppleEvents.validID) else { return .failure(.windowList) }
@@ -1336,6 +1429,14 @@ public final class BrowserTypingJoin<Node> {
         //    window, which no join budget could pay for on a real Mac.
         guard case .texts(let modes)? = ae(.modes), modes.count == ids.count, modes.allSatisfy({ $0 == "normal" })
         else { return .failure(.notNormal) }
+        // claude/xtyping-1005: every window is normal: wake Chrome's accessibility (above), and refuse this read.
+        if asleep { step("focus.asleep"); _ = ax.wake(); return .failure(.notFocused) }
+        // claude/axjoin-1005: steps 1-2 above are the same in both joins (every window of every Space answered "normal");
+        // a validated Chrome then proves the window, page and field from Accessibility (`readAccessibility`).
+        if viaAccessibility {
+            return readAccessibility(e, ae, ax, target, ids: ids, confirming: confirming, field: field, anyFocus: anyFocus,
+                                     late: late, step: step)
+        }
         // 3. Accessibility geometry of the focused window.
         guard let window = ax.focusedWindow(), ax.owner(window) == target.pid, ax.role(window) == "AXWindow",
               ax.subrole(window) == "AXStandardWindow", ax.minimized(window) == false,
@@ -1485,10 +1586,140 @@ public final class BrowserTypingJoin<Node> {
                              sendField: sendField, sendPlace: sendPlace, composeRoute: BrowserComposeRoute.path(url: url), replyLabels: replyLabels))
     }
 
-    private func unchanged(_ a: Read, _ b: Read, _ ax: ChromeAXAccess<Node>) -> Bool {
-        a.ids == b.ids && a.axFrames == b.axFrames && a.bounds == b.bounds && a.candidates == b.candidates && a.names == b.names
+    /// claude/axjoin-1005: the tabs and profile buttons the Accessibility join has named, by element (memory only, the
+    /// last few). A tab is named by its page's web area object: the same object is the same tab.
+    private var axTabs: [(webArea: Node, id: String)] = []
+    private var axTabCount = 0
+    private var axButtons: [(window: Node, button: Node)] = []
+    /// The Accessibility read in progress found no profile button to read (`ChromePrivateWindow.Verdict.unproven`) on
+    /// a window whose title had no Incognito/Guest tag: the join is then the full Apple Events join (`attempt`).
+    private var axUnproven = false
+    private func axTabID(_ webArea: Node, _ ax: ChromeAXAccess<Node>) -> String {
+        if let known = axTabs.first(where: { ax.equal($0.webArea, webArea) }) { return known.id }
+        axTabCount &+= 1
+        let id = "ax-tab-\(axTabCount)"
+        axTabs.append((webArea, id)); if axTabs.count > 16 { axTabs.removeFirst() }
+        return id
+    }
+
+    /// claude/axjoin-1005: steps 3-14 of a read for a validated Chrome (`ChromeAXJoinPolicy`), after steps 0-2 (consent,
+    /// focus, the window IDs and every window's mode by Apple Events, "normal" on every Space) passed in `read`. No
+    /// window bounds, name, tab or URL is asked by Apple Events: the window is Accessibility's focused window, proven
+    /// normal again by its own title and profile button (`ChromePrivateWindow`, either signal refuses); the page is the
+    /// one web area above the focused field, whose address must equal the window's AXDocument (Chrome's browser process,
+    /// the active tab's address) on origin, path and query. The field rules, the form scan and the confirming read's
+    /// window list and mode re-read are the full join's, unchanged.
+    private func readAccessibility(_ e: ChromeJoinEnvironment, _ ae: (ChromeJoinRequest) -> ChromeJoinReply?, _ ax: ChromeAXAccess<Node>,
+                                   _ target: ChromeTargetFacts, ids: [String], confirming: Bool,
+                                   field: (String, BrowserTypingFieldLabels) -> Bool, anyFocus: Bool,
+                                   late: () -> Bool, step: (StaticString) -> Void) -> Result<Read, BrowserTypingDenial> {
+        guard let document = ax.document, let windowIdentity = ax.windowIdentity else { return .failure(.window) }
+        // 3. Accessibility geometry of the focused window (as the full join).
+        guard let window = ax.focusedWindow(), ax.owner(window) == target.pid, ax.role(window) == "AXWindow",
+              ax.subrole(window) == "AXStandardWindow", ax.minimized(window) == false,
+              let frame = ax.frame(window), frame.valid else { step("window.focused"); return .failure(.window) }
+        // 4. Accessibility's windows (this Space): the focused one among them, no more standard windows than Apple
+        //    Events listed on every Space. Geometry only.
+        guard let all = ax.windows(), all.count <= BrowserTypingTiming.maxWindows,
+              all.contains(where: { ax.equal($0, window) }) else { return .failure(.unlistedWindow) }
+        var axFrames: [ChromeBounds] = []
+        for w in all {
+            guard let sub = ax.subrole(w) else { return .failure(.unlistedWindow) }
+            guard sub == "AXStandardWindow" else { continue }
+            guard let f = ax.frame(w), f.valid else { return .failure(.unlistedWindow) }
+            axFrames.append(f)
+        }
+        guard axFrames.count <= ids.count else { return .failure(.unlistedWindow) }
+        guard !late() else { return .failure(.timeout) }
+        // 5. The focused window's own Incognito/Guest signals (defense in depth after step 2): its title's tag and its
+        //    profile button. Either one, or a button that can't be found or read, refuses as not normal.
+        let titleObservedAt = e.now()
+        guard let title = ax.title(window) else { step("window.axTitle"); return .failure(.window) }
+        episodeTitle = (window, title.hashValue)
+        let cached = axButtons.first(where: { ax.equal($0.window, window) })?.button
+        let privacy = ChromePrivateWindow.check(window: window, title: title, ax: ax, cached: cached, late: late)
+        guard privacy.verdict == .normal, let button = privacy.button else {
+            if late() { return .failure(.timeout) }
+            if !confirming, privacy.verdict == .unproven { axUnproven = true }
+            // No tally step: a privacy refusal is never named apart (WebTypingRefusals, review B5-1).
+            return .failure(.notNormal)
+        }
+        if cached == nil { axButtons.append((window, button)); if axButtons.count > 8 { axButtons.removeFirst() } }
+        // 6. The window's identity for its lifetime (never its position in a list).
+        guard let number = windowIdentity(window), !number.isEmpty, number.utf8.count <= 40 else { return .failure(.window) }
+        let windowID = "ax-window-" + number
+        // 7. The focused field and its ancestry (the full join's step 11, unchanged).
+        guard !late() else { return .failure(.timeout) }
+        guard let focus = ax.focusedElement(), ax.owner(focus) == target.pid, let role = ax.role(focus),
+              anyFocus || ax.textBox(focus, role: role), !role.lowercased().contains("secure"), let subrole = ax.subrole(focus),
+              !subrole.lowercased().contains("secure") else { noteSecureFocus(ax); return .failure(.field) }
+        guard !secureFocus.contains(where: { ax.equal($0, focus) }) else { return .failure(.sensitiveField) }
+        var cursor: Node? = focus, chain: [Node] = [], webAreas: [Node] = [], reached = false
+        for _ in 0..<BrowserTypingTiming.maxAncestors {
+            guard !late() else { return .failure(.timeout) }
+            guard let node = cursor, ax.owner(node) == target.pid, let r = ax.role(node), !r.lowercased().contains("secure"),
+                  !chain.contains(where: { ax.equal($0, node) }) else { step("frame.chain"); return .failure(.frame) }
+            chain.append(node)
+            if r == "AXWebArea" { webAreas.append(node) }
+            if ax.equal(node, window) { reached = true; break }
+            cursor = ax.parent(node)
+        }
+        guard reached, webAreas.count == 1 else {
+            step(!reached ? "frame.chain" : webAreas.isEmpty ? "frame.chromeUI" : "frame.nested"); return .failure(.frame)
+        }
+        // 8. Same page on both sides: the window's address (browser process) and the web area's (the page), http(s),
+        //    same origin, same path and query.
+        guard let url = document(window), url.utf8.count <= 8192, let axURL = ax.url(webAreas[0]),
+              let o1 = BrowserTypingSites.origin(url), let o2 = BrowserTypingSites.origin(axURL),
+              o1 == o2, BrowserTypingSites.sameDocument(url, axURL) else { return .failure(.url) }
+        let tabID = axTabID(webAreas[0], ax)
+        // The tab's name for the saved row: the page's title only when the window's title is made from it.
+        let pageName = ax.title(webAreas[0]).flatMap { ChromeWindowMatching.titleMatches(axTitle: title, aeName: $0) ? $0 : nil } ?? ""
+        // 9. The field's labels, id and classes, and the form scan (the full join's step 13, unchanged).
+        guard !late() else { return .failure(.timeout) }
+        var sendField = "", sendPlace = "", replyLabels: [String] = []
+        if !anyFocus {
+            guard let labels = ax.fieldLabels(focus) else { return .failure(.field) }
+            guard !BrowserTypingFieldRules.denies(labels) else { return .failure(.sensitiveField) }
+            let scanned = BrowserFormScan.scan(chain: chain, ax: ax, late: late)
+            if !confirming { CaptureDiagnostics.shared.hold("join.formScan", scanned) }
+            switch scanned {
+            case .clear: break
+            case .password, .reveal: return .failure(.sensitiveField)
+            case .exhausted, .unreadable: boxRefusal = (target.pid, window, focus); return .failure(.field)
+            case .late: return .failure(.timeout)
+            }
+            guard !BrowserTypingFieldRules.unlabelled(role: role, subrole: subrole, labels: labels) else {
+                boxRefusal = (target.pid, window, focus); return .failure(.field)
+            }
+            guard field(url, labels) else { return .failure(.blockedSite) }
+            let search = SendRules.surface(bundle: "", host: BrowserTypingSites.host(of: url)) == "search"
+            sendField = SendRules.fieldClass(role: role, labels: labels.texts, composer: BrowserTypingComposerRules.composer(labels), search: search)
+            sendPlace = SendRules.composerPlace(labels: labels.texts, host: BrowserTypingSites.host(of: url)) ?? ""
+            replyLabels = BrowserComposeRoute.replyMarkers(labels.texts)
+        }
+        // 10. Confirming read only: the window list and every mode again (Apple Events, every Space), Accessibility's
+        //     windows, focus and the target, after all page content (the full join's step 14, unchanged).
+        if confirming {
+            guard ae(.windowIDs) == .ids(ids) else { return .failure(.changed) }
+            guard case .texts(let again)? = ae(.modes), again.count == ids.count, again.allSatisfy({ $0 == "normal" })
+            else { return .failure(.notNormal) }
+            guard let again = ax.windows(), again.count == all.count,
+                  zip(again, all).allSatisfy({ ax.equal($0, $1) }) else { return .failure(.changed) }
+            guard focused(ax, target.pid) else { return .failure(.notFocused) }
+            guard e.launchIdentity(target.pid) == target.launchIdentity else { return .failure(.changed) }
+        }
+        return .success(Read(ids: ids, axFrames: axFrames, bounds: axFrames, candidates: [], names: [], windowID: windowID,
+                             tabID: tabID, url: url, axURL: axURL, frame: frame, titleObservedAt: titleObservedAt, title: title, pageName: pageName,
+                             window: window, focus: focus,
+                             webArea: webAreas[0], chain: chain, role: role, subrole: subrole, windows: all,
+                             sendField: sendField, sendPlace: sendPlace, composeRoute: BrowserComposeRoute.path(url: url), replyLabels: replyLabels))
+    }
+
+    private func unchanged(_ a: Read, _ b: Read, _ ax: ChromeAXAccess<Node>, titles: Bool = true) -> Bool {
+        a.ids == b.ids && a.axFrames == b.axFrames && a.bounds == b.bounds && a.candidates == b.candidates && (!titles || a.names == b.names)
             && a.windowID == b.windowID && a.tabID == b.tabID && a.url == b.url && a.axURL == b.axURL && a.frame == b.frame
-            && a.title == b.title && a.role == b.role && a.subrole == b.subrole && ax.equal(a.window, b.window)
+            && (!titles || a.title == b.title) && a.role == b.role && a.subrole == b.subrole && ax.equal(a.window, b.window)
             && ax.equal(a.focus, b.focus) && ax.equal(a.webArea, b.webArea) && a.chain.count == b.chain.count
             && zip(a.chain, b.chain).allSatisfy { ax.equal($0, $1) }
     }
@@ -2208,7 +2439,16 @@ public final class BrowserTypingBurst {
     /// The join, the burst rules, the gate and the latch, before anything is read.
     private func admitted(_ result: BrowserTypingJoinResult, typedAt: UInt64, processedAt: UInt64, policy: CapturePolicy, beforeEdit: (FocusProof, UInt64) -> Void = { _, _ in }) -> FocusProof? {
         if let denial = result.denial { dropReason = .denied; denied(denial, at: processedAt); return nil }
-        guard admitKey(result, typedAt: typedAt, processedAt: processedAt), let j = result.proof else { session.retract(); return nil }
+        guard admitKey(result, typedAt: typedAt, processedAt: processedAt), let j = result.proof else {
+            // claude/axjoin-1005 (owner decision 10/04: a late key cost the whole reply on a busy laptop): a key whose
+            // allowed join started too late (`late`) is dropped unread, never attributed (review I2: it may have gone to a
+            // window that has closed since), with the quiet period (`admitKey`). The keys before it were each admitted by
+            // an on-time join, so their unit is sealed at the gap and parked, exactly as for a key lost late at intake
+            // (`WebTypingRoute.keyLost`, review G51): it is saved only if the settle's fresh joins prove its field again
+            // (`resolveParked`), and any privacy refusal before that drops it. Any other drop retracts the unit, as before.
+            if dropReason == .late { session.seal(.gap, now: processedAt, focusMoved: false) } else { session.retract() }
+            return nil
+        }
         return gated(j, processedAt: processedAt, policy: policy, beforeEdit: { fp, _ in beforeEdit(fp, typedAt) })
     }
     /// The gate and the latch on an admitted key's proof.

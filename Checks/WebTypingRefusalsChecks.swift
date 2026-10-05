@@ -78,8 +78,38 @@ func runJoinStepChecks() throws {
     try check(t.snapshot().count == size, "join steps: a step outside the list is never kept")
     t.join(denial: "url")
     try check(t.snapshot()["step.window.title"] == 2, "join steps: a step is counted only with the join that noted it")
-    try check(WebTypingRefusals.stepNames.count == 10 && WebTypingRefusals.names.contains("tap.noKeys"),
-              "join steps: ten step names, and the tap's own name")
+    try check(WebTypingRefusals.stepNames.count == 11 && WebTypingRefusals.names.contains("tap.noKeys"),
+              "join steps: eleven step names (claude/xtyping-1005: + focus.asleep), and the tap's own name")
+    try runTypingSessionChecks()
+}
+
+/// claude/xtyping-1005 (owner laptop 10/04: an X post typed again after a failed one moved no counter, because the
+/// tally counts an outcome only when it changes): each typing session in Chrome (keys after 3 s without one) is
+/// counted, and starts every stream's episode again, so a refusal that repeats the last session's is counted again.
+func runTypingSessionChecks() throws {
+    let t = WebTypingRefusals()
+    let s: UInt64 = 1_000_000_000
+    t.keyArrived(at: 10 * s)
+    for i in 0..<20 { t.keyArrived(at: 10 * s + UInt64(i) * 100_000_000); t.join(denial: "notFocused") }
+    try check(t.snapshot()["burst"] == 1 && t.snapshot()["join.notFocused"] == 1, "sessions: one session of 20 refused keys counts one session, one episode")
+    t.keyArrived(at: 30 * s); t.join(denial: "notFocused")
+    try check(t.snapshot()["burst"] == 2 && t.snapshot()["join.notFocused"] == 2, "sessions: the same refusal in the next session counts again")
+    t.keyArrived(at: 32 * s); t.join(denial: "notFocused")
+    try check(t.snapshot()["burst"] == 2 && t.snapshot()["join.notFocused"] == 2, "sessions: keys 2 s apart are one session")
+    t.keyArrived(at: 40 * s); t.note("key.lateAtIntake"); t.keyArrived(at: 40 * s + 1); t.note("key.lateAtIntake")
+    try check(t.snapshot()["key.lateAtIntake"] == 1, "sessions: late keys of one session count once")
+    t.keyArrived(at: 50 * s); t.note("key.lateAtIntake")
+    try check(t.snapshot()["key.lateAtIntake"] == 2, "sessions: a late key of a new session counts again (that stream had counted once a run)")
+    t.keyArrived(at: 5 * s)
+    try check(t.snapshot()["burst"] == 5, "sessions: a clock that went back starts a new session")
+    t.step("focus.asleep"); t.join(denial: "notFocused")
+    try check(t.snapshot()["step.focus.asleep"] == 1, "sessions: a join that found Chrome asleep has its step name")
+    t.woke(); t.woke()
+    try check(t.snapshot()["wake.chrome"] == 2, "sessions: Chrome woken at the front counts one by one")
+    t.reset(); t.keyArrived(at: 6 * s)
+    try check(t.snapshot()["burst"] == 1, "sessions: a reset starts over")
+    try check(WebTypingRefusals.names.contains("burst") && WebTypingRefusals.names.contains("wake.chrome") && WebTypingRefusals.names.count < 64,
+              "sessions: the new names are on the fixed list")
 }
 
 /// claude/typing-1004: `KeyArrivalWatch`, the public build's check for an input tap that macOS made but never feeds

@@ -108,7 +108,10 @@ class CaptureWiring(unittest.TestCase):
         # processes and any process that is not a regular app, before any attribute is read; the policy rules drop the
         # same bundles at capture and hide rows already saved.
         snapshot = read('Sources/MacMemApp/AccessibilitySnapshot.swift')
-        body = between(snapshot, 'static func snapshot(pid: pid_t, at point: CGPoint? = nil, captureText: Bool) -> AccessibilitySnapshot? {', '\n    }\n')
+        # perf2-1005: `snapshot` hands its work to `read` (the same reads, safe off the main thread) and keeps the status.
+        self.assertIn('let r = read(pid: pid, at: point, captureText: captureText)',
+                      between(snapshot, 'static func snapshot(pid: pid_t, at point: CGPoint? = nil, captureText: Bool) -> AccessibilitySnapshot? {', '\n    }\n'))
+        body = between(snapshot, 'static func read(pid: pid_t, at point: CGPoint? = nil, captureText: Bool) -> (snapshot: AccessibilitySnapshot?, status: String) {', '\n    }\n')
         skip = 'if SystemProcesses.excluded(bundle:bundle,regularApp:running.activationPolicy == .regular) {'
         self.assertIn(skip, body)
         self.assertLess(body.index(skip), body.index('AXUIElementCreateApplication'))

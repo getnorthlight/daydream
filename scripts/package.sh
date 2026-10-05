@@ -49,8 +49,8 @@ install -m 755 "$release_bin/MacMem" "$app/Contents/MacOS/MacMem"
 install -m 755 "$release_bin/mac-mem" "$app/Contents/MacOS/mac-mem"
 install -m 755 "$release_bin/mac-mem-backup" "$app/Contents/MacOS/mac-mem-backup"
 install -m 644 packaging/Info.plist "$app/Contents/Info.plist"
-# The pinned arm64 search runtime targets macOS 13.1.
-plutil -replace LSMinimumSystemVersion -string 13.1 "$app/Contents/Info.plist"
+# DayDream needs macOS 15 (owner decision for 0.1.5, as the website says); the pinned arm64 search runtime needs 13.1.
+plutil -replace LSMinimumSystemVersion -string 15.0 "$app/Contents/Info.plist"
 ditto "$release_bin/MacMem_MemoryUI.bundle" "$app/Contents/Resources/MacMem_MemoryUI.bundle"
 if [[ -n "$owner_plist_key" ]]; then plutil -insert "$owner_plist_key" -bool true "$app/Contents/Info.plist"; fi
 mkdir -p "$app/Contents/Frameworks"
@@ -67,6 +67,8 @@ install -m 644 adapters/before_turn.py "$app/Contents/Resources/before_turn.py"
 install -m 644 adapters/launcher.example.json "$app/Contents/Resources/"
 python3 -B scripts/search_payload.py assemble --app "$app" --source "$project" --inputs "${DAYDREAM_TYPESENSE_INPUTS:-$project/Vendor/Typesense-30.2}"
 python3 scripts/release.py manifest --app "$app"
+# claude/crashguard-015: macOS 15.0 (Info.plist, Package.swift) and arm64-only binaries built for 15.0.
+python3 scripts/release.py platform --app "$app"
 if [[ "${MACMEM_PRE_SIGNING:-0}" == 1 ]]; then
   printf '%s\n' 'UNSIGNED/PENDING TRUST: outer seal intentionally absent; signing owner must seal final bytes.'
 else

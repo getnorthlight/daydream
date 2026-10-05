@@ -243,6 +243,8 @@ extension MemoryStore {
             return receipt
         }
         scheduleSearchRefresh()
+        // wal-1005: nothing forgotten stays in the write-ahead log (HistoryJournal.swift).
+        defer { foldRemoved() }
         // gold/int r3 review: the deletion is committed; a cleanup bookkeeping write that fails (another connection held
         // the history) must not report it as not deleted. Its receipt then says the cleanup is pending.
         do { return try finishDeletionCleanup(receipt) }

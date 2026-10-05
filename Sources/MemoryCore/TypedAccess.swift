@@ -71,7 +71,7 @@ public enum TypedAccessText {
     /// Settings row for one AI app (later run).
     public static func toggle(_ app: String) -> String { "Let \(app) see the exact words you typed" }
     public static let toggleHelp = "Otherwise it sees only a short note, like 'Typed in Slack, a sentence'."
-    public static let exactTextIs = "typed by the person (a draft unless state is sent); shown because the person allowed this app to see the exact words"
+    public static let exactTextIs = "typed by the person (state sent means it was sent); shown because the person allowed this app to see the exact words"
 }
 
 extension MemoryStore {

@@ -4,7 +4,6 @@ These pages explain how DayDream works. They describe the current code; where a 
 
 For everyone:
 
-- [Guide](guide.md): what DayDream records and sends, permissions, summaries, AI apps, network connections and known limits.
 - [Install](install.md): download, setup and first recording, with pictures.
 - [Privacy and security FAQ](faq.md): short answers, such as "Is this a keylogger?" and "What leaves my Mac?".
 - [Privacy policy](../PRIVACY.md): what DayDream keeps, what can leave your Mac, and how to reach us.

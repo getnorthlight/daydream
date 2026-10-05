@@ -16,18 +16,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
 IMAGES = DOCS / "images"
-README_IMAGES = IMAGES / "readme"
-# readme-1005: the README is the short front page; the full reference (what is recorded and sent, permissions, summaries,
-# network connections, known limits) moved to docs/guide.md, and its claims are checked there.
-GUIDE = "docs/guide.md"
-# The one place "coming soon" may appear (owner, 10/04): the download line, until the first release is out.
-DOWNLOAD_SOON = re.compile(r"the first download is coming soon at \[getdaydream\.app\]\(https://getdaydream\.app\)")
 REPO = "getnorthlight/daydream"
 
 # The files the docs track owns (SPEC 6.6). Other docs have their own checks.
 OWNED = [
     "README.md", "PRIVACY.md", "SECURITY.md", "CONTRIBUTING.md",
-    "docs/README.md", "docs/guide.md", "docs/privacy-model.md", "docs/summaries.md", "docs/backup-restore.md",
+    "docs/README.md", "docs/privacy-model.md", "docs/summaries.md", "docs/backup-restore.md",
     "docs/install.md", "docs/faq.md", "docs/bad-build-plan.md",
     "PrivacyPolicy/README.md",
 ]
@@ -105,7 +99,7 @@ class OwnedFiles(unittest.TestCase):
             "nothing leaves your mac.", "summaries on your mac are available",
         ]
         for rel in OWNED:
-            low = DOWNLOAD_SOON.sub("", read(rel).lower())
+            low = read(rel).lower()
             for phrase in banned:
                 self.assertNotIn(phrase, low, f"{rel}: {phrase!r}")
 
@@ -139,7 +133,6 @@ class PendingPages(unittest.TestCase):
 
 class Readme(unittest.TestCase):
     text = read("README.md")
-    guide = read(GUIDE)
 
     def test_title_and_links(self):
         self.assertTrue(self.text.startswith("# DayDream\n"))
@@ -147,7 +140,7 @@ class Readme(unittest.TestCase):
             self.assertIn(f"]({target}", self.text, target)
 
     def test_release_facts(self):
-        low = (self.text + "\n" + self.guide).lower()
+        low = self.text.lower()
         self.assertIn("notarized", low)
         self.assertIn("developer id", low)
         self.assertIn("github releases", low)
@@ -165,7 +158,7 @@ class Readme(unittest.TestCase):
         # Every release stage builds the full-typing app (owner decision of 2026-09-25), so the README's
         # Typed text table names exactly the apps that build's release gate allows: OWNER_SET in
         # typing-release-gate-checks.py, which that check proves against the built gate. No more, no fewer.
-        section = self.guide.split("\n### Typed text\n", 1)[1].split("\n## ", 1)[0]
+        section = self.text.split("\n### Typed text\n", 1)[1].split("\n## ", 1)[0]
         table = read("PrivacyPolicy/Sources/PrivacyPolicy/TypingCategories.swift")
         names = dict(re.findall(r'TypingApp\("([^"]+)", "([^"]+)"', table))
         gate = read("scripts/typing-release-gate-checks.py")
@@ -178,15 +171,15 @@ class Readme(unittest.TestCase):
             if not row.startswith("| ") or len(cells) < 4 or cells[0] in ("Kind", "---"):
                 continue
             listed |= {a.strip() for a in re.sub(r"\([^)]*\)", "", cells[1]).split(",") if a.strip()}
-        self.assertEqual(listed, allowed, "the guide lists exactly the apps the release records typing in")
-        self.assertNotIn("Notes and TextEdit only", self.text + self.guide)
+        self.assertEqual(listed, allowed, "the README lists exactly the apps the release records typing in")
+        self.assertNotIn("Notes and TextEdit only", self.text)
         for phrase in ["Websites need two switches", "Web pages in Chrome", "Incognito or Guest", "password fields",
                        "encrypted", "7 days", "never the words", "If you choose cloud summaries, they get the words you type", "Messages and email",
                        "Anyone typing on this Mac account while it's on is recorded"]:
             self.assertIn(phrase, section, phrase)
 
     def test_network_table_lists_update_checks(self):
-        section = self.guide.split("## Network connections", 1)[1].split("\n## ", 1)[0]
+        section = self.text.split("## Network connections", 1)[1].split("\n## ", 1)[0]
         self.assertIn("github.com", section)
         self.assertIn("openrouter.ai", section)
 
@@ -200,21 +193,8 @@ class Pictures(unittest.TestCase):
         self.assertEqual(rendered, on_disk, "docs/images must hold exactly the rendered pictures")
         used = set()
         for rel in ["README.md", "docs/install.md"]:
-            used |= {Path(l).stem for l in links(rel) if l.endswith(".png") and "images/" in l and "images/readme/" not in l}
+            used |= {Path(l).stem for l in links(rel) if l.endswith(".png") and "images/" in l}
         self.assertEqual(used, on_disk, "every picture is used, and every used picture exists")
-
-    def test_readme_pictures_are_rendered_referenced_and_present(self):
-        # readme-1005: the README's pictures, each in light and dark, are exactly what scripts/readme-pictures draws.
-        names = re.search(r"static let names\s*=\s*\[([^\]]*)\]", read("scripts/readme-pictures/main.swift"))
-        self.assertIsNotNone(names)
-        rendered = {f"{n}-{mode}" for n in re.findall(r'"([\w-]+)"', names.group(1)) for mode in ["light", "dark"]}
-        on_disk = {p.stem for p in README_IMAGES.glob("*")}
-        self.assertEqual(rendered, on_disk, "docs/images/readme must hold exactly the rendered pictures")
-        text = re.sub(r"(?s)```.*?```", "", read("README.md"))
-        used = {Path(l).stem for l in re.findall(r'(?:src|srcset)="([^"]+)"', text) if "images/readme/" in l}
-        self.assertEqual(used, on_disk, "every README picture is used, and every used picture exists")
-        for path in README_IMAGES.glob("*.png"):
-            self.assertLess(path.stat().st_size, 400_000, path.name)
 
     def test_pictures_have_alt_text(self):
         for rel in ["docs/install.md"]:
@@ -358,12 +338,12 @@ class Summaries(unittest.TestCase):
         self.assertIn("Chrome pages go to cloud notes as their page titles and sites", self.text)
         switch = swift_constant("Sources/MemoryUI/CloudSummariesSwitch.swift", r'public static let title = "([^"]+)"')
         self.assertIn(f"**{switch}**", self.text)
-        for rel in ["README.md", GUIDE, "PRIVACY.md", "docs/privacy-model.md", "docs/summaries.md"]:
+        for rel in ["README.md", "PRIVACY.md", "docs/privacy-model.md", "docs/summaries.md"]:
             low = read(rel).lower()
             for stale in ["never the page title", "100 actions", "100 recorded actions", "never goes online by itself",
                           "search terms never go", "cloud summaries switch", "press download"]:
                 self.assertNotIn(stale, low, f"{rel}: {stale!r}")
-        for rel in [GUIDE, "PRIVACY.md", "docs/privacy-model.md"]:
+        for rel in ["README.md", "PRIVACY.md", "docs/privacy-model.md"]:
             self.assertRegex(read(rel), r"page title(?: \(on webmail, the email's subject\))?, cleaned of any address and unread count", rel)
 
     def test_cloud_page_titles_match_code(self):
@@ -371,7 +351,7 @@ class Summaries(unittest.TestCase):
         # fix/day-card owner decision 9/28). Every doc says so; none says the cloud never gets the page title.
         self.assertIn("v.title=title", read("Sources/MemoryCore/DerivedNotes.swift"))
         self.assertIn("NoteAudience.cloudTitle(action)", read("adapters/CoreWriterBinding.swift"))
-        for rel in ["PRIVACY.md", GUIDE, "docs/privacy-model.md", "docs/browser-capture.md"]:
+        for rel in ["PRIVACY.md", "README.md", "docs/privacy-model.md", "docs/browser-capture.md"]:
             text = read(rel)
             self.assertNotIn("never the page title", text, rel)
             self.assertRegex(text, r"the site,? (?:and )?the page title(?: \(on webmail, the email's subject\))?, cleaned of any address and unread count", rel)
@@ -395,7 +375,7 @@ class Summaries(unittest.TestCase):
         self.assertIn("at least 8 GB of memory", self.text)
         host = re.search(r'target\.host == "([^"]+)"', read("WriterBackend/Sources/WriterBackend/AssetDownload.swift")).group(1)
         self.assertIn(f"`{host}`", self.text)
-        self.assertIn(f"`{host}`", read(GUIDE))
+        self.assertIn(f"`{host}`", read("README.md"))
         # The one line Settings shows when the saved certificate status has run out, quoted exactly.
         line = swift_constant("Sources/MacMemApp/WriterIntegration.swift", r'static let appleCheckLine="([^"]+)"')
         self.assertIn(f'"{line}"', self.text)
@@ -408,7 +388,7 @@ class Summaries(unittest.TestCase):
         self.assertIn("writer runtime not signed yet", runtime)
         self.assertIn("Contents/Frameworks/WriterRuntime/", read("THIRD-PARTY-NOTICES.md"))
         self.assertNotIn("The runtime libraries are not bundled", read("THIRD-PARTY-NOTICES.md"))
-        for rel in ["README.md", GUIDE, "PRIVACY.md", "docs/privacy-model.md", "docs/faq.md", "RELEASE.md", "THIRD-PARTY-NOTICES.md"]:
+        for rel in ["README.md", "PRIVACY.md", "docs/privacy-model.md", "docs/faq.md", "RELEASE.md", "THIRD-PARTY-NOTICES.md"]:
             low = read(rel).lower()
             for stale in ["not in the download", "aren't offered in the download", "doesn't offer summaries on this mac",
                           "no local writer or typesense in public builds", "which the download doesn't offer",
@@ -420,8 +400,8 @@ class ReviewFixes(unittest.TestCase):
     """sat/v1 review: claims that were true of older builds, pinned to this one."""
 
     def test_summary_limits_in_readme(self):
-        readme = read("README.md") + "\n" + read(GUIDE)
-        limits = read(GUIDE).split("## Known limits", 1)[1].split("\n## ", 1)[0]
+        readme = read("README.md")
+        limits = readme.split("## Known limits", 1)[1].split("\n## ", 1)[0]
         local = re.search(r"maxActions = (\d+)", read("WriterBackend/Sources/WriterBackend/ModelView.swift")).group(1)
         self.assertIn(f"A note covers at most {local} recorded actions", limits)
         self.assertNotIn("100 recorded actions", readme)
@@ -430,7 +410,7 @@ class ReviewFixes(unittest.TestCase):
 
     def test_search_never_promises_typed_text(self):
         self.assertIn("Typed bodies and generated notes never match.", read("Sources/MemoryCore/MemorySearch.swift"))
-        readme = read("README.md") + "\n" + read(GUIDE)
+        readme = read("README.md")
         self.assertNotIn("window title, site or text", readme)
         self.assertNotIn("Typed text isn't searchable", readme)
         self.assertIn("typed words are searched on this Mac only, while they're kept", readme)
@@ -438,7 +418,7 @@ class ReviewFixes(unittest.TestCase):
     def test_cloud_notice_names_corrections(self):
         self.assertIn("User correction to related note", read("adapters/CoreWriterBinding.swift"))
         self.assertIn("corrections you write to notes", read("WriterBackend/Sources/WriterBackend/CloudActivation.swift"))
-        for rel in [GUIDE, "PRIVACY.md", "docs/faq.md", "docs/privacy-model.md", "docs/summaries.md"]:
+        for rel in ["README.md", "PRIVACY.md", "docs/faq.md", "docs/privacy-model.md", "docs/summaries.md"]:
             self.assertRegex(read(rel), r"[Cc]orrections you wr(ote|ite) to (a )?notes?", rel)
 
     def test_saved_note_status_is_quoted_from_code(self):
@@ -452,7 +432,7 @@ class ReviewFixes(unittest.TestCase):
         wake = read("Sources/MacMemApp/WakeResume.swift")
         self.assertIn("static func resumeFailed(", wake)
         self.assertIn("static func timedPauseEnded(", wake)
-        for rel in [GUIDE, "docs/install.md"]:
+        for rel in ["README.md", "docs/install.md"]:
             self.assertIn("may show notifications", read(rel), rel)
             # Notices also follow an unlock, a user switch and a timed pause ending, not only sleep.
             self.assertIn("only to tell you when recording stopped, or didn't start again, without you asking", read(rel), rel)
@@ -489,7 +469,7 @@ class ReviewFixes(unittest.TestCase):
 
     def test_ai_app_backups_are_documented(self):
         self.assertIn('backupSuffix = ".daydream-backup"', read("Sources/MemoryCore/AIAppConnect.swift"))
-        for rel in [GUIDE, "docs/uninstall.md"]:
+        for rel in ["README.md", "docs/uninstall.md"]:
             self.assertIn(".daydream-backup", read(rel), rel)
 
     def test_release_documents_a_build_without_updates(self):
@@ -600,7 +580,7 @@ class PublicTypingReview(unittest.TestCase):
     """public-typing/v1 review: typing claims the full-typing release can't back, pinned to what it does."""
 
     def limits(self):
-        return read(GUIDE).split("## Known limits", 1)[1].split("\n## ", 1)[0]
+        return read("README.md").split("## Known limits", 1)[1].split("\n## ", 1)[0]
 
     def test_no_flat_cloud_claim_about_typing(self):
         # Window titles (a Mail subject, a shell command) can hold typed words and are sent to cloud summaries
@@ -609,7 +589,7 @@ class PublicTypingReview(unittest.TestCase):
             self.assertNotIn("what you type is never sent", read(rel).lower(), rel)
         # summaries/v3 (owner 2026-09-27, decision 8 reversed): cloud summaries, if chosen, get the words you type. No page
         # may still promise they never do.
-        for rel in [GUIDE, "PRIVACY.md", "docs/faq.md", "docs/install.md"]:
+        for rel in ["README.md", "PRIVACY.md", "docs/faq.md", "docs/install.md"]:
             text = read(rel)
             self.assertIn("Window titles can include words you typed", text, rel)
             self.assertNotIn("from your typing are never sent to cloud summaries", text, rel)
@@ -622,7 +602,7 @@ class PublicTypingReview(unittest.TestCase):
         self.assertIn("arm = nil; remote = false", read("PrivacyPolicy/Sources/PrivacyPolicy/TerminalPromptLatch.swift"))
         for rel in OWNED + ["docs/browser-capture.md"]:
             self.assertNotRegex(read(rel), r"[Rr]emote sessions over `?ssh`? aren't recorded", rel)
-        self.assertIn("If you come back to the remote session, what you type there can be recorded.", read(GUIDE))
+        self.assertIn("If you come back to the remote session, what you type there can be recorded.", read("README.md"))
         self.assertIn("if you come back to the remote session, what you type there can be recorded", read("docs/privacy-model.md"))
         self.assertIn("can't always tell when a terminal is asking for a password", self.limits())
 
@@ -647,14 +627,14 @@ class PublicTypingReview(unittest.TestCase):
         # fix/sx-all round 2: the Settings bullet the release build shows (owner typing) is what README and PRIVACY say.
         line = re.search(r'#if DAYDREAM_OWNER_TYPING.*?siteOnlyLine = "([^"]+)"', read("Sources/MemoryUI/ChromePagesSettings.swift"), re.S).group(1)
         self.assertIn("webmail keeps the open email's subject", line)
-        for rel in [GUIDE, "PRIVACY.md", "docs/browser-capture.md"]:
+        for rel in ["README.md", "PRIVACY.md", "docs/browser-capture.md"]:
             self.assertIn(line.rstrip("."), read(rel), rel)
 
     def test_social_chat_sites_count_as_messages(self):
         join = read("Sources/MemoryCore/BrowserTypingJoin.swift")
         hosts = ast.literal_eval("{" + re.search(r"socialChatHosts: Set<String> = \[([^\]]*)\]", join).group(1) + "}")
         self.assertTrue({"facebook.com", "linkedin.com", "x.com"} <= hosts)
-        self.assertIn("social sites with chat, like Facebook and LinkedIn", read(GUIDE))
+        self.assertIn("social sites with chat, like Facebook and LinkedIn", read("README.md"))
         self.assertIn("social sites with chat, like Facebook, LinkedIn and X", read("PRIVACY.md"))
         self.assertIn("social sites with chat, like Facebook and LinkedIn", read("Sources/MemoryUI/TypingSettings.swift"))
 
@@ -668,7 +648,7 @@ class PublicTypingReview(unittest.TestCase):
     def test_typing_off_advice_is_not_the_timed_pause(self):
         # The only typing pause lasts 10 minutes (TypingPauseShortcut.minutes), then typing resumes on its own.
         self.assertIn("static let minutes = 10", read("Sources/MemoryCore/TypingIndicator.swift"))
-        readme = read(GUIDE)
+        readme = read("README.md")
         line = next(l for l in readme.splitlines() if "Anyone typing on this Mac account while it's on is recorded as you." in l)
         self.assertIn("Turn typed text off while they use it", line)
         self.assertIn("The typing pause lasts only 10 minutes.", line)
@@ -686,7 +666,7 @@ class PublicTypingReview(unittest.TestCase):
             for m in re.finditer(r"input methods[^.]*(?:aren't|are not) (?:captured|recorded)[^.]*\.", text):
                 sentence = text[text.rfind(".", 0, m.start()) + 1:m.end()]
                 self.assertFalse(sentence.lower().rstrip(". ").endswith("in apps"), f"{rel}: {sentence.strip()}")
-        self.assertIn("It works only with the US, ABC or British keyboard layout, and input methods (such as Chinese or Japanese input) aren't captured.", read(GUIDE))
+        self.assertIn("It works only with the US, ABC or British keyboard layout, and input methods (such as Chinese or Japanese input) aren't captured.", read("README.md"))
 
 
 DRAFTS = Path(os.environ.get("DAYDREAM_DRAFTS", "") or "/nonexistent-daydream-drafts")

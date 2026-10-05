@@ -1,6 +1,6 @@
 // swift-tools-version: 5.10
 import PackageDescription
-let package = Package(name: "BrowserBridge", platforms: [.macOS(.v13)], products: [
+let package = Package(name: "BrowserBridge", platforms: [.macOS("15.0")], products: [
     .library(name: "BrowserBridge", targets: ["BrowserBridge"]),
     .library(name: "BrowserDiagnostic", targets: ["BrowserDiagnostic"]),
     .executable(name: "BrowserBridgeDiagnosticHost", targets: ["BrowserBridgeDiagnosticHost"]),

@@ -11,6 +11,11 @@ writes names only tools that build lists.
 2. Live: a built mac-mem (DAYDREAM_TEST_CLI) on a `mac-mem demo` scratch history answers tools/list with exactly that
    list, says the list may change (capabilities.tools.listChanged), and every reply's Next line names listed tools only.
 
+agent-tools v2: the server lists the four v2 tools by default (timeline, search, details, status; the 0.1.4 names still
+answer, unlisted, for chats begun on 0.1.4) and the 0.1.4 list under DAYDREAM_MCP_TOOLSET=legacy. v2 text (the v2
+instructions and descriptions, and AgentShare's replies) names only v2 tools and has no Next lines; the 0.1.4 text names
+only 0.1.4 tools; v2 arguments and kinds are real schema values.
+
 Synthetic data only (`mac-mem demo` in a temporary folder). Nothing reads the real home folder or a real AI app.
 """
 import json
@@ -41,13 +46,41 @@ SNAKE = re.compile(r"\b[a-z]+(?:_[a-z]+)+\b")
 
 
 def catalog_tools():
+    """The 0.1.4 tools (DAYDREAM_MCP_TOOLSET=legacy), in list order."""
     text = (SRC / 'Sources/MemoryCore/AssistantCatalog.swift').read_text()
     return re.findall(r'Tool\(name:"([^"]+)"', text)
+
+
+def v2_tools():
+    """The v2 tools (the default list), in list order."""
+    text = (SRC / 'Sources/MemoryCore/AssistantCatalog.swift').read_text()
+    return re.findall(r'AgentToolSpec\(name:"([^"]+)"', text)
 
 
 def catalog_arguments():
     text = (SRC / 'Sources/MemoryCore/AssistantCatalog.swift').read_text()
     return set(re.findall(r'\("([a-z_]+)","', text)) | {'response_format'}
+
+
+def v2_arguments():
+    """v2 argument names and the kinds values (AgentEntityKind raw values) the schemas take."""
+    text = (SRC / 'Sources/MemoryCore/AssistantCatalog.swift').read_text()
+    block = text[text.index('agentTools: [AgentToolSpec]'):text.index('static func agentToolList')]
+    names = set(re.findall(r'"([a-z_]+)":\[', block)) | set(re.findall(r'"([a-z_]+)":(?:cursorSchema|formatSchema)', block))
+    model = (SRC / 'Sources/MemoryCore/AgentShare/AgentShareModel.swift').read_text()
+    block = model[model.index('enum AgentEntityKind'):]
+    block = block[:block.index('}')]
+    kinds = set()
+    for line in re.findall(r'case ([^\n]+)', block):
+        for piece in line.split(','):
+            raw = re.search(r'=\s*"([a-z_]+)"', piece)
+            kinds.add(raw.group(1) if raw else piece.strip())
+    return names | kinds
+
+
+# agent-tools v2: where the v2 text is written (instructions and descriptions are in AssistantCatalog's v2 block).
+V2_FILES = ['Sources/MemoryCore/AgentShare/AgentTools.swift', 'Sources/MemoryCore/AgentShare/AgentRender.swift',
+            'Sources/MemoryCore/AgentShare/AgentSearch.swift']
 
 
 def swift_strings(text):
@@ -99,6 +132,28 @@ class ToolHints(unittest.TestCase):
                     problems.append(f'{name}: "{bad}" in {literal[:100]!r}')
         self.assertEqual(problems, [], 'MCP text names a tool this build does not list:\n' + '\n'.join(problems))
 
+    def test_v2_text_names_v2_tools_only(self):
+        tools, arguments = set(v2_tools()), v2_arguments()
+        self.assertEqual(v2_tools(), ['timeline', 'search', 'details', 'status'])
+        for value in ['ai_chat', 'web_search', 'document', 'person', 'when', 'kinds', 'cursor', 'detail', 'limit', 'format']:
+            self.assertIn(value, arguments)
+        catalog = (SRC / 'Sources/MemoryCore/AssistantCatalog.swift').read_text()
+        v2 = catalog[catalog.index('instructionsV2 = """'):catalog.index('static func agentToolList')]
+        texts = [('AssistantCatalog.swift (v2)', v2)] + [(name, (SRC / name).read_text()) for name in V2_FILES if (SRC / name).exists()]
+        # The 0.1.4 names that aren't plain words ("read", "open" and "context" are English too).
+        legacy_only = set(catalog_tools()) - tools - {'read', 'open', 'context'}
+        problems = []
+        for name, source in texts:
+            for literal in swift_strings(source):
+                if not model_text(literal) or 'json_extract(' in literal:
+                    continue
+                if 'Next:' in literal:
+                    problems.append(f'{name}: a Next line in {literal[:100]!r}')
+                problems += [f'{name}: "{bad}" in {literal[:100]!r}' for bad in references(literal, tools, arguments)]
+                problems += [f'{name}: 0.1.4 tool "{word}" in {literal[:100]!r}' for word in legacy_only
+                             if re.search(r'(?<![\w-])' + re.escape(word) + r'(?![\w-])', literal)]
+        self.assertEqual(problems, [], 'v2 text names a tool the v2 list does not have:\n' + '\n'.join(problems))
+
     def test_checker_catches_a_missing_tool(self):
         """The rule itself: a hint naming a tool that isn't listed is caught (a dropped tool, or a stale name)."""
         tools = set(catalog_tools()) - {'moment_details'}
@@ -124,11 +179,38 @@ class LiveToolList(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def mcp(self, requests):
+    def mcp(self, requests, toolset='legacy'):
         lines = [json.dumps({'jsonrpc': '2.0', 'id': i, 'method': m, 'params': p}) for i, (m, p) in enumerate(requests)]
         out = subprocess.run(self.base + ['--client', 'claude-desktop', '--recipient', 'daydream-connect', 'mcp'],
-                             input='\n'.join(lines) + '\n', capture_output=True, text=True, env=self.env, timeout=120)
+                             input='\n'.join(lines) + '\n', capture_output=True, text=True, env=dict(self.env, DAYDREAM_MCP_TOOLSET=toolset), timeout=120)
         return [json.loads(line) for line in out.stdout.splitlines()]
+
+    def test_v2_list_and_replies(self):
+        """The default list is the v2 catalog; no v2 reply has a Next line or names a tool the list lacks."""
+        calls = [('status', {}), ('timeline', {}), ('timeline', {'when': 'this week', 'detail': 'full'}), ('search', {'query': 'Search'}),
+                 ('search', {'kinds': ['ai_chat', 'page'], 'when': 'today'}), ('details', {'id': '1004-aaaaa'}), ('details', {'id': 'bad'}),
+                 ('timeline', {'when': 'not a time'}), ('search', {'kinds': ['nope']})]
+        env = dict(self.env); env.pop('DAYDREAM_MCP_TOOLSET', None)
+        lines = [json.dumps({'jsonrpc': '2.0', 'id': i, 'method': m, 'params': p}) for i, (m, p) in
+                 enumerate([('initialize', {'protocolVersion': '2025-06-18'}), ('tools/list', {})] + [('tools/call', {'name': n, 'arguments': a}) for n, a in calls])]
+        out = subprocess.run(self.base + ['--client', 'claude-desktop', '--recipient', 'daydream-connect', 'mcp'],
+                             input='\n'.join(lines) + '\n', capture_output=True, text=True, env=env, timeout=120)
+        rows = [json.loads(line) for line in out.stdout.splitlines()]
+        self.assertTrue(rows[0]['result']['capabilities']['tools'].get('listChanged'))
+        listed = [t['name'] for t in rows[1]['result']['tools']]
+        self.assertEqual(listed, v2_tools(), 'tools/list is exactly the v2 catalog, in order')
+        arguments = {key for t in rows[1]['result']['tools'] for key in t['inputSchema']['properties']} | v2_arguments()
+        problems = []
+        for (name, args), row in zip(calls, rows[2:]):
+            self.assertIn('result', row, f'{name} {args}: {row}')
+            text = '\n'.join(c['text'] for c in row['result']['content'])
+            self.assertNotIn('macmem://', text)
+            for line in text.splitlines():
+                if line.startswith('Next:'):
+                    problems.append(f'{name}: a Next line {line!r}')
+                problems += [f'{name}: {bad} in {line!r}' for bad in references(line, set(listed), arguments)
+                             if not bad.endswith(' with')]
+        self.assertEqual(problems, [], '\n'.join(problems))
 
     def test_list_and_every_next_line(self):
         calls = [('status', {}), ('search', {'query': 'SQLite'}), ('recall', {'level': 'day', 'when': 'today'}),
@@ -148,6 +230,9 @@ class LiveToolList(unittest.TestCase):
             self.assertIn('result', row, f'{name} {args}: {row}')
             text = '\n'.join(c['text'] for c in row['result']['content'])
             self.assertNotIn('DayDream was updated while this chat was open', text, 'a fresh server never says its list is stale')
+            # claude/dayeval-1005: never "draft" or "unsent" in a reply's own words (quotes are the person's).
+            own = re.sub(r'“[^”]*”|"[^"]*"', '', text)
+            problems += [f'{name}: says {m.group(0)!r}' for m in re.finditer(r'(?i)\b(draft|drafts|drafted|drafting|unsent|not sent)\b', own)]
             for line in text.splitlines():
                 if line.startswith('Next:'):
                     problems += [f'{name}: {bad} in {line!r}' for bad in references(line, set(listed), arguments)]

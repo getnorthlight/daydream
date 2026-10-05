@@ -68,7 +68,20 @@ public struct DayLevelSlice: Equatable, Sendable {
     /// fix/day-card: the day note is the headline while its main thread is the day's main thread by code (or nothing
     /// live says otherwise); else the day's threads (`LiveDay`). Stored blocks keep their notes; the moments no stored
     /// block holds join the stored block whose stretch they continue, or show under their live block's name.
-    public static func make(_ levels: DayLevels?, calendar: Calendar) -> DayLevelSlice? {
+    public static func make(_ levels: DayLevels?, calendar: Calendar) -> DayLevelSlice? { made(levels, calendar: calendar)?.shown() }
+    /// claude/dayeval-1005 (owner 10/05): the slice as shown, never "draft" (`DisplayWords.undraft`), after every rule
+    /// above read the stored words.
+    func shown() -> DayLevelSlice {
+        let u = DisplayWords.undraft
+        let shownBlocks = blocks.map { b in
+            LevelBlockSlice(id: b.id, name: u(b.name), title: u(b.title), start: b.start, end: b.end, momentIDs: b.momentIDs, lines: b.lines.map(u),
+                            sideThreads: b.sideThreads.map(u), sideThreadMoments: b.sideThreadMoments, mainMoments: b.mainMoments)
+        }
+        return DayLevelSlice(dayTitle: dayTitle.map(u), dayLines: dayLines.map(u), blocks: shownBlocks, weekLabel: weekLabel, weekTitle: weekTitle.map(u),
+                             dayBullets: dayBullets.map { LevelBullet(text: u($0.text), moments: $0.moments) }, headlineMoments: headlineMoments,
+                             headlineDuration: headlineDuration, dayIsLive: dayIsLive)
+    }
+    static func made(_ levels: DayLevels?, calendar: Calendar) -> DayLevelSlice? {
         guard let levels, levels.day != nil || !levels.blocks.isEmpty || levels.week != nil || levels.live != nil else { return nil }
         var blocks = levels.blocks.compactMap { note -> LevelBlockSlice? in
             guard let s = timestamp(note.start), let e = timestamp(note.end) else { return nil }

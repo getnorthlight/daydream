@@ -26,7 +26,7 @@ public enum SummaryLines {
         "^pressed return( in " + place + ")?(; sending is not established)?$",
         "^ran a command( in " + place + ")?$",
         "^(entered|typed) (a command|commands)( in " + place + ")?$",
-        "^drafted a prompt for " + place + "$",
+        "^(drafted|wrote) a prompt for " + place + "$",
         // claude/cc-label-1003 (owner 10/03): "Asked Claude Code." beside a line that says what was asked is filler.
         "^(asked|told) (claude code|claude|codex|gemini cli|gemini|aider|chatgpt|cursor|copilot|perplexity|an ai)$",
         "^in " + place + "$",

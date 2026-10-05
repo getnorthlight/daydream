@@ -20,6 +20,9 @@ struct LoginItemControl {
     var unregister: () throws -> Void
     /// System Settings › General › Login Items (the only place macOS lets the person allow it).
     var openSettings: () -> Void
+    /// perf2-1005: `status` is an XPC call to macOS's login item service (laptop sample: on the main thread at every
+    /// activation). The live control's reads run off the main thread; the checks' inert one answers on the caller.
+    var statusOffMain = false
 
     static let live = LoginItemControl(
         status: {
@@ -31,7 +34,8 @@ struct LoginItemControl {
         },
         register: { try SMAppService.mainApp.register() },
         unregister: { try SMAppService.mainApp.unregister() },
-        openSettings: { SMAppService.openSystemSettingsLoginItems() })
+        openSettings: { SMAppService.openSystemSettingsLoginItems() },
+        statusOffMain: true)
 
     /// Registers nothing and reads nothing (check builds).
     static let inert = LoginItemControl(status: { .off }, register: {}, unregister: {}, openSettings: {})

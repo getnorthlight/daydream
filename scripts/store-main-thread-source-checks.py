@@ -89,13 +89,21 @@ class LaunchPreparation(unittest.TestCase):
         init = body(self.SESSION, 'init(arguments:[String]=CommandLine.arguments,')
         self.assertNotIn('model=isolated ? nil:MemoryViewModel(', init,
                          'the model (and in it the repair and the index build) is made on the main thread at launch')
-        self.assertRegex(init, r'guard Self\.prepares\(home:home\) else \{\s*model=MemoryViewModel\(',
+        # perf2-1005 (owner 10/04, slow open): with nothing to prepare, the app's launch makes the model once the window
+        # has appeared (`deferModel`, `windowShown`); the checks' sessions still make it at once.
+        self.assertRegex(init, r'guard Self\.prepares\(home:home\) else \{\s*guard deferModel else \{\s*model=MemoryViewModel\(',
                          'launch makes the model at once only when there is nothing to prepare')
+        start = init.index('guard deferModel else {')
+        deferred = init[start:init.index('Self.preparationQueue.async', start)]
+        self.assertRegex(deferred, r'preparing=true\s*pendingModel=\{[\s\S]*?self\.model=MemoryViewModel\(',
+                         'the deferred model is made by the pending step, with the preparing window up meanwhile')
+        self.assertIn('asyncAfter(deadline:.now()+Self.modelFallback)', deferred, 'with no window, the model is made a moment later anyway')
         queued = init[init.index('Self.preparationQueue.async'):]
         self.assertIn('HistoryPreparation.prepare(home:home)', queued, 'the preparation runs on the preparation queue')
         # Review round 1: the preparation's own open builds nothing itself; the preparation then builds what the history
         # lacks, waiting for AI apps' reads (HistoryPreparation.finish).
-        self.assertIn('launchWork:.preparation)', queued, "the preparation's open builds the indexes with the 1.5 s limit")
+        self.assertIn('launchWork:.preparation,liveHistory:true)', queued,  # wal-1005: the preparation's open is the live history's (HistoryJournal)
+                      "the preparation's open builds the indexes with the 1.5 s limit")
         self.assertIn('DispatchQueue.main.async', queued, 'the model is made back on the main thread')
         self.assertIn('preparing=true', init)
         prepares = body(self.SESSION, 'static func prepares(home:URL)->Bool')
@@ -117,7 +125,7 @@ class LaunchPreparation(unittest.TestCase):
                       'the model repairs again on the main thread after launch prepared the history')
         # Review round 1: after launch prepared the history, the model's open (on the main thread) builds nothing; what
         # the preparation couldn't finish waits for the next launch's preparation.
-        self.assertIn('try MemoryStore(home:MemPaths.home(),writable:true,automaticallySyncSearch:syncSearch,launchWork:prepared?.prepared == true ? .prepared : .here)', init,
+        self.assertIn('try MemoryStore(home:MemPaths.home(),writable:true,automaticallySyncSearch:syncSearch,launchWork:prepared?.prepared == true ? .prepared : .here,liveHistory:development == nil)', init,
                       "the model's open builds the time indexes on the main thread after launch prepared the history")
         # Review round 1: the repair is said from the new file at the open (MemoryStore.unsaidRepair), never from the
         # preparation's outcome in memory (a quit or a second copy before the model lost it).
@@ -140,8 +148,10 @@ class LaunchPreparation(unittest.TestCase):
         # The scene's window content is DaydreamMainWindowContent (outside @main, so dd-first-launch-checks hosts it).
         self.assertIn('DaydreamMainWindowContent(session:session)', scene)
         content = body(APP, 'struct DaydreamMainWindowContent: View')
-        self.assertIn('else if session.preparing {DaydreamPreparingWindow()} else {SyntheticWindow()}', content,
-                      'the window shows the synthetic preview while launch prepares the history')
+        self.assertIn('else if session.preparing {DaydreamPreparingWindow().onAppear {session.windowShown()}} else {SyntheticWindow()}', content,
+                      'the window shows the synthetic preview while launch prepares the history (perf2-1005: and says it appeared)')
+        self.assertIn('else {DaydreamPreparingWindow().onAppear {session.windowShown()}}', content,
+                      "perf2-1005: the app's preparing window tells the session it appeared, so the model is made after it draws")
         self.assertIn('DaydreamMenuBarIsolatedPanel(line: session.preparing ? MenuBarMenu.preparingLine : MenuBarMenu.isolatedLine)', scene,
                       'the menu bar says "Isolated preview" while launch prepares the history')
         window = body(APP, 'struct DaydreamPreparingWindow:View')

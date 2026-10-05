@@ -122,7 +122,13 @@ import CoreIntegration
     }
 
     static func main() async throws {
+        // claude/dayeval-1005: the default card (`DayReviewOptions.recommended`): projects, filler dropped, one texting line
+        // with names only, work sites, six lines at most, the fact-packet writer with typed facts on this Mac. Personas with
+        // other people's apps are scripts/day-review-eval-checks.swift.
+        check(DayReview.options == .recommended && !DayReview.options.contains(.leftOff) && !DayReview.options.contains(.textingQuote),
+              "options: the default is the recommended set: no left-off line, no quote on the texting line")
         pure()
+        plainWords()
         hysteresis()
         clauses()
         try await stores()
@@ -155,12 +161,14 @@ import CoreIntegration
         check(Set(s) == Set(DayReview.Stake.allCases), "stakes: long, rewritten, paused, first contact, late night (\(s))")
         check(DayReview.stakes(words: 5, keys: 30, edits: 0, parts: 1, composeSeconds: 10, localHour: 14, firstContact: false).isEmpty, "stakes: a quick text has none")
 
-        // Rank groups 3 / 2 / 1 / 1, the last two together; 7 at most.
+        // Rank groups 3 / 2 / 1 (claude/dayeval-1005: six lines at most, `DayReview.lineBudget`).
         let five = (0..<5).map { t in thread("t\(t)", "project", Double(100 - t * 10), (0..<4).map { i in item("t\(t)i\(i)", "Did thing \(t).\(i)", score: Double(10 - i)) }) }
         let facts = DayReviewFacts(day: "2026-10-03", threads: five, clauses: [:], activeSeconds: 3600, personSends: 0)
         let groups = DayReview.assemble(facts)
-        check(groups.map(\.bullets.count) == [3, 2, 2] && groups.last?.id == "rest", "assemble: 3 / 2 / 1+1 bullets, 7 at most (\(groups.map(\.bullets.count)))")
-        check(groups.flatMap(\.bullets).map(\.thread) == ["t0", "t0", "t0", "t1", "t1", "t2", "t3"], "assemble: groups follow the thread order")
+        check(groups.map(\.bullets.count) == [3, 2, 1] && groups.last?.id == "rest", "assemble: 3 / 2 / 1 bullets, 6 lines at most (\(groups.map(\.bullets.count)))")
+        check(groups.flatMap(\.bullets).map(\.thread) == ["t0", "t0", "t0", "t1", "t1", "t2"], "assemble: groups follow the thread order")
+        let seven = DayReview.assemble(facts, options: DayReview.options.subtracting(.lineBudget))
+        check(seven.map(\.bullets.count) == [3, 2, 2], "assemble: with no line budget, 3 / 2 / 1+1 bullets, 7 at most (\(seven.map(\.bullets.count)))")
         let thin = DayReview.assemble(DayReviewFacts(day: "d", threads: [thread("a", "web", 3, [item("a1", "Read", tail: "example.com")])], clauses: [:], activeSeconds: 120, personSends: 0))
         check(shapes(thin) == ["Read example.com."], "assemble: a thin day has fewer bullets (\(shapes(thin)))")
         let dup = DayReview.assemble(DayReviewFacts(day: "d", threads: [thread("a", "web", 3, [item("a1", "Read", tail: "x"), item("a2", "Read", tail: "x")])], clauses: [:], activeSeconds: 0, personSends: 0))
@@ -168,30 +176,37 @@ import CoreIntegration
 
         // The approved shapes.
         let words = ["q1": "fixture words one", "q2": "fixture words two", "q3": "fixture reply"]
-        let jamie = thread("person:jamie lin", "person", 50, [
+        var jamie = thread("person:jamie lin", "person", 50, [
             item("g#said", "Told Jamie Lin", plain: "Texted Jamie Lin", clause: "person:jamie lin", quote: "q1"),
             item("g#quote", "Texted Jamie Lin", quote: "q2", always: true)])
+        jamie.person = "Jamie Lin"; jamie.personSends = 3
         let work = thread("project:daydream", "project", 90, [item("code", "Worked on DayDream", colon: true, tail: "in Ghostty", clause: "code:daydream")])
         let ada = thread("social:x", "social", 20, [item("x1", "Replied to", link: DayReviewLink(title: "Ada's post", url: "https://x.com/t/status/1"), tail: "on X",
                                                          clause: "social:x#x1", quote: "q3", always: true)])
         let yt = thread("video:youtube.com", "video", 10, [item("v1", "Watched", link: DayReviewLink(title: "\u{201C}How do lighthouse lenses work?\u{201D}", url: "https://www.youtube.com/watch?v=1"), tail: "on YouTube")])
         var f = DayReviewFacts(day: "d", threads: [work, jamie, ada, yt], clauses: [:], activeSeconds: 7200, personSends: 3)
         var b = DayReview.assemble(f, quotes: words).flatMap(\.bullets)
-        check(b.map(\.text) == ["Worked on DayDream: in Ghostty.", "Texted Jamie Lin: \u{201C}fixture words one\u{201D}", "Texted Jamie Lin: \u{201C}fixture words two\u{201D}",
-                                "Replied to Ada's post on X: \u{201C}fixture reply\u{201D}", "Watched \u{201C}How do lighthouse lenses work?\u{201D} on YouTube."] ||
-              b.map(shape)[0] == "Worked on DayDream: in Ghostty.", "bullets: code's own words before any clause (\(b.map(shape)))")
+        check(b.map(\.text) == ["Worked on DayDream in Ghostty.", "Replied to Ada's post on X: \u{201C}fixture reply\u{201D}",
+                                "Watched \u{201C}How do lighthouse lenses work?\u{201D} on YouTube.", "Texted Jamie Lin."],
+              "bullets: code's own words before any clause, the texting line last with names only (\(b.map(shape)))")
+        check(b.last?.moments == ["m-g#said", "m-g#quote"],
+              "bullets: the texting line carries its conversations' moments (\(b.last?.moments ?? []))")
         f.clauses = ["code:daydream": "Messages sends saved as drafts and the Ghostty spinner", "person:jamie lin": "you and friends are going to ZUX tomorrow",
                      "social:x#x1": "about upcoming models"]
         b = DayReview.assemble(f, quotes: words).flatMap(\.bullets)
         // claude/today-rank-1005: work first, then browsing, then one line for the conversation.
         check(b.map(shape) == ["Worked on DayDream: Messages sends saved as drafts and the Ghostty spinner.", "Replied to Ada's post about upcoming models: \u{201C}«q»\u{201D}",
-                               "Watched \u{201C}How do lighthouse lenses work?\u{201D} on YouTube.", "Told Jamie Lin you and friends are going to ZUX tomorrow."],
-              "bullets: the approved shapes with clauses, work first and the conversation once, last (\(b.map(shape)))")
-        check(b[0].lead == "Worked on DayDream:" && b[3].lead == "Told Jamie Lin" && b[3].quote == nil, "bullets: a lead (colon after a name), a clause instead of the quote")
-        // A day of only the conversation: its two lines, the second keeping its quote.
+                               "Watched \u{201C}How do lighthouse lenses work?\u{201D} on YouTube.", "Texted Jamie Lin."],
+              "bullets: the approved shapes with clauses, work first and the texting line once, last, names only (\(b.map(shape)))")
+        check(b.count == 4 && b[0].lead == "Worked on DayDream:" && b[3].lead == "Texted Jamie Lin" && b[3].quote == nil,
+              "bullets: a lead (colon after a name before a clause), the texting line never quotes")
+        // A day of only the conversation: the texting line, names only (owner 10/05: no quote on a conversation line).
         let alone = DayReview.assemble(DayReviewFacts(day: "d", threads: [jamie], clauses: f.clauses, activeSeconds: 600, personSends: 3), quotes: words).flatMap(\.bullets)
-        check(alone.map(shape) == ["Told Jamie Lin you and friends are going to ZUX tomorrow.", "Texted Jamie Lin: \u{201C}«q»\u{201D}"] && alone[1].quote != nil,
-              "bullets: with little else, a conversation's second line keeps its quote (\(alone.map(shape)))")
+        check(alone.map(shape) == ["Texted Jamie Lin."] && alone.allSatisfy { $0.quote == nil },
+              "bullets: with little else, the conversation is still one line with no quote (\(alone.map(shape)))")
+        let quoted = DayReview.assemble(DayReviewFacts(day: "d", threads: [jamie], clauses: f.clauses, activeSeconds: 600, personSends: 3), quotes: words,
+                                        options: DayReview.options.union(.textingQuote)).flatMap(\.bullets)
+        check(quoted.count == 1 && quoted[0].quote != nil, "bullets: the texting quote stays an owner choice, off by default (\(quoted.map(shape)))")
         check(!b.contains { $0.text.contains("~") || $0.text.range(of: #"\b\d+ (min|hr|h)\b"#, options: .regularExpression) != nil || $0.text.contains("Updated") },
               "bullets: no durations, counts, times or Updated line")
         let noWords = DayReview.assemble(f, quotes: [:]).flatMap(\.bullets)
@@ -241,8 +256,9 @@ import CoreIntegration
             equal(DayReview.category(kind: kind, key: key, channel: channel, name: name), want, "rank: \(key)\(channel.map { " (" + $0 + ")" } ?? "") is \(want.rawValue)")
         }
         // An hour of steady texting with high stakes outscores ten minutes in Claude, but ranks below it; browsing between.
-        let texting = thread("person:jamie lin", "person", DayReview.score(seconds: 3600, words: 600, personSends: 12, asks: 0, sendHours: 4, stakes: 3),
+        var texting = thread("person:jamie lin", "person", DayReview.score(seconds: 3600, words: 600, personSends: 12, asks: 0, sendHours: 4, stakes: 3),
                              [item("j1", "Told Jamie Lin", plain: "Texted Jamie Lin", clause: "person:jamie lin", quote: "q1"), item("j2", "Texted Jamie Lin", quote: "q2", always: true)])
+        texting.person = "Jamie Lin"; texting.personSends = 12
         let claude = thread("app:claude", "ai", DayReview.score(seconds: 600, words: 0, personSends: 0, asks: 1, sendHours: 0, stakes: 0), [item("c1", "Asked Claude")])
         let docs = thread("doc:launch plan", "doc", 30, [item("d1", "Wrote", tail: "Launch plan")])
         let code = thread("code:daydream", "code", 25, [item("k1", "Worked on DayDream", colon: true, tail: "in Ghostty"), item("k2", "Read", tail: "the fixture PR")])
@@ -253,22 +269,22 @@ import CoreIntegration
         let order = DayReviewStanding.raw(DayReview.rankScores(facts))
         equal(order, ["doc:launch plan", "code:daydream", "app:claude", "social:x", "person:jamie lin"], "rank: work by score, then browsing, then the conversation")
         let b = DayReview.assemble(facts, quotes: words).flatMap(\.bullets)
-        check(b.map(\.thread) == ["doc:launch plan", "code:daydream", "code:daydream", "app:claude", "person:jamie lin"],
-              "rank: the card shows work first and the conversation once, last (\(b.map(\.thread)))")
+        check(b.map(\.thread) == ["doc:launch plan", "code:daydream", "code:daydream", "app:claude", "social:x", "texting"],
+              "rank: the card shows work first, then browsing, and the texting line once, last (\(b.map(\.thread)))")
         // With room, browsing comes between the work and the conversation.
         let roomy = DayReview.assemble(DayReviewFacts(day: "d", threads: [texting, x, docs, claude], clauses: [:], activeSeconds: 7200, personSends: 12), quotes: words)
-        check(roomy.flatMap(\.bullets).map(\.thread) == ["doc:launch plan", "app:claude", "social:x", "person:jamie lin"],
+        check(roomy.flatMap(\.bullets).map(\.thread) == ["doc:launch plan", "app:claude", "social:x", "texting"],
               "rank: browsing between the work and the conversation (\(roomy.flatMap(\.bullets).map(\.thread)))")
         // Never hidden: with work filling every group, the conversation still takes the last place.
         let more = (0..<6).map { thread("code:p\($0)", "code", Double(50 - $0), [item("p\($0)", "Worked on P\($0)")]) }
         let full = DayReview.assemble(DayReviewFacts(day: "d", threads: more + [texting], clauses: [:], activeSeconds: 7200, personSends: 12), quotes: words).flatMap(\.bullets)
-        check(full.last?.thread == "person:jamie lin" && full.filter { $0.thread == "person:jamie lin" }.count == 1 && full.count <= 7,
+        check(full.last?.thread == "texting" && full.filter { $0.thread == "texting" }.count == 1 && full.count <= DayReview.lineBudget,
               "rank: a conversation is never hidden; it keeps the last place (\(full.map(\.thread)))")
         // Little else (no other thread with ten points): score order, nothing capped.
         let thin = DayReviewFacts(day: "d", threads: [texting, thread("app:claude", "ai", 4, [item("c1", "Asked Claude")])], clauses: [:], activeSeconds: 900, personSends: 12)
         let tb = DayReview.assemble(thin, quotes: words).flatMap(\.bullets)
-        check(!DayReview.hasOtherThings(thin) && tb.map(\.thread) == ["person:jamie lin", "person:jamie lin", "app:claude"],
-              "rank: with little else the texting leads with both its lines (\(tb.map(\.thread)))")
+        check(!DayReview.hasOtherThings(thin) && tb.map(\.thread) == ["texting", "app:claude"],
+              "rank: with little else the texting line leads, one line (\(tb.map(\.thread)))")
         // Deterministic: the same facts, the same card.
         check(DayReview.assemble(facts, quotes: words) == DayReview.assemble(facts, quotes: words), "rank: deterministic")
         // An older value with no category reads it from its kind.
@@ -416,18 +432,18 @@ import CoreIntegration
         check(facts.warm && facts.clauses.isEmpty, "work day: warm, no clause yet")
 
         // The clause writer (fake model): one clause per shown thread, then nothing until a material change.
-        let answers = Answers(["{\"clause\":\"the fixture build and its tests\"}"])
+        let answers = Answers(["{\"clause\":\"the Messages drafts fix and its pull request\"}"])
         let binding = LevelWriterBinding(store: work.store, generate: { _, _, _, _ in try await answers.next() })
         let step = try await binding.reviewClause(timezone: zone, now: now)
         check(step?.clause.key != nil && step?.source == "model", "clauses: the model's clause is checked and saved (\(step?.clause.key ?? "-"))")
         var after = try work.review(now)
         check(after.map { !$0.clauses.isEmpty } == true, "clauses: the day read carries the cached clause")
         let withClause = after.map { shapes(DayReview.assemble($0)) } ?? []
-        check(withClause.contains { $0.contains("the fixture build and its tests") }, "clauses: the bullet uses it (\(withClause.first ?? "-"))")
+        check(withClause.contains { $0.contains("the Messages drafts fix and its pull request") }, "clauses: the bullet uses it (\(withClause.first ?? "-"))")
         let due = try work.store.reviewClauseWork(timezone: zone, now: now.addingTimeInterval(60))
         check(!due.contains { $0.key == step?.clause.key }, "clauses: not written again without a material change")
         // A refused answer, then a good one: the repair turn.
-        let repairAnswers = Answers(["{\"clause\":\"\\\"quoted\\\" words\"}", "{\"clause\":\"the export button and its tests\"}"])
+        let repairAnswers = Answers(["{\"clause\":\"\\\"quoted\\\" words\"}", "{\"clause\":\"the drafts fix in Messages\"}"])
         let repairing = LevelWriterBinding(store: work.store, generate: { _, _, _, _ in try await repairAnswers.next() })
         if let next = try await repairing.reviewClause(timezone: zone, now: now) {
             check(next.source == "repair" && next.rejections.count == 1, "clauses: a refused answer gets one repair turn")
@@ -524,17 +540,30 @@ import CoreIntegration
         check(jamie != nil && facts.threads.first?.rankCategory == .personal,
               "mixed day: by importance alone the texting is on top (\(facts.threads.first.map { $0.key + "=\($0.score)" } ?? "-"))")
         let bullets = DayReview.assemble(facts).flatMap(\.bullets)
-        let categories = bullets.map { byKey[$0.thread]?.rankCategory ?? .browsing }
+        let categories = bullets.map { $0.thread == "texting" ? .personal : byKey[$0.thread]?.rankCategory ?? .browsing }
         print("mixed day bullets: \(bullets.map(shape)) \(categories.map(\.rawValue))")
         let work = bullets.filter { byKey[$0.thread]?.rankCategory == .work }.map(\.thread)
-        check(Set(work).count >= 3 && categories.prefix(while: { $0 == .work }).count == work.count,
+        // Without typing, a Claude window with no ask is filler and drops out; the doc and the terminal still lead.
+        #if DAYDREAM_OWNER_TYPING
+        let workLines = 3
+        #else
+        let workLines = 2
+        #endif
+        check(Set(work).count >= workLines && categories.prefix(while: { $0 == .work }).count == work.count,
               "mixed day: Claude, Google Docs and the terminal lead (\(Set(work).sorted()))")
         check(categories.filter { $0 == .personal }.count == 1 && categories.last == .personal, "mixed day: the texting shows once, last")
         check(!bullets.contains { $0.text.hasPrefix("Worked on Claude") }, "mixed day: Claude read with no ask is \"Used Claude\", never \"Worked on Claude: in Claude\"")
         check(categories.firstIndex(of: .browsing).map { $0 > (categories.lastIndex(of: .work) ?? -1) } ?? true, "mixed day: browsing after the work")
-        check(DayReview.assemble(facts).count <= DayReview.slots.count && bullets.count <= 7, "mixed day: 3 / 2 / 1 / 1 still holds (\(bullets.count) bullets)")
+        check(DayReview.assemble(facts).count <= DayReview.slots.count && bullets.count <= DayReview.lineBudget, "mixed day: six lines at most (\(bullets.count) bullets)")
+        #if DAYDREAM_OWNER_TYPING
+        let textingLine = "Texted Jamie Lin."
+        #else
+        let textingLine = "Read texts from Jamie Lin."
+        #endif
+        check(bullets.last.map { $0.thread == "texting" && $0.text == textingLine && $0.quote == nil } == true,
+              "mixed day: the texting line names Jamie, no quote (\(bullets.last.map(shape) ?? "-"))")
         // The card's live order (hysteresis) agrees.
-        let live = DayReviewMemory().groups(facts, live: true, now: now).flatMap(\.bullets).map { byKey[$0.thread]?.rankCategory ?? .browsing }
+        let live = DayReviewMemory().groups(facts, live: true, now: now).flatMap(\.bullets).map { $0.thread == "texting" ? .personal : byKey[$0.thread]?.rankCategory ?? .browsing }
         check(live.first == .work && live.filter { $0 == .personal }.count == 1 && live.last == .personal, "mixed day: the live card the same")
         // The clause writer writes for what shows: never for the texting's second line.
         let due = try f.store.reviewClauseWork(timezone: zone, now: now, limit: 20)
@@ -581,7 +610,124 @@ import CoreIntegration
         // Without the words (every MCP and CLI process), the line is "Asked Claude.", still with no about.
         let bare = DayReview.assemble(facts, quotes: [:]).flatMap(\.bullets).map(\.text)
         check(want.allSatisfy { bare.contains($0 + ".") }, "asks: with no words opened, \"\(want[0]).\" (\(bare))")
+        try await typedFacts(f, now: now)
         #endif
+    }
+
+    /// claude/dayeval-1005 (owner: typed words are read by the summarizer on this Mac only): the clause writer on this Mac
+    /// reads the thread's typed prompts ("asked: …"); a cloud writer never does; a request, the review's facts and its
+    /// cache hold ids only; a clause that copies five typed words in a row is refused.
+    /// claude/dayeval-1005 (owner 10/04): plain words on the card; no bare "Used Claude."; never draft or unsent.
+    static func plainWords() {
+        equal(DayReview.titleAsObject("How tide pools form"), "\u{201C}How tide pools form\u{201D}", "plain words: a title that reads as words of the sentence is quoted")
+        equal(DayReview.titleAsObject("Lab Report"), "Lab Report", "plain words: any other title stays as it is")
+        equal(DayReview.lowerLead("Testing Tallybird sync"), "testing Tallybird sync", "plain words: \"about testing …\", never \"about Testing …\"")
+        equal(DayReview.lowerLead("Market sizing for the bakery"), "market sizing for the bakery", "plain words: an ordinary first word in lower case")
+        equal(DayReview.lowerLead("Tallybird login issues"), "Tallybird login issues", "plain words: a name keeps its capitals")
+        equal(DayReview.lowerLead("Tallybird export crash"), "Tallybird export crash", "plain words: an unknown capitalized word is taken for a name")
+        equal(MemoryStore.plainSite("en.wikipedia.org"), "Wikipedia", "plain words: a site by its name (Wikipedia)")
+        equal(MemoryStore.plainSite("courses.northlake.edu", titles: ["Courses at NorthLake"]), "NorthLake", "plain words: spelled as its pages spell it")
+        equal(MemoryStore.plainSite("canvas.northlake.edu"), "Canvas", "plain words: a school's tool by the tool's name")
+        check(MemoryStore.chromePage("Lesson Viewer") && MemoryStore.chromePage("Student Portal") && !MemoryStore.chromePage("Problem Set 5"),
+              "plain words: pages that only name the app are no topic")
+        // A card with nothing but filler never shows a bare "Used Claude." (an AI app opened with nothing asked).
+        let claude = DayReviewThread(key: "ai:claude", name: "Claude", kind: "ai", seconds: 900, words: 0, personSends: 0, asks: 0, sendHours: 0, stakes: [],
+                                     score: 15, items: [DayReviewItem(id: "ai:claude", lead: "Used Claude", clauseKey: "ai:claude", score: 15, moments: ["m"], filler: true)],
+                                     moments: ["m"], category: "work")
+        let notes = DayReviewThread(key: "app:notes", name: "Notes", kind: "app", seconds: 600, words: 0, personSends: 0, asks: 0, sendHours: 0, stakes: [],
+                                    score: 10, items: [DayReviewItem(id: "app:notes", lead: "Used", tail: "Notes", score: 10, moments: ["n"], filler: true)],
+                                    moments: ["n"], category: "browsing")
+        let thin = DayReviewFacts(day: "2026-10-05", threads: [claude, notes], clauses: [:], activeSeconds: 1500, personSends: 0)
+        let shown = DayReview.assemble(thin, quotes: [:]).flatMap(\.bullets).map(\.text)
+        check(!shown.contains("Used Claude.") && shown.contains("Used Notes."), "plain words: no bare \"Used Claude.\" even on a card of filler (\(shown))")
+        // The main app by time, an AI app with nothing asked, says when (never "Used ChatGPT."); only that app, from 15 minutes.
+        func ai(_ seconds: Int, part: String?) -> DayReviewThread {
+            DayReviewThread(key: "ai:chatgpt", name: "ChatGPT", kind: "ai", seconds: seconds, words: 0, personSends: 0, asks: 0, sendHours: 0, stakes: [],
+                            score: Double(seconds) / 60, items: [DayReviewItem(id: "ai:chatgpt", lead: "Used ChatGPT", clauseKey: "ai:chatgpt", score: 1, moments: ["g"], filler: true)],
+                            moments: ["g"], category: "work", dayPart: part)
+        }
+        let quiet = DayReviewThread(key: "app:notes", name: "Notes", kind: "app", seconds: 300, words: 0, personSends: 0, asks: 0, sendHours: 0, stakes: [],
+                                    score: 5, items: [DayReviewItem(id: "app:notes", lead: "Used", tail: "Notes", score: 5, moments: ["n"], filler: true)], moments: ["n"], category: "browsing")
+        func card(_ threads: [DayReviewThread]) -> [String] {
+            DayReview.assemble(DayReviewFacts(day: "2026-10-05", threads: threads, clauses: [:], activeSeconds: 3000, personSends: 0), quotes: [:]).flatMap(\.bullets).map(\.text)
+        }
+        let thinDay = card([ai(1700, part: "afternoon"), quiet])
+        check(thinDay.contains("Spent time in ChatGPT in the afternoon.") && !thinDay.contains("Used ChatGPT."), "time line: the main app with nothing asked says when (\(thinDay))")
+        let longDay = card([ai(6000, part: "afternoon"), quiet])
+        check(longDay.contains("Spent the afternoon in ChatGPT."), "time line: an afternoon's worth reads \"Spent the afternoon\" (\(longDay))")
+        let notMain = card([ai(1700, part: "afternoon"), DayReviewThread(key: "app:notes", name: "Notes", kind: "app", seconds: 2400, words: 0, personSends: 0, asks: 0,
+                                                                          sendHours: 0, stakes: [], score: 5, items: quiet.items, moments: ["n"], category: "browsing")])
+        check(!notMain.contains { $0.hasPrefix("Spent") }, "time line: only for the day's main app (\(notMain))")
+        let short = card([ai(600, part: "morning"), quiet])
+        check(!short.contains { $0.hasPrefix("Spent") }, "time line: not under 15 minutes (\(short))")
+        equal(MemoryStore.dayPart([("2026-10-05T13:00:00Z", "2026-10-05T15:00:00Z")], timezone: "UTC"), String?.some("afternoon"), "time line: two afternoon hours are the afternoon")
+        equal(MemoryStore.dayPart([("2026-10-05T09:00:00Z", "2026-10-05T10:00:00Z"), ("2026-10-05T14:00:00Z", "2026-10-05T15:00:00Z")], timezone: "UTC"), String?.none,
+              "time line: split across the day, no part")
+        // Read-only texting names the conversations read for a while; one only passed on the way is "others".
+        func person(_ name: String, seconds: Int, sends: Int = 0) -> DayReviewThread {
+            DayReviewThread(key: "person:" + name.lowercased(), name: name, kind: "person", seconds: seconds, words: 0, personSends: sends, asks: 0, sendHours: 0,
+                            stakes: [], score: Double(seconds) / 60, items: [], moments: [name], category: "personal")
+        }
+        let read = DayReview.textingBullet([person("Ana Ruiz", seconds: 240), person("Cy Tran", seconds: 4)], words: [:], options: DayReview.options)
+        equal(read?.text, "Read texts from Ana Ruiz and others.", "texting: a conversation only glanced at is not named")
+        let glanced = DayReview.textingBullet([person("Cy Tran", seconds: 4)], words: [:], options: DayReview.options)
+        equal(glanced?.text, "Read texts.", "texting: nothing read for long names no one")
+        let texted = DayReview.textingBullet([person("Cy Tran", seconds: 4, sends: 1)], words: [:], options: DayReview.options)
+        equal(texted?.text, "Texted Cy Tran.", "texting: a quick text still names who it went to")
+        // Never draft or unsent in a clause (the owner: most "drafts" were sent), unless a title says draft.
+        let r = DayReviewClauseRequest(day: "2026-10-05", timezone: zone, key: "doc:x", lead: "Worked on Launch plan", name: "Launch plan", colon: true,
+                                       notes: ["titles: Launch plan; Pricing page", "apps: Pages", "typed or sent: typed about 80 words"], signature: "s", actionIDs: ["a"],
+                                       start: "2026-10-05T10:00:00Z", end: "2026-10-05T11:00:00Z")
+        for bad in ["an unsent pricing page note", "a draft of the pricing page", "the pricing page, not sent"] {
+            var refused = false
+            do { _ = try DayReviewClauses.validatePacket("{\"clause\":\"\(bad)\"}", request: r) } catch is DayReviewClauses.Reject { refused = true } catch {}
+            check(refused, "never draft or unsent: \"\(bad)\" is refused")
+        }
+        check(!DayReviewClauses.packetInstruction.isEmpty && DayReviewClauses.packetInstruction.contains("Never say draft, unsent or not sent."),
+              "never draft or unsent: the writer is told so")
+    }
+
+    static func typedFacts(_ f: Fixture, now: Date) async throws {
+        let prompt = "fixture question about running the build over ssh"
+        let due = try f.store.reviewClauseWork(timezone: zone, now: now, limit: 20)
+        let claudeAsk = due.first { $0.lead == "Asked Claude" }
+        check(claudeAsk?.typedIDs?.isEmpty == false, "typed facts: the Claude ask's clause request names its typed row (\(due.map(\.key)))")
+        check(!due.contains { r in r.notes.contains { $0.contains(prompt) } }, "typed facts: a clause request never carries typed words itself")
+        if let facts = try f.review(now), let data = try? JSONEncoder().encode(facts) {
+            check(!String(decoding: data, as: UTF8.self).contains(prompt), "typed facts: the review's facts never hold typed words")
+        }
+        guard let claudeAsk else { return }
+        let seen = Evidences()
+        let local = LevelWriterBinding(store: f.store, generate: { _, e, _, _ in
+            await seen.add(e); return e.contains("asked: " + prompt) ? "{\"clause\":\"about running builds remotely\"}" : "{\"clause\":\"\"}" })
+        var localStep: LevelWriterBinding.ClauseStep?
+        for _ in 0..<8 {
+            guard let step = try await local.reviewClause(timezone: zone, now: now) else { break }
+            if step.clause.key == claudeAsk.key { localStep = step }
+        }
+        let localEvidence = await seen.all
+        check(localEvidence.contains { $0.contains("asked: " + prompt) }, "typed facts: the writer on this Mac reads the prompt")
+        check(localStep != nil, "typed facts: a clause written from the prompt in other words is saved (\(localStep?.clause.text ?? "-"))")
+        let cloudSeen = Evidences()
+        let cloud = LevelWriterBinding.cloud(store: f.store, model: "fixture-cloud", permits: { _ in true },
+                                             complete: { _, e, _ in await cloudSeen.add(e); return "{\"clause\":\"\"}" })
+        _ = try? await cloud.reviewClause(timezone: zone, now: now.addingTimeInterval(3600))
+        let cloudEvidence = await cloudSeen.all
+        check(!cloudEvidence.contains { $0.contains("asked:") || $0.contains("fixture question") }, "typed facts: a cloud writer never reads typed words (\(cloudEvidence.count) asks)")
+        let typedLines = try f.store.reviewTypedFacts(claudeAsk, writer: .cloud, now: now)
+        check(typedLines.isEmpty, "typed facts: none for a cloud writer, whoever asks")
+        // A clause that copies the prompt is refused; one that says it in other words passes.
+        var r = claudeAsk; r.notes = ["titles: Claude", "apps: Claude", "typed or sent: asked an AI app 1 times", "asked: " + prompt]
+        var refused = false
+        do { _ = try DayReviewClauses.validatePacket("{\"clause\":\"about running the build over ssh\"}", request: r) } catch is DayReviewClauses.Reject { refused = true }
+        check(refused, "typed facts: a clause that copies five typed words in a row is refused")
+        check((try? DayReviewClauses.validatePacket("{\"clause\":\"about running builds remotely\"}", request: r)) == "about running builds remotely",
+              "typed facts: the same topic in other words passes")
+        check((try? DayReviewClauses.validatePacket("{\"clause\":\"running builds remotely\"}", request: r)) == "about running builds remotely",
+              "typed facts: an ask's clause that leaves out \"about\" gets it from code")
+        var doc = r; doc.lead = "Wrote"; doc.name = "Garden"; doc.notes = ["titles: Garden", "apps: Notes", "typed or sent: typed about 20 words", "wrote: plant the tomatoes after the last frost and water them daily"]
+        check((try? DayReviewClauses.validatePacket("{\"clause\":\"planting tomatoes after frost\"}", request: doc)) == "about planting tomatoes after frost",
+              "typed facts: \"Wrote planting …\" is \"Wrote about planting …\" (an ending changed is still the person's word)")
     }
 
     /// The texting fixtures (owner build: Messages typing).
@@ -596,7 +742,8 @@ import CoreIntegration
         #endif
 
         // Texting-heavy day: Jamie across four separate hours beats a little work. claude/today-rank-1005: the work is a few
-        // minutes (little else), so the card is in score order and Jamie keeps both lines; `mixed` has a day with real work.
+        // minutes (little else), so the card is in score order and the texting line leads; `mixed` has a day with real work.
+        // claude/dayeval-1005 (owner 10/05): one texting line, names only; a quote is an owner choice (`textingQuote`).
         let texting = try Fixture("texting")
         try texting.window(ghostty.0, ghostty.1, "~/daydream", at: date(3, 8, 0), minutes: 6)
         var quoteIDs = [String]()
@@ -612,11 +759,11 @@ import CoreIntegration
         let words = try texting.store.ownerReviewQuotes(tFacts?.quoteIDs ?? [], now: now)
         let tGroups = tFacts.map { DayReview.assemble($0, quotes: words) } ?? []
         let top = tGroups.first?.bullets ?? []
-        check(top.count == 3 || top.count == 2, "texting day: the top thread has its bullets (\(top.count))")
-        check(top.first?.lead == "Texted Jamie Lin:" && top.first?.quote != nil, "texting day: the latest send quoted verbatim, before any clause (\(top.first.map(shape) ?? "-"))")
-        check(top.dropFirst().first?.quote != nil && top.dropFirst().first?.quote != top.first?.quote,
-              "texting day: the second bullet quotes the highest-effort text")
-        check(top.compactMap(\.quote).allSatisfy { q in quoteIDs.contains { (words[$0] ?? "") == q } }, "texting day: quotes are the texts' exact words")
+        check(top.count == 1 && top.first?.thread == "texting", "texting day: the texting line leads, one line (\(top.map(shape)))")
+        check(top.first?.text == "Texted Jamie Lin." && top.first?.quote == nil, "texting day: names only, no quote (\(top.first.map(shape) ?? "-"))")
+        let quotedTop = tFacts.map { DayReview.assemble($0, quotes: words, options: DayReview.options.union(.textingQuote)) }?.first?.bullets ?? []
+        check(quotedTop.count == 1 && quotedTop.first?.quote != nil, "texting day: with the owner's quote choice, the line keeps one quote (\(quotedTop.map(shape)))")
+        check(quotedTop.compactMap(\.quote).allSatisfy { q in quoteIDs.contains { (words[$0] ?? "") == q } }, "texting day: quotes are the texts' exact words")
 
         // High-stakes single text: a long, late, first text to a new contact earns its own bullet on a work-heavy day.
         let stakes = try Fixture("stakes")
@@ -631,7 +778,8 @@ import CoreIntegration
         check(jid != nil && Set(jordan?.stakes ?? []).isSuperset(of: [.long, .firstContact, .lateNight]), "high stakes: long, first contact, late night (\(jordan?.stakes ?? []))")
         check(sFacts?.threads.first?.key == "project:daydream", "high stakes: the work project still leads")
         let shown = sFacts.map { DayReview.assemble($0).flatMap(\.bullets) } ?? []
-        check(shown.contains { $0.thread == "person:jordan lee" }, "high stakes: the text has its own bullet (\(shown.map(shape)))")
+        check(shown.contains { $0.thread == "texting" && $0.text.contains("Jordan Lee") && $0.quote == nil },
+              "high stakes: the texting line names who it was to, no quote (\(shown.map(shape)))")
 
         // Never a secret: a text the scrubber would hold back is never quoted.
         let secret = try Fixture("secret")
@@ -714,7 +862,7 @@ extension DayReviewChecks {
               "perf: new records for the day rebuild the cached review")
 
         // 2. Writer passes: the fake model writes what is due, then a pass with nothing due is remembered.
-        let answers = Answers(Array(repeating: "{\"clause\":\"the fixture build and its tests\"}", count: 12))
+        let answers = Answers(Array(repeating: "{\"clause\":\"the swift build and its tests\"}", count: 12))
         let binding = LevelWriterBinding(store: f.store, generate: { _, _, _, _ in try await answers.next() })
         var written = 0, coldIdle = 0.0
         var firstIdle: LevelWriterBinding.ClauseStep?
@@ -737,9 +885,9 @@ extension DayReviewChecks {
                      written, coldIdle, idle.sorted()[2], idle.max() ?? 0))
         check(written >= 1 && firstIdle == nil && (idle.max() ?? 99) <= budget,
               "perf: a writer pass with no clause due returns in under \(Int(budget)) ms (\(String(format: "%.2f", idle.max() ?? 0)) ms; first look \(String(format: "%.1f", coldIdle)) ms)")
-        // ...and is looked at again after a change: a new noted moment of the project and 16 minutes make it due once more.
+        // ...and is looked at again after a change: new work on the project under a new title and 16 minutes make it due once more.
         let now2 = date(3, 19, 40)
-        try f.window(ghostty.0, ghostty.1, "~/daydream", at: date(3, 19, 0), minutes: 20)
+        try f.window(terminal.0, terminal.1, "~/daydream — swift test --filter export", at: date(3, 19, 0), minutes: 20)
         try f.notes(now2)
         let later = try f.store.reviewClauseWork(timezone: zone, now: now2.addingTimeInterval(16 * 60))
         check(later.contains { $0.key == "code:daydream" }, "perf: a remembered \"nothing due\" ends when the day changes (\(later.map(\.key)))")
@@ -766,6 +914,10 @@ extension DayReviewChecks {
 }
 
 /// The fake model's answers, in order; then it fails.
+actor Evidences {
+    var all = [String]()
+    func add(_ e: String) { all.append(e) }
+}
 actor Answers {
     var list: [String]
     init(_ list: [String]) { self.list = list }

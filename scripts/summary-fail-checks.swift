@@ -216,8 +216,10 @@ import PrivacyPolicy
                   "sweep: on the quotes VStack (after its ForEach), never on a Text")
         } else { check(false, "sweep: the quote block and its sweep are found") }
         check(card.contains("content.overlay(SweepBand().mask(content)") && card.contains("@State private var phase: Double = 0")
-              && card.contains(".easeInOut(duration: SummarySweep.period).repeatForever(autoreverses: false)"),
-              "sweep: one band masked to the block's glyphs, one phase, ease-in-out, looping")
+              && card.contains("withAnimation(.easeInOut(duration: SummarySweep.period)) { phase = 1 }")
+              && card.contains("for _ in 0..<SummarySweep.passes") && !card.contains("repeatForever"),
+              "sweep: one band masked to the block's glyphs, one phase, ease-in-out, a bounded run of passes (never forever)")
+        check(SummarySweep.passes > 0 && SummarySweep.passes <= 10, "sweep: a bounded number of passes", "\(SummarySweep.passes)")
         check(card.contains("QuoteSweep(active: state.sweeps && !reduceMotion)") && card.contains("state.sweeps && reduceMotion ? AnyShapeStyle(.tertiary)"),
               "Reduce Motion: no sweep, muted quotes")
         check(card.contains(".disabled(!state.summarizeEnabled)") && card.contains("working: summarizing"), "footer: Summarize Now and Copy Summary grey out while working")

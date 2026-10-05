@@ -39,6 +39,7 @@ import MemoryUI
         a.openMain = { [unowned self] in self.events.append("main") }
         a.openRecall = { [unowned self] in self.events.append("recall") }
         a.quit = { [unowned self] in self.events.append("quit") }
+        a.fixChrome = { [unowned self] in self.events.append("fixChrome") }
         a.retryIssue = { [unowned self] in self.events.append("retry") }
         return a
     }
@@ -447,19 +448,20 @@ struct MenuBarLivePanel: View {
              "storage: Storage needs attention, Review…")
         want(.offReplacement, .attention, "Replacement needs review", .fix(title: "Review…", fix: .settings("Advanced")),
              .pause(enabled: false), "replacement: Replacement needs review, Review… opens Advanced (said once)")
-        // perm-1004 (owner 10/3): the line names every missing permission and the button the one it turns on.
-        want(.permission, .attention, "Input Monitoring is off", .fix(title: "Turn on Input Monitoring", fix: .setUp), .pause(enabled: false),
-             "Needs Permission: orange Input Monitoring is off, Turn on Input Monitoring opens setup at the permissions step")
-        want(.permission, .attention, "Input Monitoring is off", .fix(title: "Turn on Input Monitoring", fix: .systemSettings(.inputMonitoring)),
+        // perm-1004 (owner 10/3): the button names the permission it turns on, Accessibility first; int-015: the line
+        // beside it doesn't repeat it, so the header stays one line (the panel never grows).
+        want(.permission, .attention, "Not recording", .fix(title: "Turn on Input Monitoring", fix: .setUp), .pause(enabled: false),
+             "Needs Permission: orange Not recording, Turn on Input Monitoring opens setup at the permissions step")
+        want(.permission, .attention, "Not recording", .fix(title: "Turn on Input Monitoring", fix: .systemSettings(.inputMonitoring)),
              .pause(enabled: false), setUp: false, "Needs Permission without a setup window: that pane of System Settings")
-        want(.permissionBoth, .attention, "Accessibility and Input Monitoring are off", .fix(title: "Turn on Accessibility", fix: .setUp), .pause(enabled: false),
-             "both permissions off: one line naming both, Accessibility first")
-        want(.permissionBoth, .attention, "Accessibility and Input Monitoring are off", .fix(title: "Turn on Accessibility", fix: .systemSettings(.accessibility)),
+        want(.permissionBoth, .attention, "2 permissions are off", .fix(title: "Turn on Accessibility", fix: .setUp), .pause(enabled: false),
+             "both permissions off: one line, the button names Accessibility first")
+        want(.permissionBoth, .attention, "2 permissions are off", .fix(title: "Turn on Accessibility", fix: .systemSettings(.accessibility)),
              .pause(enabled: false), setUp: false, "both off without a setup window: Accessibility's pane first")
         // Setup finished: the button opens the DayDream permissions window (the drag cards), never setup again.
-        want(.permission, .attention, "Input Monitoring is off", .fix(title: "Turn on Input Monitoring", fix: .permissions), .pause(enabled: false),
+        want(.permission, .attention, "Not recording", .fix(title: "Turn on Input Monitoring", fix: .permissions), .pause(enabled: false),
              permissions: true, "Needs Permission after setup: opens the DayDream permissions window")
-        want(.permissionBoth, .attention, "Accessibility and Input Monitoring are off", .fix(title: "Turn on Accessibility", fix: .permissions), .pause(enabled: false),
+        want(.permissionBoth, .attention, "2 permissions are off", .fix(title: "Turn on Accessibility", fix: .permissions), .pause(enabled: false),
              setUp: false, permissions: true, "both off after setup: the permissions window, not System Settings")
         want(.offBlocked, .attention, "Setup isn't finished", .fix(title: "Finish Setup…", fix: .setUp), .pause(enabled: false),
              permissions: true, "setup not finished: Finish Setup… still opens setup (the permissions window is only for a permission)")
@@ -554,7 +556,9 @@ struct MenuBarLivePanel: View {
             check(!Menu.fixHint(fix).isEmpty, "the fix button explains itself to VoiceOver (\(fix))")
         }
         equal(Menu.fixHint(.setUp), "Opens DayDream setup at the step that's missing", "Allow… and Finish Setup… say where they go")
-        equal(Menu.fixHint(.permissions), "Opens DayDream permissions, where you allow what's missing", "Allow… after setup says where it goes")
+        // perm-1004 (72d5565): the permissions window opens the named permission's pane with DayDream's card.
+        equal(Menu.fixHint(.permissions), "Opens System Settings at the permission, with DayDream's card to drag into its list",
+              "the permission button after setup says where it goes")
         // The orange attention line is one click to where it is dealt with.
         equal(RecordingCopy.issue("Input capture needs attention"), "Keyboard and mouse recording needs attention", "the keyboard and mouse issue's words")
         for words in ["Keyboard and mouse recording needs attention", "Keyboard and mouse need attention"] {
@@ -635,7 +639,7 @@ struct MenuBarLivePanel: View {
         // Chrome pages: the line exactly while the presentation has one (pages being saved, or access off), never dropped:
         // it is the only live notice that Chrome pages are saved. One click opens Settings ▸ Apps to remember.
         for (line, want) in [(BrowserHistoryLine.off, nil), (.on, "Browser history on (Google Chrome)"),
-                             (.needsAccess, "Browser history on, but Chrome access is off"),
+                             (.needsAccess, "Chrome pages aren't being saved."),
                              (.paused, "Browser history paused: Chrome not verified"),
                              (.twoCopies, "Browser history paused: two Chromes open")] as [(BrowserHistoryLine, String?)] {
             var p = presentation(.recording)!
@@ -644,7 +648,9 @@ struct MenuBarLivePanel: View {
         }
         equal(Menu.chromeLine(nil), nil, "no Chrome line in the isolated preview")
         equal(DaydreamSettingsPage(section: Menu.chromeSection), .apps, "the Chrome line opens Apps to remember")
-        equal(Menu.permissionLine([.accessibility]), "Accessibility is off", "permission line: Accessibility is off")
+        equal(Menu.permissionLine([.accessibility]), "Not recording", "permission line: one off (the button names it)")
+        equal(Menu.permissionLine([.inputMonitoring, .accessibility]), "2 permissions are off", "permission line: both off")
+        equal(Menu.permissionLine([]), "A permission is off", "permission line: which one unknown")
 
         // Recording menu rows (the app's Recording menu, copy deck §8.8): unchanged by the panel.
         typealias RMenu = MenuBarRecordingMenu
@@ -770,13 +776,13 @@ struct MenuBarLivePanel: View {
         // Review G30: a Chrome that can't be verified saves nothing: the line says it is paused.
         equal(BrowserHistoryLine.make(recording: true, pagesOn: true, access: .unverified), .paused, "browser history line: an unverified Chrome is paused, never on")
         equal(BrowserHistoryLine.paused.text, "Browser history paused: Chrome not verified", "browser history line: paused copy")
-        equal(BrowserHistoryLine.needsAccess.text, "Browser history on, but Chrome access is off", "browser history line: access-off copy")
+        equal(BrowserHistoryLine.needsAccess.text, "Chrome pages aren't being saved.", "browser history line: access-off copy (chromeask-1005)")
         equal(BrowserHistoryLine.symbol, "globe", "browser history line: globe symbol")
         let menuText = (try? String(contentsOfFile: "Sources/MemoryUI/MenuBarMenu.swift", encoding: .utf8)) ?? ""
         check(menuText.contains("public static func chromeLine(_ p: CapturePresentation?) -> String? { p?.browserHistory.text }"),
               "browser history line: drawn exactly from the presentation's line")
         let modelText = (try? String(contentsOfFile: "Sources/MacMemApp/MacMemApp.swift", encoding: .utf8)) ?? ""
-        check(modelText.contains("BrowserHistoryLine.make(recording:recording,pagesOn:browserPagesSaved,access:chromeAccessShown,chromeExcluded:chromeExcluded)")
+        check(modelText.contains("BrowserHistoryLine.make(recording:recording,pagesOn:browserPagesSaved,access:chromeLineAccess,chromeExcluded:chromeExcluded)")
               && modelText.contains("var chromeExcluded:Bool {savedPrivacy.blockedApps.contains(ChromePageTarget.bundleID)}"),
               "browser history line: the app computes it from the saved switch, the recording state and whether Google Chrome is excluded")
         let noToday = fitting(panel(.recording, recorder: r, snapshot: nil)).height
@@ -814,7 +820,7 @@ struct MenuBarLivePanel: View {
             Expect(c: .offStorage, submenu: false, resume: false, stop: false, fix: "section:Setup"),
             Expect(c: .permission, submenu: false, resume: false, stop: false, fix: "setup"),
             Expect(c: .permission, setUp: false, submenu: false, resume: false, stop: false, fix: "system:inputMonitoring"),
-            Expect(c: .permissionBoth, setUp: false, submenu: false, resume: false, stop: false, fix: "system:privacy"),
+            Expect(c: .permissionBoth, setUp: false, submenu: false, resume: false, stop: false, fix: "system:accessibility"),
             Expect(c: .permission, submenu: false, resume: false, stop: false, fix: "permissions", permissions: true),
             Expect(c: .permissionBoth, setUp: false, submenu: false, resume: false, stop: false, fix: "permissions", permissions: true),
         ]
@@ -1008,11 +1014,19 @@ struct MenuBarLivePanel: View {
             } else { check(false, "typing paused: the submenu was presented") }
         }
         // The Chrome pages line: one click opens Settings ▸ Apps to remember, where the switch is.
-        for line in [BrowserHistoryLine.on, .needsAccess, .paused, .twoCopies] {
+        for line in [BrowserHistoryLine.on, .paused, .twoCopies] {
             r.reset()
             let chromeHits = sweep(host(panel(.recording, recorder: r, browserHistory: line)), r).filter { $0.events.contains("section:Recording") }
             check(!chromeHits.isEmpty && chromeHits.allSatisfy { $0.dismissed == 1 && $0.events == ["section:Recording"] && $0.point.y < 60 },
                   "browser history line (\(line)): one click opens Apps to remember and closes the panel")
+        }
+        // chromeask-1005: access off says "Chrome pages aren't being saved." with Fix: one click runs Fix (the pane, or
+        // setup's Chrome card) and closes the panel.
+        do {
+            r.reset()
+            let fixHits = sweep(host(panel(.recording, recorder: r, browserHistory: .needsAccess)), r).filter { $0.events.contains("fixChrome") }
+            check(!fixHits.isEmpty && fixHits.allSatisfy { $0.dismissed == 1 && $0.events == ["fixChrome"] && $0.point.y < 60 },
+                  "browser history line (needsAccess): one click runs Fix and closes the panel")
         }
 
         // Set Up DayDream…: onboarding incomplete, outside the Development Trial.
@@ -1537,7 +1551,7 @@ struct MenuBarLivePanel: View {
         for (s, trailing, weight) in [("Keyboard and mouse need attention", "›", Font.Weight.medium), (RecordingCopy.historyNotUpdated, "Try Again", .medium),
                                       (RecordingCopy.deletionNotFinished, "Try Again", .medium), (MenuBarMenu.historySetAsideLine, "›", .medium),
                                       (RecordingCopy.choicesUnsaved, "›", .medium),
-                                      ("Browser history on (Google Chrome)", "›", .regular), ("Browser history on, but Chrome access is off", "›", .regular),
+                                      ("Browser history on (Google Chrome)", "›", .regular), ("Chrome pages aren't being saved.", "Ask again", .regular),
                                       ("Typing paused until 10:42 PM", "Resume", .regular), ("Typing is paused until you unlock your Mac.", "›", .regular),
                                       ("Typing is locked: turn it on in Settings", "›", .regular), ("Recording what you type in Notes", "", .regular)]
                 as [(String, String, Font.Weight)] {
@@ -1639,10 +1653,11 @@ struct MenuBarLivePanel: View {
         for pin in ["pause: { model.pauseFor(minutes: $0) }", "resume: { model.requestStart { routes.openWindow(\"onboarding\"); routes.activate() } }", "stop: { model.stopCapture() }",
                     "actions.quit = { routes.terminate() }",
                     "model.development == nil ? { routes.openWindow(\"onboarding\"); routes.activate() } : nil",
-                    "model.development == nil ? { routes.openWindow(\"permissions\"); routes.activate() } : nil",
+                    // perm-1004: the permissions window opens the next permission's pane, once.
+                    "if let next = model.recordingState.nextPermission { model.permissionPaneRequest = next }\n            routes.openWindow(\"permissions\"); routes.activate()",
                     "openPermissions: Self.openPermissions(model: model, routes: routes),",
                     "setup: DaydreamMenuBarPanel.setupLine(model: model, now: now, timeZone: zone)",
-                    "typing: typing.indicator"] {
+                    "typing: model.typing.indicator"] {
             check(content.contains(pin), "DaydreamMenuBarPanel wires \(pin)")
         }
         check(content.contains("func dismiss() { window?.orderOut(nil) }"), "the panel dismisses through its host window's orderOut")

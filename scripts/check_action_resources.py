@@ -42,7 +42,7 @@ class ActionResources(unittest.TestCase):
 
     def send(self,method,params=None):
         if not self.proc:
-            self.proc=subprocess.Popen([CLI,"--home",str(self.home),"--client","fixture","--recipient","local-test","mcp"],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env={**os.environ,"MAC_MEM_CAPABILITY":self.token})
+            self.proc=subprocess.Popen([CLI,"--home",str(self.home),"--client","fixture","--recipient","local-test","mcp"],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env={**os.environ,"MAC_MEM_CAPABILITY":self.token,"DAYDREAM_MCP_TOOLSET":"legacy"})  # agent-tools v2: these pin the 0.1.4 tools (resources, current-context)
         self.proc.stdin.write(json.dumps({"jsonrpc":"2.0","id":1,"method":method,"params":params or {}})+"\n"); self.proc.stdin.flush()
         return json.loads(self.proc.stdout.readline())
 

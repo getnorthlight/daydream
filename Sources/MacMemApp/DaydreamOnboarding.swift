@@ -53,8 +53,15 @@ struct DaydreamOnboarding: View {
     @State private var apps: [LocalApp] = []
     @State private var appsLoaded = false
     @State private var query = ""
-    @State private var accessibility = false
-    @State private var inputMonitoring = false
+    @State private var accessibility: Bool
+    @State private var inputMonitoring: Bool
+    /// claude/permflash-015: setup's own reads, settled like the app's (`PermissionSettle`) and starting from what the
+    /// app last showed: a moment's "not allowed" as setup opens never leaves it on the Permissions page.
+    @State private var shownPermissions: ShownPermissions
+    /// The page to show is decided (setup's first reads ran). Until then the window draws no page: setup always opens
+    /// on Permissions and moves on once both read allowed, and that first page was drawn for a frame before the read.
+    @State private var opened = false
+    @State private var settleReadSet = false
     @State private var error: String?
     @State private var working = false
     @State private var startTask: Task<Void, Never>?
@@ -68,6 +75,10 @@ struct DaydreamOnboarding: View {
     /// The Chrome row's Allow was pressed (macOS was asked, or Chrome was opened to ask).
     @State private var chromeAsked = false
     @State private var chromeIcon: NSImage?
+    /// Google Chrome is running (read as the card opens and when Chrome opens or quits): Allow opens it otherwise.
+    @State private var chromeRunning = true
+    /// When the row turned Allowed: the page moves on by itself only after it has shown that for a moment.
+    @State private var chromeAllowedAt: Date?
     /// The Permissions card alone, once, for someone who finished setup before the Chrome row (`DaydreamChromeCard`).
     @State private var chromeCard = false
     private let permissionTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
@@ -123,6 +134,10 @@ struct DaydreamOnboarding: View {
         let seededMessages = Self.savedMessages(model)
         _messages = State(initialValue: seededMessages)
         _seedMessages = State(initialValue: seededMessages)
+        let known = model.development == nil ? model.permissionSnapshot : PermissionSnapshot()
+        _accessibility = State(initialValue: known.accessibility == true)
+        _inputMonitoring = State(initialValue: known.inputMonitoring == true)
+        _shownPermissions = State(initialValue: ShownPermissions(known: known, allowedBefore: model.permissionsAllowedBefore))
     }
 
     /// The saved Messages and email checkbox (on unless turned off); on in Preview.
@@ -179,8 +194,13 @@ struct DaydreamOnboarding: View {
         var error: String?
         var typedText: Bool
         var rows: [(title: String, value: String, button: String?)]
+        /// chromeask-1005: the Chrome row as drawn (its words and its button's own closures; chrome-ask-checks presses it).
+        var chromeRow: PermissionChromeRow? = nil
     }
     static var drawnForChecks: Drawn?
+    /// claude/permflash-015: the page of every draw, in order; nil for a draw before the page was decided
+    /// (permission-flash-checks: setup never draws Permissions on its way to another page).
+    static var drawnPagesForChecks: [DaydreamOnboardingPage?] = []
     /// The Permissions page's drag hint as it starts (the renders: a card's pane already opened); nil starts hidden.
     static var dragHintForChecks: PermissionDragHint?
     #endif
@@ -198,23 +218,28 @@ struct DaydreamOnboarding: View {
         #if DEVELOPMENT_SOURCE_CHECKS
         let _ = Self.drawnForChecks = Drawn(page: page, title: title, button: continueTitle, back: backAction != nil, localLine: localLine,
                                             cloudProblem: cloudProblem, error: error, typedText: typedText,
-                                            rows: page == .review ? reviewRows.map { ($0.title, $0.value, $0.button?.title) } : [])
+                                            rows: page == .review ? reviewRows.map { ($0.title, $0.value, $0.button?.title) } : [],
+                                            chromeRow: page == .permissions ? chromeRow : nil)
+        let _ = Self.drawnPagesForChecks.append(opened ? page : nil)
         #endif
+        // Before the page is decided (`opened`): the window and nothing on it.
         DaydreamOnboardingShell(
-            title: title, subtitle: nil,
-            back: backAction,
+            title: opened ? title : "", subtitle: nil,
+            back: opened ? backAction : nil,
             continueTitle: continueTitle,
-            canContinue: canContinue, working: working,
+            canContinue: opened && canContinue, working: working,
             // The icon opens and closes setup; the summaries and apps steps use its room for their controls.
-            showsIcon: page == .permissions || page == .review,
+            showsIcon: opened && (page == .permissions || page == .review),
             continueAction: proceed
         ) {
-            if let error {
-                Text(error).font(.system(size: 12)).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityLabel(error)
+            if opened {
+                if let error {
+                    Text(error).font(.system(size: 12)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel(error)
+                }
+                pageContent
             }
-            pageContent
         }
         .onAppear { resetForReview(); applySetupRequest(); readChrome(); applyChromeCard(); refreshPermissions() }
         .onChange(of: model.chromeCardRequested) { _ in applyChromeCard() }
@@ -225,7 +250,15 @@ struct DaydreamOnboarding: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refreshPermissions() }
         .onChange(of: choice) { _ in error = nil; cloudProblem = nil }
         // The Chrome row, once shown, stays and shows its answer.
-        .onChange(of: model.chromeAccess) { _ in latchChromeRow() }
+        .onChange(of: model.chromeAccess) { access in
+            latchChromeRow()
+            if access == .allowed, chromeRowShown, chromeAllowedAt == nil { chromeAllowedAt = Date() }
+        }
+        // chromeask-1005: back from System Settings (or anywhere): read Chrome's access again (a read, never a question),
+        // so a switch turned on there shows Allowed here with no restart.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in rereadChrome() }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didLaunchApplicationNotification)) { _ in readChromeRunning() }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didTerminateApplicationNotification)) { _ in readChromeRunning() }
         .onChange(of: phase) { _ in followPhase() }
         // Typing switched on again after the key failed: the "typing stays off" line no longer matches the switch.
         .onChange(of: typedText) { on in if on && error == TypingSettingsText.keyError { error = nil } }
@@ -251,7 +284,8 @@ struct DaydreamOnboarding: View {
             // Quit & Reopen, when macOS needs it, is this page's main button instead of a row.
             PermissionGrantView(enabled: available, readAccessibility: { Self.readPermissions().accessibility },
                                 readInputMonitoring: { Self.readPermissions().inputMonitoring }, embedded: true, showsRelaunchRow: false,
-                                dragHint: dragHintInitially, chromeRow: chromeRow, showsAIReadsToggle: true, onStatusChange: permissionChanged)
+                                dragHint: dragHintInitially, known: shownPermissions.snapshot, allowedBefore: model.permissionsAllowedBefore,
+                                chromeRow: chromeRow, showsAIReadsToggle: true, onStatusChange: permissionChanged)
         case .summaries:
             DaydreamSummariesContent(choice: Binding(get: { choice }, set: { choice = $0; choiceTouched = true }), cloudKey: $key, localAvailable: writer.localOffered, localLine: localLine,
                                      savedKey: savedKey || keyKept, problem: cloudProblem, fix: fixCloudProblem, focusRequest: focusKey)
@@ -395,7 +429,7 @@ struct DaydreamOnboarding: View {
     }
 
     private func proceed() {
-        guard canContinue else { return }
+        guard opened, canContinue else { return }
         error = nil
         if relaunchPending && (page == .permissions || page == .review) { requests?.quitAndReopen?(); return }
         if preview {
@@ -721,15 +755,14 @@ struct DaydreamOnboarding: View {
     }
 
     /// Start Recording started it, or Done (recording already on): setup is finished for this version, and never opens by
-    /// itself again. With Web pages in Chrome on, macOS's Automation question for Chrome comes now (or when Chrome first
-    /// comes forward), once: macOS asks only while it hasn't been answered.
+    /// itself again. chromeask-1005 (owner 10/5): nothing asks macOS about Chrome here or later; the Chrome row's Allow
+    /// was the place (an unanswered row is the menu bar's "Chrome pages aren't being saved. Fix", which opens it again).
     private func finish() {
         guard !preview else { dismiss(); return }
         guard !model.preferencesUnresolved else { show(.apps); return }
         completed = true
         model.setupFinished()
         whatsNew = false
-        model.askChromeAccessAfterSetup()
         dismiss()
     }
 
@@ -739,20 +772,46 @@ struct DaydreamOnboarding: View {
     private var chromeRowShown: Bool {
         guard available, !preview else { return false }
         return DaydreamOnboardingChromeRow.shown(release: ReleaseFeatures.chromePageHistory, installed: chromeInstalled,
-                                                 chromeExcluded: model.chromeExcluded, answered: MemoryViewModel.chromeAnswered(model.chromeAccess),
-                                                 reading: model.chromeAccess == .checking, latched: chromeRowLatched)
+                                                 chromeExcluded: model.chromeExcluded, answered: MemoryViewModel.chromeAnswered(model.chromeRowAccess),
+                                                 reading: model.chromeRowAccess == .checking, latched: chromeRowLatched)
     }
+    /// chromeask-1005 (owner 10/5): before the press the row says what macOS will ask (with typing in mind while
+    /// setup's typing switch is on) and, with Chrome closed, that Allow opens it in the background to ask.
     private var chromeRow: PermissionChromeRow? {
         guard chromeRowShown else { return nil }
-        return PermissionChromeRow(icon: chromeIcon, access: model.chromeAccess, asked: chromeAsked,
+        return PermissionChromeRow(icon: chromeIcon, access: model.chromeRowAccess, asked: chromeAsked,
                                    allow: { chromeRowLatched = true; chromeAsked = true; model.askChromeAccessInSetup() },
-                                   openSettings: { model.openChromeAutomationSettings() })
+                                   openSettings: { model.openChromeAutomationSettings() },
+                                   // Once pressed, the line under the row says what to do instead.
+                                   typing: typedText, opensChrome: !chromeRunning && !chromeAsked,
+                                   askAgain: { chromeRowLatched = true; chromeAsked = true; model.askChromeAgain() })
+    }
+    private func readChromeRunning() {
+        guard available, !preview, ReleaseFeatures.chromePageHistory, chromeInstalled else { return }
+        chromeRunning = model.chromeRunning
+    }
+    /// A read of Chrome's access while the row shows anything but Allowed (never a question; nothing while macOS asks).
+    private func rereadChrome() {
+        readChromeRunning()
+        guard chromeRowShown, model.chromeAccess != .allowed, model.chromeAccess != .checking else { return }
+        model.checkChromeAccess()
     }
     private func latchChromeRow() { if chromeRowShown { chromeRowLatched = true } }
+    /// Allowed, and (when it turned Allowed here) shown as Allowed for a moment, so the person sees it before the page
+    /// moves on.
+    private var chromeAllowedSeen: Bool {
+        model.chromeRowAccess == .allowed && (chromeAllowedAt.map { Date().timeIntervalSince($0) >= 1.5 } ?? true)
+    }
+    /// chromeask-1005: the first read of Chrome's access is still running for an installed, recorded Chrome: the page
+    /// doesn't move on by itself yet (with both permissions already allowed it did, before the row could show).
+    private var chromeRowReading: Bool {
+        available && !preview && ReleaseFeatures.chromePageHistory && chromeInstalled && !model.chromeExcluded && model.chromeRowAccess == .checking
+    }
     /// As the card opens: whether Chrome is installed (and its icon), and a read of its access (never a question).
     private func readChrome() {
         guard available, !preview, ReleaseFeatures.chromePageHistory else { return }
         chromeInstalled = model.chromeInstalled
+        readChromeRunning()
         if chromeInstalled, chromeIcon == nil,
            let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: ChromePageTarget.bundleID) {
             chromeIcon = NSWorkspace.shared.icon(forFile: url.path)
@@ -785,8 +844,8 @@ struct DaydreamOnboarding: View {
         latchChromeRow()
         route.permissionsChanged(accessibility: accessibility, inputMonitoring: inputMonitoring,
                                  relaunchPending: relaunchPending(accessibility: accessibility, inputMonitoring: inputMonitoring),
-                                 waitsForChrome: DaydreamOnboardingChromeRow.holdsPage(shown: chromeRowShown, pressed: chromeAsked,
-                                                                                       answered: MemoryViewModel.chromeAnswered(model.chromeAccess)))
+                                 waitsForChrome: DaydreamOnboardingChromeRow.holdsPage(shown: chromeRowShown || chromeRowReading,
+                                                                                       allowed: chromeAllowedSeen))
     }
 
     /// fix/bugs7: an untouched summaries choice follows the writer's settled state (see `choiceTouched`).
@@ -812,13 +871,27 @@ struct DaydreamOnboarding: View {
         error = nil
         chromeAsked = false
         chromeRowLatched = false
+        chromeAllowedAt = nil
         chromeCard = false
     }
 
     private func refreshPermissions() {
-        guard available else { return }
+        guard available else { opened = true; return }
         let read = Self.readPermissions()
-        permissionChanged(read.accessibility, read.inputMonitoring)
+        var next = shownPermissions
+        let shown = next.read(PermissionSnapshot(accessibility: read.accessibility, inputMonitoring: read.inputMonitoring), at: Date())
+        if next != shownPermissions { shownPermissions = next }
+        // Before the first page is decided, an off read still waiting to hold (someone who finished setup: it may be a
+        // moment's "not allowed", or a permission really turned off as setup opens) decides nothing: no page is drawn
+        // until a read says allowed or the off read has held, read again shortly. Deciding on what showed before would
+        // move a really-off setup past Permissions, and nothing brings it back.
+        if opened || (!next.unsettled && shown.accessibility != nil && shown.inputMonitoring != nil) {
+            permissionChanged(shown.accessibility == true, shown.inputMonitoring == true)
+            opened = true
+        } else if !settleReadSet {
+            settleReadSet = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { settleReadSet = false; if !opened { refreshPermissions() } }
+        }
         model.refreshCaptureStatus()
     }
 

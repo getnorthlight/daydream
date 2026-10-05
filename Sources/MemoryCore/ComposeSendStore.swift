@@ -51,7 +51,7 @@ public enum ComposeView {
         o.sealedBy = ComposeSend.gesture(seal: u.sealReason)
         return o
     }
-    /// "Sent to Jamie", "Replied to Ada's post on X", "Draft to Jamie (not sent)", …
+    /// "Sent to Jamie", "Replied to Ada's post on X", "Typed to Jamie", …
     public static func line(_ e: Evidence) -> String? { outcome(e).map(ComposeSend.line) }
     /// The muted replied-to line (`on: “…”`), or nil.
     public static func contextLine(_ e: Evidence) -> String? { outcome(e).flatMap { ComposeSend.contextLine($0.context) } }

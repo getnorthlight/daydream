@@ -22,7 +22,10 @@ if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--unclean-fixt
         _exit(0)
     } catch { _exit(3) }
 }
+// agent-tools v2 (WP-D): `--agent-tools evals-list | fixture <home> | run <home>` for scripts/agent-tools-evals.py.
+if let code = agentToolsCommand(CommandLine.arguments) { exit(code) }
 do {
+    try runFilePathChecks(root: dir.appendingPathComponent("file-paths"))
     try runPrivacyChecks(home:dir.appendingPathComponent("privacy"),now:now)
     try runUpdateChecks(home:dir.appendingPathComponent("updates"))
     try runTimedPauseChecks()
@@ -52,9 +55,12 @@ do {
     try runCaptureChecks(home:dir.appendingPathComponent("capture"),now:now)
     try runSystemProcessChecks(now:now)
     try runStorageFaultChecks(home:dir.appendingPathComponent("storage-fault"),now:now)
+    // wal-1005: the app's history keeps SQLite's write-ahead log; reads never hold a save up.
+    try runHistoryJournalChecks(home:dir.appendingPathComponent("history-journal"),now:now)
     try runActivityBundleChecks(home:dir.appendingPathComponent("activity-bundles"),now:now)
     try runMomentContinuationChecks(home:dir.appendingPathComponent("moment-continuation"),now:now)
     try runTitleSpinnerChecks(home:dir.appendingPathComponent("title-spinner"))
+    try runAgentModelChecks()   // WP-B (agent-tools v2 read-time model)
     try runAssistantChecks(home:dir.appendingPathComponent("assistant"))
     try runReadinessChecks(home:dir.appendingPathComponent("readiness"))
     try runHonestyChecks(home:dir.appendingPathComponent("honesty"),now:now)
@@ -78,6 +84,9 @@ do {
     try runRecapChecks(home:dir.appendingPathComponent("recap"))
     try runRecallFoldChecks(home:dir.appendingPathComponent("recall-fold"))
     try runForgetRangeChecks(home:dir.appendingPathComponent("forget-range"))
+    // agent-tools v2 (docs/agent-tools/ownership.md). WP-A's checks read Sources/, so run from the worktree root.
+    try runAgentSharePolicyChecks(home: dir.appendingPathComponent("agent-share-policy"))
+    try runAgentToolsChecks(home:dir.appendingPathComponent("agent-tools"))
     let crashHome = dir.appendingPathComponent("unclean")
     let child = Process(); child.executableURL = URL(fileURLWithPath:CommandLine.arguments[0])
     child.arguments = ["--unclean-fixture",crashHome.path]

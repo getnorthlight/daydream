@@ -51,6 +51,17 @@ struct WriterEnvironment {
     var typingSeconds:@Sendable () -> TimeInterval = {
         CGEventSource.secondsSinceLastEventType(.combinedSessionState,eventType:.keyDown)
     }
+    /// perf2-1005 (owner 10/04): seconds the background writer still waits before it reads the history or writes a note
+    /// (the app: while DayDream opens, `LaunchQuiet`, and while keys were typed in the last `typingBurst` seconds). 0: go.
+    /// Summarize Now and an AI app's request never wait for it. Checks: never waits.
+    var quietFor:@Sendable () -> TimeInterval = {0}
+    /// perf2-1005: the priority the background writer's passes and note runs take (nil: the caller's; the app: utility).
+    var workPriority:TaskPriority?=nil
+    /// perf2-1005 (owner 10/04): false (the app), only today's moments get notes in the background: no catch-up of past
+    /// days, and a past day's entries still in the queue (a moment of yesterday at midnight, an older backlog) are dropped,
+    /// never run. Notes they already have stay; levels never wait for them (a block leaves a waiting moment out a day after
+    /// it ended). Summarize Now and AI apps' requests are unchanged. Checks keep the 7-day catch-up (true).
+    var pastDayNotes=true
     var timezone:@Sendable () -> String = {TimeZone.current.identifier}
     var defaults:UserDefaults = .standard
     /// The model runtime for checked files. The writer wraps it in one `BatchRuntime` per activation.
@@ -67,6 +78,11 @@ struct WriterEnvironment {
     var sourceChangeSleep:@Sendable (TimeInterval) async throws -> Void = {seconds in
         try await Task.sleep(nanoseconds:UInt64(max(0,seconds)*1_000_000_000))
     }
+    /// claude/dayeval-1005 (owner 10/05: "the only thing that needs a summary is the day"): false, no model writes a moment
+    /// or level note: code writes them (`CanonicalGrounding.codeOnlyNote`, LevelRunner's code notes) and the model is
+    /// loaded only for the day card's line. Checks and `.live` keep the model (true); the app runs on `.app`, which turns
+    /// it off unless the hidden default `DayDreamMomentSummaries` is set (`WriterQuiet.swift`, with perf2-1005's quiet rules).
+    var momentModel=true
     static let live=WriterEnvironment()
 }
 
@@ -260,6 +276,8 @@ private struct AdmissionGuardedInference:LocalInference {
         var heldPasses=0
         /// Ticks a pass ran (its first and each look again).
         var passTicks=0
+        /// perf2-1005: looks put off while DayDream opened or the person typed (`quietFor`); past moments set aside.
+        var quietDeferrals=0,pastSetAside=0
     }
     private(set) var counters=Counters()
     /// Checks and the simulation: called with each moment a note ran for.
@@ -340,6 +358,8 @@ private struct AdmissionGuardedInference:LocalInference {
     /// claude/ready-1002 (owner): a version-bump rewrite waited because the person was typing; the next look comes once
     /// typing has been quiet `typingBurst` seconds.
     private var rewriteWaitsForQuiet=false
+    /// perf2-1005: a batch stopped between notes because DayDream was opening or the person typed: look again then.
+    private var quietWakeAt:Date?
     private var expiryRetryKeys=Set<String>()
     private func expiryQuietWake() -> Date {
         env.now().addingTimeInterval(max(1,Self.typingBurst-max(0,env.typingSeconds())))
@@ -500,7 +520,7 @@ private struct AdmissionGuardedInference:LocalInference {
         // fix/bugs7: Summarize Now, an AI app's batch or a writer switching holds the writer (no pass to look again).
         // fix/sx-all round 1: the look is kept, and `resumeDeferred` runs it as soon as that hold ends.
         if writerHeld {rerun=reason;lookAgainSoon();return}
-        Task { [weak self] in await self?.pass(reason) }
+        Task(priority:env.workPriority) { [weak self] in await self?.pass(reason) }
     }
     /// fix/sx-all round 1: a look deferred while something held the writer (a switch, an AI app's request, Summarize
     /// now) runs once that ends, instead of waiting for the next timer.
@@ -562,7 +582,7 @@ private struct AdmissionGuardedInference:LocalInference {
         timer?.cancel();timer=nil
         guard env.automatic,let date else {return}
         let delay=max(1,date.timeIntervalSince(env.now()))
-        timer=Task { [weak self] in
+        timer=Task(priority:env.workPriority) { [weak self] in
             do {try await Task.sleep(nanoseconds:UInt64(delay*1_000_000_000))} catch {return}
             guard let self else {return}
             self.timer=nil
@@ -585,11 +605,16 @@ private struct AdmissionGuardedInference:LocalInference {
     }
     private func beginSourceDiscovery() {
         guard sourceChangeTask==nil,provider=="local",!expiryWaitsForQuiet,let source,let scheduler else {return}
-        let token=UUID(),epoch=modeGeneration,sleep=env.sourceChangeSleep
+        let token=UUID(),epoch=modeGeneration,sleep=env.sourceChangeSleep,quietFor=env.quietFor
         let delay=max(Self.sourceChangeDebounce,Self.sourceChangeReadSpacing-env.now().timeIntervalSince(sourceLastRead))
         sourceChangeToken=token
         sourceChangeTask=Task(priority:.utility) { [weak self] in
-            do {try await sleep(delay)} catch {return}
+            do {
+                try await sleep(delay)
+                // perf2-1005: today's read waits while DayDream opens or the person types (each key's save shares the store).
+                var waits=0
+                while waits<120,case let quiet=quietFor(),quiet>0 {waits+=1;try await sleep(quiet+0.25)}
+            } catch {return}
             guard let self,self.sourceChangeToken==token,epoch==self.modeGeneration,
                   self.provider=="local",self.source === source,self.scheduler === scheduler,!Task.isCancelled else {return}
             let version=self.sourceChangeVersion
@@ -708,7 +733,7 @@ private struct AdmissionGuardedInference:LocalInference {
         let local=CanonicalLocalWriter(runtime:batch,policy:{ [weak self] request,actions in
             guard await self?.allows(epoch:epoch,mode:"local")==true else {return false}
             return await port.permitted(request,actions)
-        },appNames:names)
+        },appNames:names,momentModel:env.momentModel)
         let now=env.now
         adapter=CoreWriterAdapter(core:port,generate:{try await local.generate($0,completeActions:$1,now:now())},appNames:names,localIntentSessions:true)
         levels=statusStore.map { LevelWriterBinding.local(store:$0,runtime:batch) }
@@ -1099,7 +1124,7 @@ private struct AdmissionGuardedInference:LocalInference {
             let remote=CanonicalCloudWriter(consent:bindings.consent,key:bindings.key,policy:{[weak self] request,actions in
                 guard await self?.allows(epoch:epoch,mode:"cloud")==true,await bindings.permits(request,actions) else {return false}
                 return await port.permitted(request,actions)
-            },send:cloudSend,appNames:names)
+            },send:cloudSend,appNames:names,momentModel:env.momentModel)
             adapter=CoreWriterAdapter(core:port,generate:{try await remote.generate($0,completeActions:$1)},appNames:names)
             // fix/sx-engine-battery: level notes are written by the cloud model too (only periods that start after the
             // cutoff; code writes the rest, and whatever the cloud can't).
@@ -1269,6 +1294,13 @@ private struct AdmissionGuardedInference:LocalInference {
         }
     }
     @discardableResult private func tick(reason:WakeReason = .explicit) async -> TickResult {
+        // perf2-1005 (owner 10/04): nothing reads the history or writes a note while DayDream opens or the person types
+        // (the store's one connection is shared with every capture save); the writer looks again once it is quiet.
+        let quiet=env.quietFor()
+        if quiet>0 {
+            counters.quietDeferrals+=1
+            installSchedule(env.now().addingTimeInterval(quiet+0.5));return .idle
+        }
         if provider=="off",!cycleRunning {
             cycleRunning=true
             await codePass(now:env.now())
@@ -1330,6 +1362,11 @@ private struct AdmissionGuardedInference:LocalInference {
             var closing=closedBy
             if idle >= Self.idleClose {closing=max(closing ?? .distantPast,now.addingTimeInterval(-idle+1))}
             let today=try DayScope.key(now,timezone:zone)
+            if !env.pastDayNotes {
+                for state in await scheduler.snapshot() where state.item.day != today && state.status != .running && state.status != .completed {
+                    try await scheduler.discard(key:state.item.key);counters.pastSetAside+=1
+                }
+            }
             let marks=await scheduler.writtenMarks()
             let found=try await source.discoverDay(today,now:now,timezone:zone,closedBy:closing,marks:marks)
             // Short open moments share the same lease as mature ones. Discovery alone never loads a model;
@@ -1439,7 +1476,7 @@ private struct AdmissionGuardedInference:LocalInference {
             let catchUpEvery=Self.catchUpSpacing(power,idle:idle,mode:mode)
             let typingNow = mode == "local" && env.typingSeconds()<Self.typingBurst
             if typingNow,catchUpBacklog,background {rewriteWaitsForQuiet=true}
-            if failed == nil,!typingNow,clicksWaiting==0,!todayClosedLeft || idle>=Self.idleClose,background,budget.ok,now>=holdUntil,now>=catchUpQuietUntil,epoch==modeGeneration,
+            if env.pastDayNotes,failed == nil,!typingNow,clicksWaiting==0,!todayClosedLeft || idle>=Self.idleClose,background,budget.ok,now>=holdUntil,now>=catchUpQuietUntil,epoch==modeGeneration,
                now.timeIntervalSince(lastCatchUp)>=catchUpEvery {
                 var items:[ScheduledWriterTarget]=[]
                 var pastRewrites=Set<String>()
@@ -1492,17 +1529,19 @@ private struct AdmissionGuardedInference:LocalInference {
             // fix/sx-all round 3: and the pending moments the rewrite rule won't write again (`Discovery.willNotWrite`).
             let skippedIDs=Set(marks.filter {$0.value.skipped}.map {$0.key.components(separatedBy:"\u{1f}").last ?? ""}).union(willNotWrite)
             let willBeWritten:@Sendable (String) -> Bool = {!skippedIDs.contains($0)}
-            if !momentsWaiting, let levels, now>=holdUntil, epoch==modeGeneration, codeOnly || budget.ok,
-               codeOnly ? now.timeIntervalSince(lastCodeLevels)>=Self.codeLevelsEvery
+            // claude/dayeval-1005: with no moment model (`WriterEnvironment.momentModel`), code writes the level notes too.
+            let levelsByCode = codeOnly || !env.momentModel
+            if !momentsWaiting, let levels, now>=holdUntil, epoch==modeGeneration, levelsByCode || budget.ok,
+               levelsByCode ? now.timeIntervalSince(lastCodeLevels)>=Self.codeLevelsEvery
                         : batchOpen || mode == "cloud" || now.timeIntervalSince(lastBatch)>=Self.batchEvery || idle>=Self.idleClose {
-                if codeOnly {lastCodeLevels=now}
+                if levelsByCode {lastCodeLevels=now}
                 // Outside a batch, the model is held for all the level notes due now (one load), and it counts as a batch
                 // once one of them used it.
-                let hold = !codeOnly && !batchOpen && runtime != nil
+                let hold = !levelsByCode && !batchOpen && runtime != nil
                 if hold {await runtime?.beginBatch()}
                 for _ in 0..<Self.batchLevels {
-                    guard epoch==modeGeneration,!Task.isCancelled,clicksWaiting==0,codeOnly || mode != "local" || env.power().allowsBackground else {break}
-                    guard let step=try? await levelRunner.step(levels,timezone:zone,now:now,codeOnly:codeOnly,momentWillBeWritten:willBeWritten) else {break}
+                    guard epoch==modeGeneration,!Task.isCancelled,clicksWaiting==0,codeOnly || !env.momentModel || mode != "local" || env.power().allowsBackground else {break}
+                    guard let step=try? await levelRunner.step(levels,timezone:zone,now:now,codeOnly:levelsByCode,momentWillBeWritten:willBeWritten) else {break}
                     if step.source == "model" || step.source == "repair" {
                         counters.modelLevels+=1
                         if hold && !batchOpen {batchOpen=true;counters.batches+=1;lastBatch=now}
@@ -1550,6 +1589,7 @@ private struct AdmissionGuardedInference:LocalInference {
         var next=now.addingTimeInterval(Self.quietWake)
         if mode=="local",rewriteWaitsForQuiet,background {next=min(next,expiryQuietWake())}
         func consider(_ date:Date?) {if let date {next=min(next,date)}}
+        if let quiet=quietWakeAt {quietWakeAt=nil;if quiet>now {consider(quiet)}}
         consider(found?.nextClose);consider(found?.nextRewrite)
         if background && catchUpQuietUntil>now {consider(catchUpQuietUntil)}
         if background {consider(catchUpAt)}
@@ -1606,6 +1646,8 @@ private struct AdmissionGuardedInference:LocalInference {
               !automatic || mode != "local" || env.power().allowsBackground {
             // claude/ready-1002 (owner): a rewrite never starts while the person is typing (lag); it waits for quiet.
             if quietOnly,mode == "local",env.typingSeconds()<Self.typingBurst {rewriteWaitsForQuiet=true;break}
+            // perf2-1005 (owner 10/04): no background note starts while DayDream opens or the person types; it looks again then.
+            if automatic,case let quiet=env.quietFor(),quiet>0 {quietWakeAt=env.now().addingTimeInterval(quiet+0.5);counters.quietDeferrals+=1;break}
             let box=RunBox()
             let attemptAt=clock()
             // The core receipt survives a later scheduler cancellation or ledger failure.
@@ -1615,7 +1657,7 @@ private struct AdmissionGuardedInference:LocalInference {
                     committed.insert(NoteCommitScope(day:item.day,timezone:item.timezone))
                 }
             }
-            let task=Task {try await scheduler.runNext(only:keys,newestFirst:newestFirst) {item in
+            let task=Task(priority:env.workPriority) {try await scheduler.runNext(only:keys,newestFirst:newestFirst) {item in
                 box.item=item
                 guard try await source.isCurrent(item,written:written.contains(item.key)) else {box.kind = .stale;return .pending}
                 let result:CoreWriterResult

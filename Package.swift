@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "MacMem",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS("15.0")],
     products: [
         .executable(name: "MacMem", targets: ["MacMemApp"]),
         .executable(name: "mac-mem", targets: ["MacMemCLI"]),

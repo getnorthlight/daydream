@@ -88,8 +88,9 @@ class MCPReadiness(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stderr)
         return run.stdout
 
-    def server(self, key):
-        server = Server(self.exe, self.home, dict(self.env, MAC_MEM_CAPABILITY=key))
+    def server(self, key, toolset='legacy'):
+        # agent-tools v2: the tests below pin the 0.1.4 status (DAYDREAM_MCP_TOOLSET=legacy); test_v2_status reads the v2 one.
+        server = Server(self.exe, self.home, dict(self.env, MAC_MEM_CAPABILITY=key, DAYDREAM_MCP_TOOLSET=toolset))
         self.servers.append(server)
         return server
 
@@ -173,6 +174,44 @@ class MCPReadiness(unittest.TestCase):
             self.assertNotIn(content, text)
         self.assertNotIn('macmem://activities', text)
         self.assertNotIn('http', text)
+
+    def test_v2_status_says_setup_first(self):
+        # agent-tools v2: the default tool list; status starts with the same setup check, in plain text.
+        def v2_status(server):
+            reply = server.ask('tools/call', {'name': 'status', 'arguments': {}})['result']
+            self.assertFalse(reply.get('isError', False))
+            return reply['content'][0]['text']
+        server = self.server(self.key, toolset='v2')
+        init = server.ask('initialize', {'protocolVersion': '2025-06-18'})['result']
+        self.assertIn('DayDream itself or an empty result: status', init['instructions'])
+        self.assertLessEqual(len(init['instructions']), 2200)
+        tools = server.ask('tools/list')['result']['tools']
+        self.assertEqual([t['name'] for t in tools], ['timeline', 'search', 'details', 'status'])
+        self.assertTrue(all(t['annotations']['readOnlyHint'] for t in tools))
+        text = v2_status(server)
+        self.save('5-v2-new-install', {'text': text})
+        lines = text.splitlines()
+        self.assertTrue(lines[0].startswith('DayDream \u00b7 ') and 'nothing recorded yet' in lines[0])
+        self.assertEqual(lines[1], 'Setup: Connected, but recording is off. The person can turn DayDream on in the menu bar. Nothing has been recorded yet.')
+        self.assertIn('Connection: connected', text)
+        self.assertIn('Typing: off:', text)
+        for word in ['fail', 'error', 'broken']:
+            self.assertNotIn(word, lines[1].lower())
+        wrong = v2_status(self.server('not-the-key', toolset='v2'))
+        self.save('6-v2-wrong-key', {'text': wrong})
+        self.assertTrue(wrong.splitlines()[1].startswith('Setup: Not ready:'))
+        self.assertIn('Settings › Connections', wrong.splitlines()[1])
+        search = self.server('not-the-key', toolset='v2').ask('tools/call', {'name': 'search', 'arguments': {'query': 'SQLite'}})['result']
+        self.assertTrue(search['isError'])
+        self.assertIn('Settings › Connections', search['content'][0]['text'])
+        self.cli('demo')
+        after = v2_status(self.server(self.key, toolset='v2'))
+        self.save('7-v2-after-sample-activity', {'text': after})
+        self.assertIn('last activity', after)
+        for content in DEMO_CONTENT:
+            self.assertNotIn(content, after)
+        self.assertNotIn('macmem://', after)
+        self.assertNotIn('http', after)
 
 
 if __name__ == '__main__':

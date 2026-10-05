@@ -26,6 +26,8 @@ SENDER_USERS = {SENDER, 'Sources/MacMemApp/ChromePageRecorder.swift', 'Sources/M
                 'Sources/MacMemApp/ChromeTypingWitness.swift', APP_MODEL}
 # Private-build-only Chrome typing files: compiled out unless -DDAYDREAM_CHROME_TYPING.
 CHROME_TYPING_FILES = ['Sources/MemoryCore/BrowserTypingJoin.swift', 'Sources/MacMemApp/ChromeTypingWitness.swift',
+                       # claude/axjoin-1005: the Accessibility join's private-window check, version gate and checks.
+                       'Sources/MemoryCore/ChromePrivateWindow.swift', 'Checks/ChromeAXJoinChecks.swift',
                        'Sources/MacMemApp/ChromeModeReader.swift', 'Checks/ChromeTypingChecks.swift',
                        # QF-17 (fix/chrome-join-async): the bracketed design's engine, held buffer and single read.
                        'Sources/MemoryCore/ChromeBracket.swift', 'Sources/MemoryCore/BrowserTypingJoinBracketed.swift',
@@ -35,13 +37,26 @@ CHROME_TYPING_FILES = ['Sources/MemoryCore/BrowserTypingJoin.swift', 'Sources/Ma
                        'Sources/MemoryCore/BrowserSubmitGesture.swift',
                        # fix/chrome-x: a Chrome composer's compose signals (route kind, reply phrases, AX-only re-read).
                        'Sources/MemoryCore/BrowserComposeSignals.swift']
+# Files that name both typing flags without compiling them into anything that ships or stages: check and QA build
+# recipes (they build checks or QA fixtures with the release's flags) and docs that quote a build command.
+RECIPE_AND_DOC_FILES = {
+    'runner-1001/ui-checks.sh',                  # 858ec32: the flagged UI half of the copied headless runner
+    'scripts/typing-public-lane-checks.py',      # 079c36d: pins that every release stage passes both flags
+    'scripts/run-messages-moment-checks.sh',     # d252cbf: Messages identity checks, owner lane
+    'scripts/agent-tools-evals.py',              # f2e15e7: agent-tools evals, owner lane (--mode both)
+    'scripts/check-qa-harness-boundary.py',      # 0184887: pins the QA harness's own #if lines
+    'scripts/compile-legacy-qa-boundary.py',     # c92de61: pins a QA stage's swift_flags
+    'scripts/check-ui-revision.sh',              # 5a02623: the private UI review recipe (QA flags explicit)
+    'scripts/sig-modern-repro-build.py',         # d5f82ae: standalone summary repro compile
+    'scripts/sig-note-prepare-build.py',         # d586301: standalone note-prepare compile
+    'docs/agent-tools/ownership.md',             # 5a74d76: the owner lane's build flags (text)
+    'evidence-0930/CODEX-B-1001-REPORT.md',      # 630af14: the fixture runner's owner-lane command (text)
+}
 # The only files that may name the flag at all (review C7): the flagged files,
 # the check entry point that calls them, and the scripts that build or check them.
 FLAG_FILES = set(CHROME_TYPING_FILES) | {'Checks/main.swift', 'Checks/ChromeBracketChecks.swift', 'scripts/check_browser_boundary.py', 'scripts/chrome-typing-checks.py',
                                          # claude/scrub-1004: README's Build from source names the release's two typing flags.
                                          'README.md',
-                                         # readme-1005: the README pictures are drawn from a build with the release's two typing flags.
-                                         'scripts/readme-pictures/render.sh',
                                          'scripts/chrome-apple-event-parse-checks.swift', 'scripts/daydream-core-source-checks.py',
                                          # The owner build (SPEC-LATER section 3) needs Chrome typing too: the
                                          # packager's owner block, the compile guard and its check.
@@ -54,7 +69,7 @@ FLAG_FILES = set(CHROME_TYPING_FILES) | {'Checks/main.swift', 'Checks/ChromeBrac
                                          # only under the flag (release-scan keeps the public binary clean).
                                          'scripts/preview/build-preview-app.sh', 'Sources/MemoryCore/PreviewSample.swift',
                                          # CODEX-E-1001: reviewed nonshipping copied headless check recipes.
-                                         'runner-1001/run-checks.sh', 'runner-1001/owner-lane.sh'}
+                                         'runner-1001/run-checks.sh', 'runner-1001/owner-lane.sh'} | RECIPE_AND_DOC_FILES
 # Website typing (typing-all SPEC-LATER 4.2, the web track): its owner-only
 # row, rules and strings live in the Chrome typing core file; its end-to-end
 # check drives the actual EventCapture in the owner build.
@@ -90,8 +105,6 @@ OWNER_FLAG_FILES = {'PrivacyPolicy/Sources/PrivacyPolicy/OwnerTyping.swift', 'So
                     'scripts/daydream-core-source-checks.py',
                     # claude/scrub-1004: README's Build from source names the release's two typing flags.
                     'README.md',
-                    # readme-1005: the README pictures are drawn from a build with the release's two typing flags.
-                    'scripts/readme-pictures/render.sh',
                     # claude/chrome-offmain-1003: the replay of website typing on and off the main thread (owner build only).
                     'scripts/chrome-offmain-checks.swift',
                     # typing-all apps track: the web-content proof's live reads (owner build only).
@@ -113,7 +126,27 @@ OWNER_FLAG_FILES = {'PrivacyPolicy/Sources/PrivacyPolicy/OwnerTyping.swift', 'So
                     # the writer's "would typing be recorded here" fact asks the owner build's website rules (public: never).
                     'scripts/docs-claims-checks.py', 'Sources/MemoryCore/WriterFacts.swift',
                     # CODEX-E-1001: reviewed nonshipping copied headless check recipes.
-                    'runner-1001/run-checks.sh', 'runner-1001/owner-lane.sh'} | set(WEB_OWNER_FILES) | set(OWNER_HOOKS) | set(OWNER_TEXT_FILES)
+                    'runner-1001/run-checks.sh', 'runner-1001/owner-lane.sh',
+                    # Checks that compile an owner-build expectation (the checks targets and scripts; nothing ships):
+                    'Checks/WebTypingChecks.swift',              # e214a29: website typing's owner-only checks
+                    'scripts/day-review-checks.swift',           # ba46541: Messages typing fixtures in the owner lane
+                    'scripts/messages-moment-checks.swift',      # d252cbf
+                    'scripts/messages-recorder-regression-checks.swift',  # bfa899a
+                    'scripts/single-copy-checks.swift',          # 463a391: a QA-harness block in the check
+                    'scripts/ui-copy-checks.swift',              # 9dd1530: the QA-condition grammar check's samples
+                    # QA harness check and build recipes (codex 1001; -D DAYDREAM_QA_HARNESS, never a release):
+                    'scripts/claude-owned-composer-checks.swift',          # a202387
+                    'scripts/reddit-combined-capture-checks.swift',        # 4a5a188
+                    'scripts/build-notes-activation-controls.py',          # e9ccf53
+                    'scripts/build-notes-menu-diagnostic-controls.py',     # cea0b9f
+                    'scripts/build-notes-metadata-checks.py',              # 86370ab
+                    'scripts/notes-metadata-boundary-checks.py',           # 86370ab
+                    'scripts/qa-chrome-outcome-buffer-checks.py',          # 61cd921
+                    'scripts/qa-chrome-transport-outcome-checks.py',       # 61cd921
+                    # Docs that quote QA compile commands (text only, compiled into nothing):
+                    'docs/private-capture-qa.md',                          # 0184887
+                    'tools/capture-fixture-empty/README.md',               # 451b171
+                    } | RECIPE_AND_DOC_FILES | set(WEB_OWNER_FILES) | set(OWNER_HOOKS) | set(OWNER_TEXT_FILES)
 # The owner block in scripts/package.sh: the one place a build turns either flag on.
 OWNER_BLOCK = re.compile(r'if \[\[ "\$\{DAYDREAM_OWNER_TYPING:-\}" == 1 \]\]; then\n(.*?)\nfi\n', re.S)
 # Every Accessibility attribute the Chrome witness may read (review I5).
@@ -127,9 +160,50 @@ WITNESS_AX = {'AXRole', 'AXSubrole', 'AXParent', 'AXFocusedWindow', 'AXFocusedUI
               # fix/chrome-capture (QF-11, QF-3): the containers around a typed field, for its form scan.
               'AXChildren',
               # claude/int-1003 (compose-send/v1): the proven composer's character count after a send gesture (never its value).
-              'AXNumberOfCharacters'}
+              'AXNumberOfCharacters',
+              # claude/axjoin-1005 (the Accessibility join): the focused window's address (its active tab's, from Chrome's
+              # browser process), and whether its profile button has a description (presence only, never decoded).
+              'AXDocument', 'AXCustomContent'}
 SOURCE_ROOTS = ['Sources', 'adapters', 'PrivacyPolicy/Sources', 'BrowserBridge/Sources', 'WriterBackend/Sources',
                 'BackupRestore/Native', 'BackupRestore/Worker', 'UIRender']
+
+# QA harness code: compiled only with -DDAYDREAM_QA_HARNESS, which only `developer-id-release.py stage --qa-harness`
+# (an owner build with updates off) passes; a release stage refuses it and qa-exclusion-check scans the binary
+# (scripts/check-qa-harness-boundary.py). Such a branch is `#if DAYDREAM_QA_HARNESS && ...` (QA and something more).
+QA_IF = re.compile(r'^\s*#if DAYDREAM_QA_HARNESS && !?DAYDREAM_OWNER_TYPING( && DAYDREAM_CHROME_TYPING)?\s*$')
+
+def without_qa(text):
+    """`text` as a build without DAYDREAM_QA_HARNESS compiles it: each `#if DAYDREAM_QA_HARNESS && ...` branch is
+    dropped (nesting-aware); its `#else`/`#elseif` branch, which such a build does compile, is kept."""
+    out, depth, skipping = [], 0, False
+    for line in text.splitlines(keepends=True):
+        s = line.strip()
+        if skipping:
+            if s.startswith('#if'):
+                depth += 1
+            elif s.startswith('#endif'):
+                depth -= 1
+                if depth == 0:
+                    skipping = False
+            elif depth == 1 and (s.startswith('#else') or s.startswith('#elseif')):
+                skipping = False  # the rest of this #if is ordinary conditional code
+            continue
+        if QA_IF.match(line):
+            skipping, depth = True, 1
+            continue
+        out.append(line)
+    return ''.join(out)
+
+def qa_only(text, flag):
+    """True when every line naming `flag` is a QA harness `#if` (the flag selects QA-only code, nothing else)."""
+    lines = [l for l in text.splitlines() if flag in l]
+    return bool(lines) and all(QA_IF.match(l) for l in lines)
+
+# without_qa keeps what a build without the QA harness compiles: the QA branch goes, its #else stays, others stay.
+assert without_qa('a\n#if DAYDREAM_QA_HARNESS && DAYDREAM_OWNER_TYPING\nqa\n#if X\nqa2\n#endif\n#else\nkept\n#endif\nb\n') == 'a\nkept\n#endif\nb\n'
+assert without_qa('#if DAYDREAM_QA_HARNESS || DAYDREAM_LIVETEST\nboth\n#endif\n') == '#if DAYDREAM_QA_HARNESS || DAYDREAM_LIVETEST\nboth\n#endif\n'
+assert qa_only('#if DAYDREAM_QA_HARNESS && DAYDREAM_OWNER_TYPING\nx\n#endif', 'DAYDREAM_OWNER_TYPING')
+assert not qa_only('#if DAYDREAM_OWNER_TYPING\nx\n#endif', 'DAYDREAM_OWNER_TYPING')
 
 def swift_sources():
     for root in SOURCE_ROOTS:
@@ -214,7 +288,10 @@ def apple_event_allowlist(case):
         if n: widen[rel] = n
     case.assertEqual(widen, {'Sources/MacMemApp/ChromeModeReader.swift': 1, 'Sources/MemoryCore/BrowserTypingJoin.swift': 1})
     reader_session = texts['Sources/MacMemApp/ChromeModeReader.swift']
-    case.assertIn('everyWindow:ChromeJoinRequest.everyWindow).flatMap(request.decode)', reader_session)
+    # 61cd921 (QA transport outcomes): the reply is decoded in its own statement, so a QA-only build can tell a
+    # decode failure from no answer; the scope and the decode are the same.
+    case.assertIsNotNone(re.search(r'everyWindow:ChromeJoinRequest\.everyWindow\)\n\s*let decoded=descriptor\.flatMap\(request\.decode\)\n', reader_session))
+    case.assertEqual(reader_session.count('request.decode'), 1)
     # Page history keeps the default (IDs of every window only).
     case.assertNotIn('everyWindow:', pages)
     case.assertEqual(sender.count('setParam('), 1)
@@ -227,28 +304,36 @@ def apple_event_allowlist(case):
         if rel != SENDER:
             for word in ['NSAppleEventDescriptor(eventClass', '.sendEvent(options', 'AEDeterminePermissionToAutomateTarget']:
                 case.assertNotIn(word, text, rel)
+        # Who may name the sender and the reader, and who may ask: decided for the code a build without the QA
+        # harness compiles (`without_qa`). The QA-only fixture routes (codex 1001: CaptureBrowserFixtureTrial,
+        # CaptureChromeAutomationRequest(UI), CaptureChromeFrontInspection, ChromeNormalMainProbe,
+        # ChromeOwnedComposerBootstrap, RedditNativeBootstrap) go through the same sender and its audit (the
+        # Apple Event checks above and below still scan every file whole); they are never in a release.
+        shipped = without_qa(text)
         if rel not in SENDER_USERS:
-            case.assertNotIn('ChromeEventSender.', text, rel)
+            case.assertNotIn('ChromeEventSender.', shipped, rel)
         # Review I5: only the flagged witness reaches the reader, and nothing
         # ever asks macOS to prompt for Automation.
         if rel not in ('Sources/MacMemApp/ChromeModeReader.swift', 'Sources/MacMemApp/ChromeTypingWitness.swift'):
             for word in ['ChromeModeReader.permission(', 'ChromeModeReader.JoinSession(', 'ChromeModeReader.send(', 'ChromeModeReader.read(']:
-                case.assertNotIn(word, text, rel)
+                case.assertNotIn(word, shipped, rel)
         case.assertIsNone(re.search(r'request\s*:\s*true', text), rel)
         # UI slice: macOS is asked only from askForChromeAccess, which only the
         # model's allowChromeAccess() calls, which only the Allow… button and the
-        # model's own askChromeAccessInSetup (setup's Chrome row on Permissions) and
-        # askChromeAccessAfterSetup (after that row's unanswered press) call.
+        # model's own askChromeAccessInSetup (setup's Chrome row on Permissions)
+        # call. Nothing asks after setup (chromeask-1005).
         if rel not in (SENDER, APP_MODEL):
-            case.assertNotIn('askForChromeAccess(', text, rel)
+            case.assertNotIn('askForChromeAccess(', shipped, rel)
         if rel not in (APP_MODEL, 'Sources/MacMemApp/DaydreamSettings.swift'):
-            case.assertNotIn('allowChromeAccess(', text, rel)
+            case.assertNotIn('allowChromeAccess(', shipped, rel)
         if rel != SENDER:
             case.assertIsNone(re.search(r'AEDeterminePermissionToAutomateTarget|askUserIfNeeded', text), rel)
     model = (ROOT/APP_MODEL).read_text()
     case.assertEqual(model.count('askForChromeAccess('), 1)
     case.assertEqual(model.count('func allowChromeAccess('), 1)
-    allow = model.split('func allowChromeAccess() {', 1)[1].split('\n    }\n', 1)[0]
+    # 34cc046 (recover Chrome access): `onlyIfUndetermined` reads the status first and asks only while macOS has no
+    # answer yet; the order below (running, background, signature, then the one ask) is unchanged.
+    allow = model.split('func allowChromeAccess(onlyIfUndetermined:Bool=false) {', 1)[1].split('\n    }\n', 1)[0]
     case.assertIn('ChromeEventSender.askForChromeAccess(pid:pid)', allow)
     # Chrome running, then Google's signature, then the prompt, off the main thread.
     case.assertLess(allow.index('env.running()'), allow.index('env.background {'))
@@ -262,13 +347,29 @@ def apple_event_allowlist(case):
     case.assertIn('ask:nil', live)
     case.assertIn('status:{ChromeEventSender.permissionStatus(pid:$0)}', live)
     settings = (ROOT/'Sources/MacMemApp/DaydreamSettings.swift').read_text()
+    # 2366318 (Settings › Permissions, owner 10/2): Chrome's row there has its own Allow press; still only presses ask.
     case.assertEqual(settings.count('allowChromeAccess('), 1)
-    case.assertIn('allow: { model.allowChromeAccess() }', settings)
+    case.assertIn('allow: { pressed = true; model.allowChromeAccess() },', settings)
+    # chromeask-1005 (052a2d5): the Apps › Chrome card's Allow goes setup's way (askChromeAccessInSetup: a closed Chrome
+    # opens in the background, then allowChromeAccess asks) and its Ask again the menu bar's (askChromeAgain). Both are
+    # presses; setup and Settings are their only callers, and setup's own path ends in allowChromeAccess.
+    case.assertIn('allow: { model.askChromeAccessInSetup() }', settings)
+    case.assertIn('askAgain: { model.askChromeAgain() }', settings)
+    callers = {f for f in (str(p.relative_to(ROOT)) for p in (ROOT/'Sources').rglob('*.swift'))
+               if re.search(r'\.askChromeAccessInSetup\(\)', without_qa((ROOT/f).read_text()))}
+    case.assertEqual(callers, {'Sources/MacMemApp/DaydreamSettings.swift', 'Sources/MacMemApp/DaydreamOnboarding.swift',
+                               'Sources/MacMemApp/MacMemApp.swift'})
+    in_setup = model.split('func askChromeAccessInSetup() {', 1)[1].split('\n    }\n', 1)[0]
+    case.assertNotIn('askForChromeAccess', in_setup)
+    case.assertEqual(in_setup.count('allowChromeAccess()'), 2)
     card = (ROOT/'Sources/MemoryUI/ChromePagesSettings.swift').read_text()
     # The card reads access when it appears; only its Allow… button calls allow().
     case.assertIn('.onAppear { if savedOn { checkAccess() } }', card)
     case.assertEqual(card.count('allow()'), 1)
     case.assertIn('case .allow: allow()', card)
+    # chromeask-1005: Ask again is a press too (only its button calls askAgain).
+    case.assertEqual(card.count('askAgain?()'), 1)
+    case.assertIn('case .askAgain: askAgain?()', card)
 
 class BrowserBoundary(unittest.TestCase):
     def test_native_typed_only_and_current_policy_before_characters(self):
@@ -305,7 +406,16 @@ class BrowserBoundary(unittest.TestCase):
     def test_browser_keys_stop_before_character_extraction(self):
         source=(ROOT/'Sources/MacMemApp/EventCapture.swift').read_text()
         key=source.split('private func handleKeyDown',1)[1].split('func handleNativeKey',1)[0]
-        self.assertLess(key.index('handleNativeKey('),key.index('NSEvent(cgEvent:'))
+        # typing-1004 (761fe57): the characters are read by `keyCharacters` (AppKit on the main queue, the event's own
+        # string elsewhere), only inside the acquire closure handed to handleNativeKey; handleKeyDown itself reads none.
+        self.assertLess(key.index('handleNativeKey('),key.index('Self.keyCharacters(event)'))
+        self.assertEqual(key.count('Self.keyCharacters('),1)
+        for word in ['NSEvent(cgEvent:','keyboardGetUnicodeString','.characters','appKitCharacters','eventCharacters']:
+            self.assertNotIn(word,key,word)
+        closure=key.split('handleNativeKey(',1)[1]
+        self.assertTrue(re.match(r'eventAt:Self\.eventNanoseconds\(event\.timestamp\),stroke:stroke\) \{\s*Self\.keyCharacters\(event\)\s*\}',closure),closure[:200])
+        chars=source.split('static func keyCharacters(',1)[1].split('private func handleKeyDown',1)[0]
+        self.assertIn('onMain ? appKitCharacters(event) : eventCharacters(event)',chars)
         witness=(ROOT/'Sources/MacMemApp/AccessibilitySnapshot.swift').read_text().split('static func typingProof',1)[1].split('private static func directKeyboardInput',1)[0]
         self.assertLess(witness.index('CaptureGate.nativeApps.contains'),witness.index('AXUIElementCreateApplication'))
     def test_typed_units_read_nothing_before_gate_and_latch(self):
@@ -368,7 +478,8 @@ class BrowserBoundary(unittest.TestCase):
         browser=source.split('if CaptureSession.excludedBrowsers.contains(bundle) {',1)[1].split('let appElement',1)[0]
         for attribute in ['kAXValueAttribute','kAXSelectedTextAttribute','kAXTitleAttribute']:
             self.assertNotIn(attribute,browser)
-        self.assertIn('return nil',browser)
+        # perf2-1005: the read returns its status with the empty snapshot (`AccessibilityReader.read`, off the main thread).
+        self.assertIn('return (nil,',browser)
         self.assertNotIn('ChromeModeReader',browser)
         self.assertNotIn('ChromeEventSender',browser)
         self.assertNotIn('ChromePageRecorder',browser)
@@ -389,18 +500,18 @@ class BrowserBoundary(unittest.TestCase):
         witness=(ROOT/'Sources/MacMemApp/ChromeTypingWitness.swift').read_text()
         self.assertIn('systemFocusedPID: { AccessibilityReader.systemFocusedApplication() }',witness)
     def test_installer_includes_explanation_not_permission_automation(self):
-        # Chrome page history (SPEC §11.10): the Automation usage string says what is
-        # read (title, address, Incognito state), that nothing runs in Chrome, and
-        # nothing else. macOS shows it from setup's Chrome step, right after setup
-        # starts recording if still unanswered (with the switch on), and when the
-        # Settings Allow… button asks.
+        # Chrome page history (SPEC §11.10): the Automation usage string (chromeask-1005,
+        # owner-approved words) says why in plain words, that Incognito windows are
+        # skipped and that nothing in Chrome is changed, and nothing else. macOS shows it
+        # only from a press: setup's Chrome row Allow (its primer comes first) and
+        # Settings' Allow…; never by itself after setup.
         import plistlib
         info=plistlib.loads((ROOT/'packaging/Info.plist').read_bytes())
         usage=info['NSAppleEventsUsageDescription']
-        self.assertIn('never runs scripts in Chrome',usage)
+        self.assertEqual(usage,'DayDream remembers which Chrome page you were on and what you wrote there, so you can find it later. '
+                         'It skips Incognito windows and never changes anything in Chrome.')
         self.assertIn('Incognito',usage)
-        self.assertIn('page titles and sites',usage)
-        self.assertIn('on this Mac',usage)
+        self.assertIn('never changes anything in Chrome',usage)
         for old in ['Browser capture is unavailable','type text','keystroke','every browser','all browsers','Safari']:
             self.assertNotIn(old,usage)
         # The dormant extension provider stays unconfigured: no relay keys ship,
@@ -411,28 +522,23 @@ class BrowserBoundary(unittest.TestCase):
     def test_docs_match_build(self):
         # Legal conditions F, G and I: the README and the privacy page describe
         # exactly what this build does with browsers, and never overclaim.
-        # readme-1005: the README is the short front page and docs/guide.md the full reference; they're read as one.
-        def doc(name):
-            if name=='README.md': return (ROOT/'README.md').read_text()+'\n'+(ROOT/'docs/guide.md').read_text()
-            return (ROOT/name).read_text()
         for name in ['README.md','PRIVACY.md']:
-            text=doc(name)
+            text=(ROOT/name).read_text()
             for need in ['Google Chrome','Incognito','page titles and sites from Google Chrome','AI apps you connect']:
                 self.assertIn(need,text,name)
-            # The download line may say the first download is coming soon (owner, 10/04), and nothing else may.
-            lower=text.lower().replace('the first download is coming soon at','')
+            lower=text.lower()
             for banned in ['coming soon','all browsers','full address is saved']:
                 self.assertNotIn(banned,lower,name)
         privacy=(ROOT/'PRIVACY.md').read_text()
         for need in ['Guest','Time Machine','Safari',"Don't record this site",'Exclude Google Chrome','not complete','Use it on your own Mac']:
             self.assertIn(need,privacy)
         self.assertEqual(privacy.split('\n## Browser history questions\n',1)[1].count('\n### '),6,'the FAQ has six entries')
-        readme=doc('README.md')
+        readme=(ROOT/'README.md').read_text()
         self.assertIn('Use it on your own Mac',readme)
         self.assertNotIn('Unsupported browser typing stays OFF',readme)
         # Honesty review: no absolute claim the code can't back.
         for name in ['README.md','PRIVACY.md']:
-            lower=doc(name).lower()
+            lower=(ROOT/name).read_text().lower()
             for banned in ['every other browser',"an ai app you never connected can't",'only apps you connect yourself get access',
                            'records a browser only when','- search, email and chat pages save','while the change is saved','password managers are never recorded']:
                 self.assertNotIn(banned,lower,name)
@@ -456,9 +562,9 @@ class BrowserBoundary(unittest.TestCase):
         # ux/v1 words it as README and PRIVACY.md do (below); honesty-ui-checks pins the same sentence.
         self.assertIn('public static let ownMac = "Use DayDream only to record yourself, on your own Mac account."',screens)
         self.assertIn('notice("person", DaydreamSetupText.ownMac)',screens)
-        for text in [privacy,doc('README.md')]:
-            self.assertIn("Use DayDream only to record yourself, on your own Mac user account.",text)
-            self.assertIn("isn't a monitoring tool",text)
+        for doc in [privacy,(ROOT/'README.md').read_text()]:
+            self.assertIn("Use DayDream only to record yourself, on your own Mac user account.",doc)
+            self.assertIn("isn't a monitoring tool",doc)
     def test_chrome_typing_is_private_build_only_and_unwired(self):
         for f in CHROME_TYPING_FILES:
             lines=[l for l in (ROOT/f).read_text().splitlines() if l.strip()]
@@ -483,7 +589,11 @@ class BrowserBoundary(unittest.TestCase):
                 try:
                     if FLAG in path.read_text(errors='ignore'): users.add(f)
                 except OSError: pass
-        self.assertLessEqual(users,FLAG_FILES)
+        # QA harness sources (codex 1001) name the flag only in their `#if DAYDREAM_QA_HARNESS && ...` lines.
+        qa={f for f in users if f.startswith('Sources/') and f.endswith('.swift') and qa_only((ROOT/f).read_text(),FLAG)}
+        self.assertEqual(qa,{'Sources/MacMemApp/ChromeComposerCaptureRequest.swift','Sources/MacMemApp/ChromeOwnedComposerBootstrap.swift',
+                             'Sources/MacMemApp/RedditNativeBootstrap.swift'})
+        self.assertLessEqual(users-qa,FLAG_FILES)
         self.assertGreaterEqual(users,set(CHROME_TYPING_FILES))
         main=(ROOT/'Checks/main.swift').read_text()
         self.assertLess(main.index('#if '+FLAG),main.index('runChromeTypingChecks()'))
@@ -510,8 +620,12 @@ class BrowserBoundary(unittest.TestCase):
         # package and never part of the app build or its packaging.
         for f in ['Package.swift','scripts/package.sh','scripts/build-dev-loop.py','scripts/signing_plan.py','scripts/release.py']:
             if (ROOT/f).exists():
-                for word in ['tools/','chrome-device-test','ChromeProbeCore','ChromeDeviceTest']:
-                    self.assertNotIn(word,(ROOT/f).read_text(),f)
+                text=(ROOT/f).read_text()
+                for word in ['chrome-device-test','ChromeProbeCore','ChromeDeviceTest']:
+                    self.assertNotIn(word,text,f)
+                # The only tools/ folder a build or release step may name is the site icons' provenance list
+                # (release.py's SiteIcons rule names tools/site-icons/sources.tsv in its docstring).
+                self.assertLessEqual(set(re.findall(r'tools/[\w.-]*',text)),{'tools/site-icons'},f)
         # Not wired: capture, coordinator, snapshot, app and adapters never reach it.
         for f in ['Sources/MacMemApp/EventCapture.swift','Sources/MacMemApp/Coordinator.swift','Sources/MacMemApp/AccessibilitySnapshot.swift',
                   'Sources/MacMemApp/MacMemApp.swift','adapters/CoreCaptureBinding.swift','adapters/CoreWriterBinding.swift']:
@@ -525,7 +639,11 @@ class BrowserBoundary(unittest.TestCase):
         except (OSError,subprocess.CalledProcessError):
             tracked=[str(p.relative_to(ROOT)) for p in ROOT.rglob('*') if p.is_file() and '.build' not in p.parts and '.git' not in p.parts]
         users={f for f in tracked if (ROOT/f).is_file() and (ROOT/f).stat().st_size<4_000_000 and OWNER_FLAG in (ROOT/f).read_text(errors='ignore')}
-        self.assertLessEqual(users,OWNER_FLAG_FILES)
+        # QA harness sources (codex 1001) name the owner switch only in `#if DAYDREAM_QA_HARNESS && ...` lines: QA-only
+        # code, never in a release (see QA_IF). Every other line naming it is in an allowed file below.
+        qa={f for f in users if f.startswith('Sources/') and f.endswith('.swift') and f not in OWNER_FLAG_FILES and qa_only((ROOT/f).read_text(),OWNER_FLAG)}
+        self.assertGreaterEqual(len(qa),30)  # the scan is not vacuous
+        self.assertLessEqual(users-qa,OWNER_FLAG_FILES)
         self.assertGreaterEqual(users,{'PrivacyPolicy/Sources/PrivacyPolicy/OwnerTyping.swift','Sources/MacMemApp/WebTypingRoute.swift','scripts/package.sh'})
         # The website route is compiled only into the owner build, and EventCapture
         # calls it only under the flag.
@@ -533,15 +651,27 @@ class BrowserBoundary(unittest.TestCase):
         self.assertEqual((route[0],route[-1]),('#if '+OWNER_FLAG,'#endif'))
         capture=(ROOT/'Sources/MacMemApp/EventCapture.swift').read_text()
         blocks=re.findall(r'#if '+OWNER_FLAG+r'\n(.*?)#endif',capture,re.S)
-        self.assertEqual(capture.count('#if '+OWNER_FLAG),5)
-        self.assertEqual(len(blocks),5)
-        self.assertEqual([re.findall(r'WebTypingRoute[.\w]*\(',b) for b in blocks],
+        # claude/xtyping-1005 (8521638): Chrome in front (as recording starts, and on activation) wakes its accessibility
+        # for website typing; fix/chrome-root and fix/chrome-x2 (e214a29): the heartbeat persists the refusal tally and
+        # wires search words. Each is
+        # one call, in Chrome's case only for Chrome's bundle.
+        # claude/crashguard-015: two more, each only MainInputFacts.refresh() (heartbeat and tap), keeping the website
+        # typing executor's secure-input / frontmost-app reads fresh from the main queue.
+        self.assertEqual(capture.count('#if '+OWNER_FLAG),10)
+        self.assertEqual(len(blocks),10)
+        self.assertEqual([re.findall(r'WebTypingRoute[.\w]*\(|MainInputFacts[.\w]*\(',b) for b in blocks],
                          [['WebTypingRoute.shared.drop('],['WebTypingRoute.shared.finishPending('],
+                          ['WebTypingRoute.shared.chromeInFront('],
+                          ['MainInputFacts.refresh('],['MainInputFacts.refresh('],
                           ['WebTypingRoute.handle('],['WebTypingRoute.shared.drop('],
-                          ['WebTypingRoute.shared.chromeWindowNotification(']])
-        self.assertIn('if currentBundle == ChromePageTarget.bundleID,',blocks[-1])
+                          ['WebTypingRoute.shared.chromeWindowNotification('],['WebTypingRoute.shared.chromeInFront('],
+                          ['WebTypingRoute.wireSearches(']])
+        self.assertIn('if currentBundle == ChromePageTarget.bundleID,',blocks[7])
+        self.assertIn('if currentBundle == ChromePageTarget.bundleID { WebTypingRoute.shared.chromeInFront(',blocks[2])
+        self.assertIn('if bundle == ChromePageTarget.bundleID { WebTypingRoute.shared.chromeInFront(',blocks[8])
+        self.assertIn('if !tallyWired { tallyWired = true; WebTypingRefusals.shared.persistToDefaults(); WebTypingRoute.wireSearches() }',blocks[9])
         code=[l for l in capture.splitlines() if 'WebTypingRoute' in l and not l.strip().startswith('//')]
-        self.assertEqual(len(code),5)
+        self.assertEqual(len(code),8)
         # The snapshot names the flag only around the web-content proof's reads
         # (three blocks, each about WebContentAXReader and nothing else) and the
         # web track's one browser status hook (test_owner_hooks_are_small).
@@ -713,8 +843,14 @@ class BrowserBoundary(unittest.TestCase):
         # Review G51: a key of an open burst may take the light per-key check; a burst starts, and
         # Return, paste, splits and every save take, the full join. A light proof never saves.
         self.assertIn('func keyJoin() -> BrowserTypingJoinResult { (start != nil ? light() : nil) ?? join() }',key)
-        for commit in ['commit(join(), typedAt: typedAt, processedAt: now(), reason: reason,','let outcome = try commit(join(), typedAt: typedAt,']:
-            self.assertIn(commit,key)
+        self.assertIn('commit(join(), typedAt: typedAt, processedAt: now(), reason: reason,',key)
+        # 64ef960 (recipient authority before unread shortcut edits): Return, paste and redo take the full join once,
+        # invalidate on it (no characters read), and save that same full join; never the light per-key check.
+        shortcut=key.split('case .redo, .paste, .submit:',1)[1].split('case .edit(',1)[0]
+        self.assertIn('let result=join(),at=now()',shortcut)
+        self.assertIn('let outcome = try commit(result, typedAt: typedAt, processedAt: at,',shortcut)
+        for word in ['keyJoin(','light(','read()']:
+            self.assertNotIn(word,shortcut,word)
         save=burst.split('public func save(',1)[1].split('// MARK: Text on the typing session',1)[0]
         self.assertIn('guard !f.light else { return nil }',save)
         self.assertIn('guard !proof.light else { return false }',burst.split('public func admitKey(',1)[1].split('public func save(',1)[0])
@@ -728,19 +864,33 @@ class BrowserBoundary(unittest.TestCase):
         # join only when that is a click join.
         settle=route.split('    private func settle(',1)[1]
         self.assertIn('let result: BrowserTypingJoinResult? = secure ? nil : join(a)',settle)
-        self.assertIn("let page: BrowserTypingJoinResult? = !secure && result?.denial == .field && burst.last != nil ? pageJoin(a) : nil",settle)
+        # fix/chrome-x2 (e214a29): the click join also follows a send whose page was still changing; it is still taken
+        # only after the full join denied (never in its place), and only with an admitted key on the burst.
+        self.assertIn("let page: BrowserTypingJoinResult? = !secure && burst.wantsPageJoin(result, now: environment.now()) ? pageJoin(a) : nil",settle)
+        wants=join.split('public func wantsPageJoin(',1)[1].split('\n    }\n',1)[0]
+        self.assertIn('guard last != nil, let denial = result?.denial else { return false }',wants)
+        self.assertIn('return denial == .field || (sendPending(now: now) && Self.sendReactions.contains(denial))',wants)
         self.assertLess(settle.index('join(a)'),settle.index('pageJoin(a)'))
         join_api=join.split('    public func join(environment e:',1)[1].split('    private func attempt(',1)[0]
         self.assertIn('if anyFocus, previous == nil { previous = departed }',join_api)
         self.assertIn('if !anyFocus, denial == .field { departedPage = before }',join_api)
         self.assertLess(join_api.index('departedPage = nil'),join_api.index('attempt('))
         self.assertLess(join_api.index('invalidate()'),join_api.index('departedPage = before'))
-        self.assertIn('public func invalidate() { previous = nil; anchor = nil; departedPage = nil; heldBox = nil }',join)
+        # c74289d (held refused page episodes): invalidate also forgets the held episode.
+        self.assertIn('public func invalidate() { previous = nil; anchor = nil; departedPage = nil; heldBox = nil; heldEpisode = nil }',join)
         # Codex 07:10 (field hold): the hold's check reads only which app, window and element have focus (no label,
         # role, address, page or Apple Event), and a held key is dropped before any join, light check or read.
         holds=join.split('public func holdsRefusedBox(',1)[1].split('\n    }\n',1)[0]
-        for word in ['fieldLabels','ax.role(','ax.url(','ax.title(','ax.children(','ae(','ax.subrole(']:
+        # c74289d (episode hold): a page the full join refused is held while the same window, field and window title
+        # keep focus. The title is compared only as an in-memory hash, never kept, and the hold is deny-only
+        # (true drops the key unread, nil lets the full join decide); the box hold still reads no title at all.
+        episode,box=holds.split('guard let h = heldBox else { return nil }',1)
+        self.assertEqual(episode.count('ax.title('),1)
+        self.assertIn('ax.title(window)?.hashValue == h.titleHash else { heldEpisode = nil; return nil }',episode)
+        self.assertNotIn('return false',episode)
+        for word in ['fieldLabels','ax.role(','ax.url(','ax.children(','ae(','ax.subrole(']:
             self.assertNotIn(word,holds,word)
+        self.assertNotIn('ax.title(',box)
         held_key=join.split('public func key(',1)[1].split('private func insert(',1)[0]
         held_key=held_key.split('if fieldHeld {',1)[1].split('switch intent {',1)[0]
         # Review FH-1: a key in a held burst is dropped unread whether or not the box still has focus; the quiet
@@ -796,6 +946,44 @@ class BrowserBoundary(unittest.TestCase):
         # Mode and the window list are read again after page content.
         self.assertGreater(read.rindex('ae(.modes)'),read.index('ax.url('))
         self.assertGreater(read.rindex('ae(.windowIDs)'),read.index('ax.url('))
+        # claude/axjoin-1005: the Accessibility join (a validated Chrome) leaves `read` only after the window IDs and every
+        # window's mode answered "normal" (and the asleep check); it asks no window's bounds, name, tab or URL by Apple
+        # Events; the window's own private signals refuse before its field and page are read; its confirming read reads
+        # the window list and every mode again after all page content.
+        plain=read.split('private func readAccessibility(',1)[0]
+        dispatch=plain.index('if viaAccessibility {')
+        self.assertLess(plain.index('modes.allSatisfy({ $0 == "normal" })\n        else { return .failure(.notNormal) }'),dispatch)
+        self.assertLess(plain.index('if asleep {'),dispatch)
+        self.assertLess(dispatch,plain.index('ax.focusedWindow('))
+        axr=join.split('private func readAccessibility(',1)[1].split('private func unchanged(',1)[0]
+        for word in ['ae(.allBounds)','ae(.name(','ae(.activeTabID(','ae(.tabURL(','ae(.mode(','ae(.bounds(']:
+            self.assertNotIn(word,axr)
+        private=axr.index('ChromePrivateWindow.check(')
+        for later in ['ax.focusedElement(','ax.url(','document(window)','ax.fieldLabels(','BrowserFormScan.scan(']:
+            self.assertLess(private,axr.index(later),later)
+        self.assertLess(axr.index('ax.windows()'),private)
+        self.assertIn('guard axFrames.count <= ids.count else { return .failure(.unlistedWindow) }',axr[:private])
+        self.assertIn('BrowserTypingSites.sameDocument(url, axURL) else { return .failure(.url) }',axr)
+        # Review B5-1: a private window's refusal is never named apart in the always-on tally.
+        for name in re.findall(r'step\("([^"]+)"',axr)+re.findall(r'"([a-z]+\.[A-Za-z]+)"',axr.split('ChromePrivateWindow.check(',1)[1].split('// 6.',1)[0]):
+            self.assertIn('step.'+name,(ROOT/'Sources/MemoryCore/WebTypingRefusals.swift').read_text(),name)
+        for page in ['ax.url(','document(window)','ax.fieldLabels(','BrowserFormScan.scan(']:
+            self.assertGreater(axr.rindex('ae(.modes)'),axr.index(page),page)
+            self.assertGreater(axr.rindex('ae(.windowIDs)'),axr.index(page),page)
+        self.assertIn('again.allSatisfy({ $0 == "normal" })',axr[axr.index('if confirming {'):])
+        body=join.split('public func join(',1)[1].split('private func focused(',1)[0]
+        self.assertIn('var viaAX = e.accessibilityJoin(target) && ax.offersAccessibilityJoin',body)
+        # Only a window with no profile button proven normal (and no title tag) falls back to the full join.
+        self.assertIn('guard viaAX, d == .notNormal, axUnproven else { return .denied(d) }',body)
+        self.assertIn('public var accessibilityJoin: (ChromeTargetFacts) -> Bool = { _ in false }',join)
+        gate=(ROOT/'Sources/MemoryCore/ChromePrivateWindow.swift').read_text()
+        self.assertIn('public static let validatedMajors: Set<Int> = [154]',gate)
+        self.assertIn('if titleTagged(title) { return (.privateWindow, nil) }',gate)
+        # A description alone leaves the window unproven (the full Apple Events join decides); it never allows.
+        self.assertIn('if d { anyDescribed = true }',gate)
+        self.assertIn('if anyDescribed { return (.unproven, nil) }',gate)
+        self.assertLess(gate.index('if anyDescribed { return (.unproven, nil) }'),gate.index('return (.normal, buttons[0])'))
+        self.assertIn('if privateLabel(t) { return (.privateWindow, nil) }',gate)
         for f in ['Sources/MemoryCore/BrowserTypingJoin.swift','Sources/MacMemApp/ChromeTypingWitness.swift']:
             text=(ROOT/f).read_text()
             for word in ['kAXValueAttribute','kAXSelectedText','AXSelectedText','CGWindowList','NSPasteboard','AXEnhancedUserInterface',
@@ -924,6 +1112,38 @@ class BrowserBoundary(unittest.TestCase):
         read_fn=join.split('private func read(',1)[1].split('private func unchanged(',1)[0]
         self.assertIn('let subrole = ax.subrole(focus),',read_fn)
         self.assertNotIn('?? (anyFocus',read_fn)
+
+    def test_asleep_chrome_is_woken_only_after_the_mode_gate(self):
+        # claude/xtyping-1005: Chrome's accessibility is asleep until an assistive client asks its application its role.
+        # The join wakes it only after every window answered "normal", reads nothing else, and is refused; the front
+        # wake has the join's own checks first. Never AXEnhancedUserInterface or AXManualAccessibility (above).
+        join=(ROOT/'Sources/MemoryCore/BrowserTypingJoin.swift').read_text()
+        read=join.split('private func read(',1)[1].split('private func unchanged(',1)[0]
+        self.assertEqual(join.count('ax.wake()'),2)
+        wake_at=read.index('if asleep { step("focus.asleep"); _ = ax.wake(); return .failure(.notFocused) }')
+        self.assertLess(read.index('ae(.modes)'),wake_at)
+        for later in ['ae(.allBounds)','ae(.name(','ae(.activeTabID(','ae(.tabURL(','ax.focusedWindow(','ax.focusedElement(','ax.title(','ax.url(',
+                      'ax.frame(','ax.windows(','ax.fieldLabels(']:
+            self.assertLess(wake_at,read.index(later),later)
+        self.assertIn('let asleep = !inFocus && Self.asleep(ax, target.pid)\n        guard inFocus || asleep else { return .failure(.notFocused) }',read)
+        self.assertIn('ax.frontmostPID() == pid && ax.systemFocusedPID() == nil && !ax.secureInput()',join)
+        front=join.split('public func wake(environment',1)[1].split('/// One full read.',1)[0]
+        order=[front.index(w) for w in ['design == .synchronous','e.enabled()','e.target()','ChromeTargetPolicy.accepts(target)','e.automationPermitted(',
+                                        'Self.asleep(ax, target.pid)','ae(.windowIDs)','ae(.modes)','guard e.enabled() else { return false }','ax.wake()']]
+        self.assertEqual(order,sorted(order))
+        for word in ['ax.focusedWindow','ax.focusedElement','ax.title','ax.url','ax.frame','ax.windows','ax.fieldLabels','ax.role','ae(.allBounds)',
+                     'ae(.name(','ae(.activeTabID(','ae(.tabURL(']:
+            self.assertNotIn(word,front,word)
+        witness=(ROOT/'Sources/MacMemApp/ChromeTypingWitness.swift').read_text()
+        self.assertEqual(witness.count('access.wake = '),1)
+        self.assertIn('access.wake = { app.element.map { if case .value = copy($0, .role) { return true }; return false } ?? false }',witness)
+        self.assertIn('guard design == .synchronous, onRouteExecutor else { return false }',witness.split('func wake(pid:',1)[1].split('/// Codex 07:10',1)[0])
+        route=(ROOT/'Sources/MacMemApp/WebTypingRoute.swift').read_text()
+        inf=route.split('func chromeInFront(pid:',1)[1].split('/// EventCapture dropped a key as late',1)[0]
+        self.assertIn('guard environment.design == .synchronous, Self.activeRead(coordinator) != nil else { return }',inf)
+        self.assertEqual(route.count('environment.wake('),1)
+        capture=(ROOT/'Sources/MacMemApp/EventCapture.swift').read_text()
+        self.assertEqual(capture.count('WebTypingRoute.shared.chromeInFront('),2)
 
     def test_bracketed_read_orders_mode_gate_and_blocks_first(self):
         # QF-17 PM7: the bracketed design's one read (BrowserTypingJoinBracketed.swift) keeps the synchronous read's

@@ -37,17 +37,26 @@ public enum SendRules {
     /// claude/cc-label-1003: a terminal app, whose Return runs a line (a command, or a prompt to an AI tool running there).
     public static func terminal(bundle: String) -> Bool { terminals.contains(bundle) }
     static let codeApps: Set<String> = ["com.apple.dt.Xcode", "com.microsoft.VSCode", "com.todesktop.230313mzl4w4u92", "dev.zed.Zed", "dev.warp.Warp-Stable"]
-    static let writingApps: Set<String> = ["com.apple.Notes", "com.apple.TextEdit", "com.apple.Pages", "com.apple.iWork.Pages", "com.microsoft.Word", "notion.id", "md.obsidian"]
+    /// claude/dayeval-1005: Bear, Ulysses, Scrivener, iA Writer and Craft too (Word is "com.microsoft.Word").
+    static let writingApps: Set<String> = ["com.apple.Notes", "com.apple.TextEdit", "com.apple.Pages", "com.apple.iWork.Pages", "com.microsoft.Word", "notion.id", "md.obsidian",
+                                           "net.shinyfrog.bear", "com.ulyssesapp.mac", "com.literatureandlatte.scrivener3", "pro.writer.mac", "com.lukilabs.lukiapp"]
     static let textApps: Set<String> = ["com.apple.MobileSMS"]
     public static let mailApp = "com.apple.mail"
-    static let emailApps: Set<String> = [mailApp, "com.microsoft.Outlook"]
-    static let chatApps: Set<String> = ["com.tinyspeck.slackmacgap", "com.hnc.Discord", "net.whatsapp.WhatsApp"]
+    /// claude/dayeval-1005: Spark (both builds) and Superhuman too. Only Mail's own send is ever "detected" (`send`).
+    static let emailApps: Set<String> = [mailApp, "com.microsoft.Outlook", "com.readdle.smartemail-Mac", "com.readdle.SparkDesktop", "com.superhuman.electron"]
+    /// claude/dayeval-1005: Telegram, Signal, Teams and Messenger too (Return sends in each, as in WhatsApp).
+    static let chatApps: Set<String> = ["com.tinyspeck.slackmacgap", "com.hnc.Discord", "net.whatsapp.WhatsApp", "ru.keepcoder.Telegram", "org.telegram.desktop",
+                                        "org.whispersystems.signal-desktop", "com.microsoft.teams2", "com.microsoft.teams", "com.facebook.archon"]
     /// Hosts, most specific first where it matters (mail.google.com before google.com).
     static let hostSurfaces: [(String, String)] = [
         ("claude.ai", "ai"), ("chatgpt.com", "ai"), ("gemini.google.com", "ai"), ("perplexity.ai", "ai"),
+        ("copilot.microsoft.com", "ai"), ("chat.mistral.ai", "ai"), ("poe.com", "ai"), ("grok.com", "ai"), ("chat.deepseek.com", "ai"),
         ("mail.google.com", "email"), ("outlook.live.com", "email"), ("outlook.office.com", "email"), ("outlook.office365.com", "email"),
         ("outlook.cloud.microsoft", "email"), ("icloud.com", "email"),
-        ("app.slack.com", "chat"), ("discord.com", "chat"), ("web.whatsapp.com", "chat"),
+        ("app.slack.com", "chat"), ("discord.com", "chat"), ("web.whatsapp.com", "chat"), ("web.telegram.org", "chat"), ("messenger.com", "chat"),
+        ("teams.microsoft.com", "chat"), ("teams.live.com", "chat"), ("app.superhuman.com", "email"),
+        // claude/xtyping-1005: Snapchat's web chat (snapchat.com/web, web.snapchat.com): Return sends the message.
+        ("snapchat.com", "chat"),
         ("linkedin.com", "social"), ("x.com", "social"), ("twitter.com", "social"), ("threads.net", "social"), ("bsky.app", "social"),
         ("reddit.com", "social"),
         ("google.com", "search"), ("bing.com", "search"), ("duckduckgo.com", "search"), ("search.brave.com", "search"),
@@ -76,7 +85,8 @@ public enum SendRules {
         }
         let h = normalHost(host)
         for (domain, name) in [("claude.ai", "Claude"), ("chatgpt.com", "ChatGPT"), ("chat.openai.com", "ChatGPT"),
-                               ("gemini.google.com", "Gemini"), ("perplexity.ai", "Perplexity")] where under(h, domain) { return name }
+                               ("gemini.google.com", "Gemini"), ("perplexity.ai", "Perplexity"), ("copilot.microsoft.com", "Copilot"),
+                               ("chat.mistral.ai", "Le Chat"), ("poe.com", "Poe"), ("grok.com", "Grok"), ("chat.deepseek.com", "DeepSeek")] where under(h, domain) { return name }
         return nil
     }
     /// The AI tool a terminal's title names ("Claude Code", "Codex"), nil when none.

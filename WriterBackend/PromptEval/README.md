@@ -53,7 +53,7 @@ Requirements:
 | `python3 final/prompt4.py great` | The GREAT reference answers, re-cited as items. This is a false-rejection check. |
 | `python3 final/prompt4.py goldens [--check]` | Writes, or with `--check` verifies, `final/goldens-prompt4.json`. |
 | `python3 final/prompt4.py render --case E01 [--view-only]` | Prints the exact prompt the app sends. |
-| `cd WriterBackend && swift run --disable-automatic-resolution PromptChecks` | The Swift writer (`CanonicalNotes.swift`, `ModelView.swift`) against the goldens, byte for byte, plus the design's guarantees one by one. |
+| `cd WriterBackend && swift run --disable-automatic-resolution PromptChecks` | The Swift writer (`CanonicalNotes.swift`, `ModelView.swift`): what it does with every input in `final/goldens-prompt4.json` against its recorded snapshot `final/goldens-swift.json`, byte for byte, plus the design's guarantees one by one against the live writer (every must-reject probe still refused, no note says draft). |
 
 Run the `python3` commands from `WriterBackend/PromptEval`.
 
@@ -63,19 +63,19 @@ Run the `python3` commands from `WriterBackend/PromptEval`.
 |---|---|
 | `cases.json` | The eval set: 17 synthetic cases (E01–E17). Each has a request, GREAT reference bullets and checks (`mustMention`, `mustNotSay`, `maxBullets`). `build_cases.py` generates it. |
 | `final/cases-chrome.json` | E18: Chrome typing in Google Docs and Gmail. |
-| `final/prompt4.txt` | The shipping instruction. `CanonicalGrounding.instruction` must equal it, and PromptChecks enforces that. |
-| `final/prompt4.py` | The executable spec: the view, validator7, salvage, `check()` and the harness. |
-| `final/goldens-prompt4.json` | What `prompt4.py` does with every case, probe and salvage input. The Swift checks compare against it. Regenerate it after any change to the spec. |
+| `final/prompt4.txt` | The Python spec's instruction (prompt7). The shipping instruction is `CanonicalGrounding.instruction`; `final/goldens-swift.json` pins it. |
+| `final/prompt4.py` | The Python spec and harness as of prompt7/validator9 (2026-09-27): the view, validator, salvage and `check()`. The Swift writer has changed on purpose since (prompt22/validator33); the spec was not carried along, so it no longer says what the app does. |
+| `final/goldens-prompt4.json` | What `prompt4.py` does with every case, probe and salvage input. PromptChecks uses it as its input corpus (requests, model answers, probes, stored notes), not as expected results. |
+| `final/goldens-swift.json` | What the Swift writer does with each of those inputs, written by `swift run --disable-automatic-resolution PromptChecks --record`. Synthetic data only. Review a re-record's diff like code: every changed line is a change in what the app writes or refuses. |
 | `final/evidence/` | Run 3 on the real 4B model. |
 | `eval_writer.py`, `variants/` | The prompt3/validator5 harness and baseline. `final/prompt4.py` imports it. |
 | `reader_first/`, `small_first/` | The design proposals that prompt4 was built from. Kept for reference. |
 
 ## Changing the prompt
 
-1. Edit `final/prompt4.txt` and make the same change to `CanonicalGrounding.instruction` in
-   `Sources/WriterBackend/CanonicalNotes.swift`.
-2. If the validator changes, change `final/prompt4.py` first and then port it to Swift.
-3. Run `python3 final/prompt4.py goldens`, then `selftest --mock-run`, then `swift run PromptChecks`.
-4. Bump both `generatorVersion` strings (`CanonicalGrounding.localVersion` and `cloudVersion`, and `VERSION` in
-   `prompt4.py`).
+1. Change `CanonicalGrounding.instruction` or the validator in `Sources/WriterBackend/CanonicalNotes.swift`.
+2. Bump the `generatorVersion` strings (`CanonicalGrounding.localVersion` and `cloudVersion`).
+3. Run `swift run --disable-automatic-resolution PromptChecks`. The guarantees must pass as they are. If only the
+   snapshot differs and every difference is intended, run it again with `--record` and review the diff of
+   `final/goldens-swift.json`.
 5. Run the one command above on the real model before shipping.

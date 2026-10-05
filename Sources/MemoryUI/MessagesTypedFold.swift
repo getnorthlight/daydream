@@ -3,7 +3,7 @@ import MemoryCore
 import PrivacyPolicy
 
 /// The compose line a typed row's evidence gives (`ComposeView`, compose-send/v1): "Sent to Jamie", "Replied to Ada's
-/// post on X", "Posted on X", "Emailed Sam — Pricing", "Draft to Jamie (not sent)", and the muted replied-to line
+/// post on X", "Posted on X", "Emailed Sam — Pricing", "Typed to Jamie", and the muted replied-to line
 /// (`on: “…”`). Metadata only, never the typed words: the host reads it for a moment's typed action IDs
 /// (`ActivityBrowser.loadComposeLines`) and What happened titles its rows with it.
 public struct ComposeLine: Equatable, Sendable {
@@ -47,7 +47,7 @@ public struct ComposeLine: Equatable, Sendable {
 /// - a message typed in pieces (a click, a switch or a pause sealed the first piece mid-word, "wanna me" + "et us there?")
 ///   is one line and one quote: consecutive pieces in the same place with no send between them; a send's words that
 ///   already hold the pieces (the composer's value at the gesture) are the message;
-/// - a still-unsent draft is "Draft to Jamie (not sent)" ("Draft (not sent)" with no name). A Messages draft that a
+/// - a still-unsent draft is "Typed to Jamie" ("Typed" with no name). A Messages draft that a
 ///   Return marker follows within `returnWindow` (rows saved before the Messages composer was classified, so the send was
 ///   not detected) is "Typed to Jamie": neither called sent nor "not sent", and its Return row stays as before;
 /// - a reply replaces the page-visit row of the same post (writing beats reading);
@@ -95,14 +95,15 @@ public enum MessagesTypedFold {
     }
     public static func title(_ line: Line) -> String { line.title }
 
-    /// The card's sentence: "Texted Jamie.", "Texted someone.", "Drafted a text to Jamie (not sent).", and for
+    /// The card's sentence: "Texted Jamie.", "Texted someone.", "Wrote a text to Jamie.", and for
     /// other composers the line itself ("Replied to Ada's post on X.").
     public static func sentence(_ line: Line, times: Int = 1) -> String {
         let n = times > 1 ? " (\(times) times)" : ""
         let messages = line.kind.isEmpty || line.kind == ComposeKind.sentMessage.rawValue && !(line.name ?? "").hasPrefix("#")
         if line.sent, messages { return "Texted " + (line.name ?? "someone") + n + "." }
         if line.returned { return (line.name.map { "Typed to " + $0 } ?? "Typed in Messages") + n + "." }
-        if !line.sent, line.kind.isEmpty { return (line.name.map { "Drafted a text to \($0)" } ?? "Drafted a text") + " (not sent)" + n + "." }
+        // claude/dayeval-1005 (owner 10/05): never "draft" or "not sent" (most of them were sent).
+        if !line.sent, line.kind.isEmpty { return (line.name.map { "Wrote a text to \($0)" } ?? "Wrote a text") + n + "." }
         return line.title + n + "."
     }
 

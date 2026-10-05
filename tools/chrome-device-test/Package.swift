@@ -7,7 +7,7 @@ import PackageDescription
 
 let package = Package(
     name: "ChromeDeviceTest",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS("15.0")],  // PrivacyPolicy (a dependency) needs macOS 15 since d6ce29c
     products: [
         .executable(name: "chrome-device-test", targets: ["ChromeDeviceTest"]),
         .executable(name: "chrome-device-test-selftest", targets: ["ChromeProbeSelfTest"]),

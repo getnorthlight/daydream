@@ -125,7 +125,10 @@ final class ChromePageRecorder {
 
     /// Every 0.5 s from EventCapture's control timer.
     func tick() {
-        guard let front=environment.frontmost(),pathActive(front.bundle) else {ticks=0;return}
+        // claude/perf3-1005: judged by the choices last read (no read of the history on the main thread every 0.5 s);
+        // a read that starts is judged by choices read for it (`preflight`).
+        guard let front=environment.frontmost(),ReleaseFeatures.chromePageHistory,front.bundle == ChromePageTarget.bundleID,
+              coordinator.allowsAppLastRead(front.bundle) else {ticks=0;return}
         ticks += 1
         guard Double(ticks)*0.5 >= pollPeriod else {return}
         ticks=0

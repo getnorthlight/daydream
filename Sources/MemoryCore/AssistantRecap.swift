@@ -35,7 +35,7 @@ extension MemoryStore {
         let built=try shown.map { try recapDay($0,timezone:tz,now:now) }
         var out:[String:Any]=["range":Self.recapRangeLabel(shown,timezone:tz),"timezone":AssistantView.zoneLabel(zone,at:now),
                               "present":Self.recapPresent,
-                              "about":"Lines are DayDream's notes, written by a model from what was on screen; they can be wrong. \"(draft)\" lines were not sent."]
+                              "about":"Lines are DayDream's notes, written by a model from what was on screen; they can be wrong."]
         if days.count > shown.count { out["earlier_days_not_shown"]=days.count-shown.count }
         // Fit the bound: fewer lines per block, then fewer blocks per day, then fewer apps.
         for (lines,blocks,apps) in [(3,5,4),(2,5,3),(2,4,2),(1,3,2),(1,2,1)] {
@@ -58,7 +58,8 @@ extension MemoryStore {
         var blocks:[RecapBlock]; var brief:Int; var zone:TimeZone
         func json(lines:Int,blocks maxBlocks:Int,apps:Int) -> [String:Any] {
             var d:[String:Any]=["day":label,"date":date]
-            if let headline { d["headline"]=headline }
+            // claude/dayeval-1005: never "draft" to an AI app (the lines were chosen on the stored words).
+            if let headline { d["headline"]=DisplayWords.undraft(headline) }
             if let quiet { d["quiet"]=quiet }
             let kept=MemoryStore.recapMerge(blocks,max:maxBlocks,zone:zone)
             let labels=MemoryStore.recapAnchors(kept.map(\.start),kept.map(\.end),zone:zone)
@@ -66,7 +67,7 @@ extension MemoryStore {
                 d["blocks"]=zip(kept,labels).map { b,when -> [String:Any] in
                     var x:[String:Any]=["when":when,"about":b.about,"minutes":max(1,Int((Double(b.seconds)/60).rounded()))]
                     let did=MemoryStore.recapChoose(b.items,max:lines)
-                    if !did.isEmpty { x["did"]=did }
+                    if !did.isEmpty { x["did"]=did.map(DisplayWords.undraft) }
                     let a=b.apps.sorted { $0.1 > $1.1 }.prefix(apps).map(\.0)
                     if !a.isEmpty { x["apps"]=Array(a) }
                     let s=b.sites.sorted { $0.1 > $1.1 }.prefix(max(0,apps-1)).map(\.0)
@@ -204,7 +205,7 @@ extension MemoryStore {
     }
     static func recapLabel(_ text:String,assertion:String) -> String {
         switch assertion {
-        case "draft": return text.lowercased().hasPrefix("drafted") ? text : "(draft) "+text
+        case "draft": return DisplayWords.undraft(text)
         case "reported": return "(reported) "+text
         default: return text
         }

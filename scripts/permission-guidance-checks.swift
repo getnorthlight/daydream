@@ -46,7 +46,8 @@ import MemoryUI
         equal(RecordingControls.buttons(for: unknown).first?.title, "Allow Permissions", "A-name", "popover button, which one unknown")
         let header = MenuBarMenu.header(CapturePresentation(state: both), now: now, timeZone: la, canSetUp: true,
                                         canOpenApplications: false, canOpenPermissions: true)
-        equal(header.status.text, "Accessibility and Input Monitoring are off", "A-name", "menu bar line names both")
+        // int-015: one line beside the button (the panel never grows); the button names the permission, Settings' line both.
+        equal(header.status.text, "2 permissions are off", "A-name", "menu bar line says both are off")
         equal(header.control, .fix(title: "Turn on Accessibility", fix: .permissions), "A-name", "menu bar button says what it turns on")
         let headerIM = MenuBarMenu.header(CapturePresentation(state: im), now: now, timeZone: la, canSetUp: false,
                                           canOpenApplications: false, canOpenPermissions: false)

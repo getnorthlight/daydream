@@ -47,6 +47,14 @@ public final class WebTypingRefusals: @unchecked Sendable {
         "step.window.title", "step.window.titleUnmatched", "step.frame.chain", "step.frame.chromeUI", "step.frame.nested",
         // claude/typing-1004: keys the Mac saw while recording never reached DayDream's input tap (`KeyArrivalWatch`).
         "tap.noKeys",
+        // claude/xtyping-1005: a full join found Chrome's accessibility asleep and woke it (`BrowserTypingJoin.read`),
+        // and how many times website typing woke it when Chrome came to the front (`BrowserTypingJoin.wake`).
+        "step.focus.asleep", "wake.chrome",
+        // claude/xtyping-1005: typing sessions in Chrome (keys after `burstGapNanoseconds` without one), counted one by
+        // one. Each one starts every stream's episode again, so an outcome that repeats the last session's (a refusal
+        // that never changes) is counted again: before, a laptop test that failed exactly as the one before moved no
+        // counter at all. A count of sessions, never of keys.
+        "burst",
     ]
     /// The `step` names a join may note (without the "step." prefix).
     public static let stepNames: Set<String> = Set(names.filter { $0.hasPrefix("step.") }.map { String($0.dropFirst(5)) })
@@ -91,6 +99,22 @@ public final class WebTypingRefusals: @unchecked Sendable {
     public func transportFailed() { lock.lock(); pendingTransport = true; lock.unlock() }
     /// A row was written: counted one by one.
     public func saved() { record("saved", episode: false) }
+    /// claude/xtyping-1005: website typing woke Chrome's accessibility when Chrome came to the front. Counted one by one.
+    public func woke() { record("wake.chrome", episode: false) }
+
+    /// claude/xtyping-1005: a Chrome key reached website typing (or was lost on its way: `key.lateAtIntake`) at `at`
+    /// (uptime nanoseconds). More than this after the previous one starts a new typing session: `burst` is counted and
+    /// every stream's episode ends, so the session's outcomes are counted even when they repeat the last session's.
+    public static let burstGapNanoseconds: UInt64 = 3_000_000_000
+    private var lastKeyAt: UInt64?
+    public func keyArrived(at: UInt64) {
+        lock.lock()
+        let fresh = lastKeyAt.map { at < $0 || at - $0 > Self.burstGapNanoseconds } ?? true
+        lastKeyAt = at
+        if fresh { last = [:] }
+        lock.unlock()
+        if fresh { record("burst", episode: false) }
+    }
 
     /// The stream a name belongs to: its prefix ("join", "drop", "off", "appleEvent", "key"); `inputMethod` is a check
     /// before any read, as "off" is.
@@ -123,7 +147,7 @@ public final class WebTypingRefusals: @unchecked Sendable {
         lock.unlock()
         persist?(copy, since)
     }
-    public func reset() { lock.lock(); counts = [:]; last = [:]; pendingTransport = false; pendingStep = nil; since = nil; dirty = false; lock.unlock() }
+    public func reset() { lock.lock(); counts = [:]; last = [:]; pendingTransport = false; pendingStep = nil; since = nil; dirty = false; lastKeyAt = nil; lock.unlock() }
 
     // MARK: Storage (the app's own defaults)
 

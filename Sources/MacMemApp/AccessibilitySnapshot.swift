@@ -32,6 +32,38 @@ struct AccessibilitySnapshot {
     var browserVerification: BrowserVerification? = nil
 }
 
+/// claude/crashguard-015: the one place the app reads Text Input Sources (HIToolbox/TSM), which assert the main QUEUE:
+/// macOS 15 traps off it (owner laptop 10/04, `_dispatch_assert_queue_fail`), macOS 26 doesn't. On the main queue the
+/// selected source is read live, as before, and kept; anywhere else (website typing's executor, the tap thread, an
+/// Accessibility queue, a main-thread `sync` of another queue) the value last read on the main queue is answered and
+/// TIS is never called. Capture reads it again on the main queue at every input source change (`refresh`, from the
+/// distributed notification `InputSourceListener` hears), so that value is never older than the last change. false
+/// until the main queue has read it once: nothing is proven before.
+enum KeyboardInputSource {
+    /// The direct layouts: each key is the character it types (no input method composes it).
+    static let directLayouts: Set<String> = ["com.apple.keylayout.US","com.apple.keylayout.ABC","com.apple.keylayout.British"]
+    private static let lock = NSLock()
+    private static var lastDirect = false
+    static func isDirect() -> Bool {
+        guard MainQueue.isCurrent else { lock.lock(); defer { lock.unlock() }; return lastDirect }
+        let now = selectedSourceID().map(directLayouts.contains) ?? false
+        lock.lock(); lastDirect = now; lock.unlock()
+        return now
+    }
+    /// Reads the selected source again on the main queue (now, or on its next turn when called elsewhere).
+    static func refresh() {
+        if MainQueue.isCurrent { _ = isDirect() } else { DispatchQueue.main.async { _ = isDirect() } }
+    }
+    /// The selected keyboard input source's ID. Main queue only: debug and check builds trap elsewhere
+    /// (`MainQueue.require`), and a release build answers nil there rather than call TIS.
+    private static func selectedSourceID() -> String? {
+        MainQueue.require()
+        guard MainQueue.isCurrent, let source=TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
+              let raw=TISGetInputSourceProperty(source,kTISPropertyInputSourceID) else {return nil}
+        return Unmanaged<CFString>.fromOpaque(raw).takeUnretainedValue() as String
+    }
+}
+
 enum AccessibilityReader {
     static var status = "No foreground observation yet."
     private static let nativeWitness=NativeFocusWitness<AXUIElement>()
@@ -106,10 +138,8 @@ enum AccessibilityReader {
     private static func directKeyboardInput()->Bool {
         // A CG key tap does not prove committed IME/autofill/paste text. Support
         // only these direct layouts; do not manufacture composition completion.
-        guard let source=TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
-              let raw=TISGetInputSourceProperty(source,kTISPropertyInputSourceID) else {return false}
-        let id=Unmanaged<CFString>.fromOpaque(raw).takeUnretainedValue() as String
-        return ["com.apple.keylayout.US","com.apple.keylayout.ABC","com.apple.keylayout.British"].contains(id)
+        // claude/crashguard-015: Text Input Sources are read on the main queue only (`KeyboardInputSource`).
+        KeyboardInputSource.isDirect()
     }
     /// The same direct-layout rule for website typing (owner build), which
     /// proves keys with the Chrome join instead of the native proof: a key an
@@ -168,6 +198,29 @@ enum AccessibilityReader {
         let valid=SecCodeCheckValidity(code,SecCSFlags(rawValue:0),requirement)==errSecSuccess
         if let launch {signatureVerdicts.record(launch,valid:valid,now:now)}
         return valid
+    }
+    /// perf2-1005: an allowed native app came to the front (main thread): its signature is checked now, off the main
+    /// thread, so its first key finds a pass instead of making the certificate-chain check on main (the first check
+    /// after launch, and after each pass ran out). The same check and requirement as `trustedNativeProcess`; a refusal
+    /// is recorded the same way, so that key still checks again on main.
+    static func prewarmSignature(pid:pid_t,bundle:String) {
+        guard Thread.isMainThread,CaptureGate.nativeApps.contains(bundle),let row=TypingCategories.app(bundle),
+              let text=TypingCategories.signingRequirement(row),let started=ProcessStart.kernelSeconds(pid:pid) else {return}
+        let launch="\(pid):\(started):\(bundle)|"+text
+        let now=DispatchTime.now().uptimeNanoseconds
+        guard !signatureVerdicts.passed(launch,now:now) || signatureVerdicts.refreshDue(launch,now:now),
+              signatureRefreshing.insert(launch).inserted else {return}
+        guard let requirement=compiledRequirement(text) else {signatureRefreshing.remove(launch);return}
+        signatureQueue.async {
+            var code:SecCode?
+            let valid=SecCodeCopyGuestWithAttributes(nil,[kSecGuestAttributePid:pid] as CFDictionary,SecCSFlags(rawValue:0),&code)==errSecSuccess
+                && code.map { SecCodeCheckValidity($0,SecCSFlags(rawValue:0),requirement)==errSecSuccess } == true
+            DispatchQueue.main.async {
+                signatureRefreshing.remove(launch)
+                // A refusal is not cached (`SignatureVerdicts.record` keeps passes only): the key checks again on main.
+                if valid {signatureVerdicts.record(launch,valid:true,now:now)}
+            }
+        }
     }
     /// Main thread only, like every caller.
     private static var signatureVerdicts=SignatureVerdicts()
@@ -232,14 +285,22 @@ enum AccessibilityReader {
     /// focused element is resolved by hit-testing that point instead of the
     /// app's focused element.
     static func snapshot(pid: pid_t, at point: CGPoint? = nil, captureText: Bool) -> AccessibilitySnapshot? {
-        status = "Content withheld: permissions, secure input or focus unavailable."
+        let r = read(pid: pid, at: point, captureText: captureText)
+        status = r.status
+        return r.snapshot
+    }
+    /// perf2-1005: the snapshot and the status line it leaves, without touching `status` (main thread only): safe off
+    /// the main thread (`EventCapture`'s Accessibility read queue). Every read here is an Accessibility call bounded by
+    /// `snapshotTimeout`, a running-application lookup or a pure policy rule.
+    static func read(pid: pid_t, at point: CGPoint? = nil, captureText: Bool) -> (snapshot: AccessibilitySnapshot?, status: String) {
+        var status = "Content withheld: permissions, secure input or focus unavailable."
         guard AXIsProcessTrusted(), !IsSecureEventInputEnabled(),
-              let running = NSRunningApplication(processIdentifier: pid) else { return nil }
+              let running = NSRunningApplication(processIdentifier: pid) else { return (nil, status) }
         let bundle=running.bundleIdentifier ?? ""
         // Live test (build 7): a macOS alert or agent in front ("UserNotificationCenter ~4 min" headlined the day) is
         // not an activity. Its time stays with the app behind it, whose rows are the last ones saved.
         if SystemProcesses.excluded(bundle:bundle,regularApp:running.activationPolicy == .regular) {
-            status="System alerts and background agents aren't recorded."; return nil
+            return (nil, "System alerts and background agents aren't recorded.")
         }
         if CaptureSession.excludedBrowsers.contains(bundle) {
             // AppleEvents' front window and AX focus do not prove the same
@@ -248,9 +309,9 @@ enum AccessibilityReader {
             // only, on its own path, never here.
             #if DAYDREAM_OWNER_TYPING
             // Owner build: website typing reads Chrome through the join, never here.
-            status=WebTypingText.browserStatus; return nil
+            return (nil, WebTypingText.browserStatus)
             #else
-            status="Browser windows aren't read here. What's on web pages and what you type in browsers is never saved."; return nil
+            return (nil, "Browser windows aren't read here. What's on web pages and what you type in browsers is never saved.")
             #endif
         }
         // Every element read here answers within `snapshotTimeout` or not at all (the default is six seconds a call,
@@ -261,17 +322,17 @@ enum AccessibilityReader {
         let appElement = bounded(AXUIElementCreateApplication(pid))
         let windowElement = element(appElement, kAXFocusedWindowAttribute).map(bounded)
         // Security follows keyboard focus, not the element under the mouse.
-        guard let focused = element(appElement, kAXFocusedUIElementAttribute).map(bounded), !overBudget() else { return nil }
+        guard let focused = element(appElement, kAXFocusedUIElementAttribute).map(bounded), !overBudget() else { return (nil, status) }
 
         let role = string(focused, kAXRoleAttribute)
         let subrole = string(focused, kAXSubroleAttribute)
-        guard let role, !role.isEmpty, !overBudget() else { return nil }
+        guard let role, !role.isEmpty, !overBudget() else { return (nil, status) }
         let secure = ObservationPolicy.isSecureRole(role, subrole: subrole)
-        guard !secure else { return nil } // Do not read title, value or URL in secure context.
+        guard !secure else { return (nil, status) } // Do not read title, value or URL in secure context.
         status="Supported native app observation."
 
         let windowTitle = string(windowElement, kAXTitleAttribute)
-        guard !ObservationPolicy.titleLooksPrivate(windowTitle) else { return nil }
+        guard !ObservationPolicy.titleLooksPrivate(windowTitle) else { return (nil, status) }
         let url = webURL(focused: focused, window: windowElement, app: appElement, bundleID: running.bundleIdentifier)
         let browser = ObservationPolicy.browserBundleIdentifiers.contains(running.bundleIdentifier ?? "")
         let privateBrowsing = browser && (
@@ -296,8 +357,8 @@ enum AccessibilityReader {
               let finalWindow=element(appElement,kAXFocusedWindowAttribute).map(bounded), let windowElement,
               CFEqual(windowElement,finalWindow), string(finalFocus,kAXRoleAttribute) == role,
               !ObservationPolicy.isSecureRole(role,subrole:string(finalFocus,kAXSubroleAttribute)),
-              !IsSecureEventInputEnabled(), AXIsProcessTrusted(), !overBudget() else { return nil }
-        return AccessibilitySnapshot(
+              !IsSecureEventInputEnabled(), AXIsProcessTrusted(), !overBudget() else { return (nil, status) }
+        return (AccessibilitySnapshot(
             focusID: "\(pid):\(CFHash(focused)):\(CFHash(windowElement)):\(windowTitle ?? ""):\(url ?? "")",
             app: AppInfo(name: running.localizedName, bundleIdentifier: running.bundleIdentifier, secureInput: secure),
             // AX does not supply a public CG window-number join here. Omit it;
@@ -309,7 +370,7 @@ enum AccessibilityReader {
             selectedText: nil,
             selectedLocation: nil,
             selectedLength: nil
-        )
+        ), status)
     }
 
     /// Safari and Chrome often leave "Private" / "Incognito" on a toolbar

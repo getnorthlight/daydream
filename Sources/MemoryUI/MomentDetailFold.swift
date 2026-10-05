@@ -9,7 +9,7 @@ import PrivacyPolicy
 ///    terminal app up to its Return is ONE line, whatever the window title did in between (spinner glyphs, a tool
 ///    renaming the tab) and whatever other apps came between. A line sent with Return into an AI coding tool (Claude
 ///    Code, Codex, … by its window titles) reads "Asked Claude Code"; a shell line reads "Ran a command"; pieces never
-///    followed by a Return read "Typed, not sent" / "Typed, not run". The words of all pieces are one quote.
+///    followed by a Return read "Typed" / "Typed, not run". The words of all pieces are one quote.
 /// 2. A Return right after a typed line in the same app is that line's send, not a row of its own.
 /// 3. Quiet "Worked in …" rows fold into a neighbouring line of the same app (time and actions kept behind it); one
 ///    stays only where no neighbour is that app's (a noise-only card is still its one line).
@@ -130,7 +130,7 @@ enum MomentDetailFold {
         case (true, .some(let t)) where !t.isEmpty: return "Asked " + t
         case (true, .some): return "Sent a prompt"
         case (true, nil): return TypedWords.ranCommandLabel
-        case (false, .some): return "Typed, not sent"
+        case (false, .some): return "Typed"
         case (false, nil): return "Typed, not run"
         }
     }

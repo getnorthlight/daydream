@@ -156,6 +156,8 @@ public struct DDRibbon: View {
     @State private var tipX: CGFloat = 0
     @State private var tipTask: Task<Void, Never>?
     @State private var tipShownOnce = false
+    /// perf2-1005: the span group under the pointer, for the one span-menu surface (`RibbonSpanMenus`).
+    @State private var menuGroup: String?
     @Environment(\.daydreamRibbonMenu) private var menu
     @Environment(\.daydreamReferenced) private var referenced
     @Environment(\.daydreamRibbonTip) private var pinnedTip
@@ -269,7 +271,7 @@ public struct DDRibbon: View {
                 if let now, now >= range.lowerBound, now <= range.upperBound { tick(now, w) }
                 labels(w)
                 if let menu {
-                    RibbonSpanMenus(spans: drawn.map { menuArea($0, w) }, menu: menu)
+                    RibbonSpanMenus(spans: drawn.map { menuArea($0, w) }, menu: menu, pointed: menuGroup)
                         .equatable()
                         .frame(width: w, height: totalHeight, alignment: .topLeading)
                 }
@@ -283,6 +285,11 @@ public struct DDRibbon: View {
             .onContinuousHover { phase in
                 switch phase {
                 case .active(let p):
+                    // perf2-1005: the span whose menu a secondary click opens (one menu surface, `RibbonSpanMenus`).
+                    if menu != nil {
+                        let group = RibbonSpanMenus.group(at: p, in: drawn.map { menuArea($0, w) })
+                        if group != menuGroup { menuGroup = group }
+                    }
                     let s = segment(at: p.x, width: w)
                     onHover?(s ?? bandSegment(at: p.x, width: w))
                     if tips {
@@ -290,6 +297,7 @@ public struct DDRibbon: View {
                         follow(s, x: p.x)
                     }
                 case .ended:
+                    if menuGroup != nil { menuGroup = nil }
                     onHover?(nil)
                     if tips { pointed = nil; tipTask?.cancel(); tipTask = nil; tip = nil; tipShownOnce = false }
                 }
@@ -563,8 +571,15 @@ struct RibbonSpanCanvas: View, Equatable {
     }
 }
 
-/// The spans' secondary-click areas, apart from the spans themselves (fix/scroll-perf): a hover or a highlight redraws the
-/// spans, never these, while the spans stay where they are and the menu's revision holds.
+/// The spans' secondary-click menus and primary clicks (`DDRibbon.menuArea`), as ONE surface over the ribbon, apart from
+/// the spans themselves (fix/scroll-perf): a hover or a highlight redraws the spans, never this, while the spans stay
+/// where they are and the menu's revision holds.
+///
+/// perf2-1005 (owner 10/4, "clicking cards is glitchy"): this was one view per span (276 on a big day), each with its own
+/// tap gesture and context menu. Every change the day's list saw (a card click is three or four of them) re-dirtied all of
+/// them: about 60 of a click's ~100 ms on a 276-moment day. Now one hit shape (the union of the span areas, so a click
+/// between spans still falls through), one tap that finds its span by location, and one context menu for the span under
+/// the pointer (the pointer is over the span it right-clicks, so its last hover names it).
 struct RibbonSpanMenus: View, Equatable {
     struct Span: Identifiable, Equatable {
         let id: String
@@ -573,30 +588,38 @@ struct RibbonSpanMenus: View, Equatable {
     }
     let spans: [Span]
     let menu: RibbonMomentMenu
+    /// The span group under the pointer (`DDRibbon` follows the pointer): the menu a secondary click opens.
+    let pointed: String?
+
+    static func == (a: Self, b: Self) -> Bool { a.spans == b.spans && a.menu == b.menu && a.pointed == b.pointed }
+
+    /// The span at `point` (the topmost: the last drawn), else nil.
+    static func group(at point: CGPoint, in spans: [Span]) -> String? {
+        spans.last { $0.frame.contains(point) }?.group
+    }
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            ForEach(spans) { s in RibbonSpanMenu(group: s.group, frame: s.frame, menu: menu).equatable() }
-        }
+        let spans = spans, menu = menu
+        Color.clear
+            .contentShape(RibbonSpanAreas(frames: spans.map(\.frame)))
+            .gesture(SpatialTapGesture().onEnded { tap in
+                if let group = Self.group(at: tap.location, in: spans) { menu.select?(group) }
+            })
+            .contextMenu {
+                if let group = pointed {
+                    MomentContextMenu(items: menu.items(group), sites: menu.sites(group), excludeSite: menu.excludeSite) { menu.perform($0, group) }
+                }
+            }
     }
 }
 
-/// One span's secondary-click area (`DDRibbon.menuArea`). A span's menu is built while the ribbon draws, so every
-/// redraw of the day card (a hover, a selection, the clock) rebuilt all of them; equal inputs now keep the span as it
-/// was (fix/scroll-perf). The menu's own `==` says when its items could differ.
-struct RibbonSpanMenu: View, Equatable {
-    let group: String
-    let frame: CGRect
-    let menu: RibbonMomentMenu
-
-    var body: some View {
-        Color.clear.contentShape(Rectangle())
-            .frame(width: frame.width, height: frame.height)
-            .offset(x: frame.minX, y: frame.minY)
-            .onTapGesture { menu.select?(group) }
-            .contextMenu {
-                MomentContextMenu(items: menu.items(group), sites: menu.sites(group), excludeSite: menu.excludeSite) { menu.perform($0, group) }
-            }
+/// The union of the spans' click areas: the one hit shape of `RibbonSpanMenus`.
+struct RibbonSpanAreas: Shape {
+    let frames: [CGRect]
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        for f in frames { path.addRect(f) }
+        return path
     }
 }
 

@@ -96,9 +96,31 @@ import WriterBackend
     @Published var emailSubjects = true
     /// Whether DayDream may read Chrome's page in front (Automation). Read without a prompt; only
     /// `allowChromeAccess()` lets macOS ask.
-    @Published var chromeAccess:ChromeAccessState = .unknown {didSet {if chromeAccess != .checking {chromeAccessShown=chromeAccess}}}
+    @Published var chromeAccess:ChromeAccessState = .unknown {didSet {
+        if chromeAccess != .checking {chromeAccessShown=chromeAccess}
+        if let answer=ChromeAccessMemory.answer(chromeAccess) {chromeAccessAnswered(answer,was:oldValue)}
+        if chromeAskingAgain,chromeAccess != .checking,chromeAccess != .unknown {chromeAskedAgain(chromeAccess)}
+    }}
     /// The menu bar's Chrome line reads the last answer, never `.checking` (review G30).
     private(set) var chromeAccessShown:ChromeAccessState = .unknown
+    /// chromeask-1005: macOS's last answer about Chrome (allowed, not asked, refused), kept across launches. A read with
+    /// Chrome closed can't ask macOS (it answers only for a running Chrome), so "Chrome pages aren't being saved" keeps
+    /// showing until a read of a running Chrome says otherwise.
+    private(set) var chromeLastAnswer:ChromeAccessState?=ChromeAccessMemory.saved()
+    /// chromeask-1005: a pane opened from a Fix or Open System Settings press: Chrome's status is read every few
+    /// seconds (a read, never a question) until it is allowed, so turning the switch on is picked up with no restart.
+    private var chromeRecoveryWatch:Timer?
+    private var chromeRecoveryUntil:Date?
+    /// The one in-app reminder when Chrome is used while access is refused (once ever, `ChromeAccessMemory.reminderKey`).
+    var chromeReminder=ChromeAccessReminder.live
+    /// Ask again's fallback: the guide beside System Settings (`ChromeAccessGuide`).
+    var chromeGuide=ChromeAccessGuide.live
+    /// Ask again: DayDream's own Automation answer is being cleared (`ChromeAutomationReset`), then macOS asks again.
+    private(set) var chromeResetting=false
+    /// Ask again's question is in flight: an answer with no question on screen opens the guide.
+    private(set) var chromeAskingAgain=false
+    /// The reset couldn't run this session: Ask again goes straight to the guide.
+    private(set) var chromeResetFailed=false
     /// What the access checks ask the system; the checks substitute fakes (no Apple Event reaches Chrome).
     var chromeAccessEnvironment=ChromeAccessEnvironment.live
     private var chromeAccessGeneration=0
@@ -109,8 +131,6 @@ import WriterBackend
     private var chromeUpgradeCheckWaiting=false
     /// An answer to Allow… faster than this came with no question on screen.
     static let chromeAskQuick:TimeInterval=1.0
-    /// Setup asked for Chrome access while Chrome wasn't running: the ask waits for Chrome's first activation.
-    private(set) var chromeAccessAskWaiting=false
     /// Setup's Chrome step asked (`askChromeAccessInSetup`): once macOS answered there, finishing setup asks nothing more.
     private(set) var chromeSetupAsked=false
     /// The Chrome card for an upgrade (`DaydreamChromeCard`): setup's Permissions card opens once, by itself.
@@ -307,9 +327,24 @@ import WriterBackend
     var recordingSince:Date? {transitions.recordingSince}
     var pausedAt:Date? {transitions.pausedAt}
     var stoppedAt:Date? {transitions.stoppedAt}
-    /// Last permission reads (`AXIsProcessTrusted`, `CGPreflightListenEventAccess`; never a request API).
-    /// Unread in the Development Trial.
+    /// The permissions as every surface shows them: the reads (`AXIsProcessTrusted`, `CGPreflightListenEventAccess`;
+    /// never a request API), settled (claude/permflash-015, `PermissionSettle`): a read that says allowed shows at once,
+    /// one that says not allowed only once the reads have stayed that way, and nil until something is known. So a
+    /// moment's "not allowed" from macOS never draws Needs Permission, a "… needed" row or the permission page.
+    /// Unread in the Development Trial. What recording does follows its own reads, never this.
     @Published private(set) var permissionSnapshot=PermissionSnapshot()
+    /// The settling behind `permissionSnapshot`. Someone who finished setup had both allowed once; before that the
+    /// first off read is the answer at once (a new install's first launch shows what to allow with no wait).
+    private var permissionShown=ShownPermissions(allowedBefore:UserDefaults.standard.bool(forKey:MemoryViewModel.setupCompletedKey))
+    /// Setup was finished once, so both permissions were allowed then: a permission page that opens holds a first off
+    /// read until it settles, as this model does (`PermissionGrantView`).
+    var permissionsAllowedBefore:Bool {development == nil && UserDefaults.standard.bool(forKey:Self.setupCompletedKey)}
+    /// The last read as macOS gave it: what a stop's notice names (`currentStopCause`), never what is shown.
+    private var lastPermissionRead=PermissionSnapshot()
+    /// The person's own Start read a permission off: the next read is shown as it is (`PermissionSettle.take`).
+    private var permissionReadAsIs=false
+    /// A read is set to run once the off reads now waiting have had time to hold (`readPermissions`).
+    private var permissionSettleReadSet=false
     @Published private(set) var permissionsCheckedAt:Date?
     /// The first permission read in this process. macOS applies Input Monitoring turned on after this only once
     /// DayDream reopens, so the permission page offers Quit & Reopen then (`PermissionRelaunch`). Input Monitoring
@@ -341,7 +376,7 @@ import WriterBackend
         if development?.preview == true {return "Preview · not recording"}
         if development != nil {return "Development Trial · OFF"}
         if recording { return "Recording" }
-        if shownBlocker != nil { return "Setup required" }
+        if presentedBlocker != nil { return "Setup required" }
         if let pauseUntil { return "Paused until " + pauseUntil.formatted(date:.omitted,time:.shortened) }
         return stopped && !startWhenFree ? "Stopped" : "Paused"
     }
@@ -350,8 +385,20 @@ import WriterBackend
     /// pause line says that) or a timed pause outlasts (Paused until its end, which waits for it too): something that
     /// ends by itself is never an orange warning beside a pause.
     private var shownBlocker:String? {
-        guard let blocker=resumeUnavailable, blocker != "Resume after waking" else {return nil}
+        guard let blocker=resumeUnavailable, blocker != "Resume after waking", !permissionBlockerUnsettled else {return nil}
         return blocker == Self.operationBlocker && (startWhenFree || pauseUntil != nil) ? nil : blocker
+    }
+    /// claude/permflash-015: the blocker says the permissions are off, but what is shown of them hasn't settled on off
+    /// (`permissionSnapshot`: a moment's "not allowed", or nothing known yet). No surface says a permission is off then:
+    /// the state is what it would be without it (Off, Paused), and Start stays there (pressed, it takes its own read).
+    private var permissionBlockerUnsettled:Bool {
+        resumeUnavailable == RecordingCopy.permissionBlocker && permissionSnapshot.missing.isEmpty
+    }
+    /// The blocker the surfaces show, with the permissions as shown: once a permission's reads have settled on off and
+    /// nothing records, the state is Needs Permission whether or not the recorder's own settled read says so yet (the
+    /// two used to disagree for a read or two: a "… needed" row beside Off).
+    private var presentedBlocker:String? {
+        shownBlocker ?? (!recording && development == nil && !permissionSnapshot.missing.isEmpty ? RecordingCopy.permissionBlocker : nil)
     }
     private var store: MemoryStore?
     /// The open history's `core_store_id`, which names its typing key (Remove everything deletes that key).
@@ -384,6 +431,7 @@ import WriterBackend
         launchLocation=development == nil ? Self.readLaunchLocation() : .notAnApp
         connection=development == nil ? ConnectionSettingsModel.remembered():ConnectionSettingsModel()
         let writerHome=MemPaths.home()
+        LaunchTrace.mark("model.init")
         #if DAYDREAM_QA_HARNESS && DAYDREAM_OWNER_TYPING
         let testingWriter=CommandLine.arguments.contains("--synthetic-writer-check") || CommandLine.arguments.contains("--synthetic-writer-restart-check")
         if development != nil || recordingTrial {
@@ -391,11 +439,11 @@ import WriterBackend
         } else if testingWriter,let physical=try? physicalDirectory(writerHome),physical.path.hasPrefix("/private/tmp/daydream-trial-"),
            (try? String(contentsOf:physical.appendingPathComponent("TRIAL-ONLY"),encoding:.utf8))=="synthetic-only\n" {
             noteWriter=WriterIntegration(modelRoot:writerHome.appendingPathComponent("Models"),keyStore:TrialForbiddenKeys(),send:{_ in throw WriterFailure.denied})
-        } else {noteWriter=WriterIntegration(modelRoot:writerHome.appendingPathComponent("Models"))}
+        } else {noteWriter=WriterIntegration(modelRoot:writerHome.appendingPathComponent("Models"),environment:.app)}
         #else
         if development != nil {
             noteWriter=WriterIntegration(modelRoot:writerHome.appendingPathComponent("Models"),keyStore:TrialForbiddenKeys(),send:{_ in throw WriterFailure.denied})
-        } else {noteWriter=WriterIntegration(modelRoot:writerHome.appendingPathComponent("Models"))}
+        } else {noteWriter=WriterIntegration(modelRoot:writerHome.appendingPathComponent("Models"),environment:.app)}
         #endif
         // Read as Sparkle begins the relaunch: recording on then starts again at the relaunch (UpdateResume). Nothing
         // pauses for the update before DayDream quits; the quit pauses it (willTerminate, below).
@@ -441,6 +489,7 @@ import WriterBackend
         if development == nil && !self.recordingTrial && !self.functionalTrial && launchLocation.blocksRecording, let later=OtherCopy.current.openedLater() {
             DispatchQueue.main.async { [weak self] in MainActor.assumeIsolated { self?.otherCopyOpened(later) } }
         }
+        LaunchTrace.mark("model.wired")
         openHistory()
     }
     /// Opens the history and wires everything that reads it: at launch, and again by itself when another connection held
@@ -457,12 +506,13 @@ import WriterBackend
             let syncSearch=development == nil && !recordingTrial
             let prepared=launchPrepared
             store = try Self.openHistory(MemPaths.home(),repairs:prepared?.prepared != true,kept:{ [backups] in backups.noteHistorySetAside() }) {
-                try MemoryStore(home:MemPaths.home(),writable:true,automaticallySyncSearch:syncSearch,launchWork:prepared?.prepared == true ? .prepared : .here)
+                try MemoryStore(home:MemPaths.home(),writable:true,automaticallySyncSearch:syncSearch,launchWork:prepared?.prepared == true ? .prepared : .here,liveHistory:development == nil)
             }
             // gold r2 (ADV-8): every read that can meet a busy file (the store, the Coordinator, the settlement, the choices,
             // the saver) comes before `historyOpened` wires anything, so a moment's busy file closes what half opened
             // (`closeHalfOpenHistory`) and the history is opened again by itself (`historyOpenFailed`).
             guard let opened=store else {throw MemError.missing}
+            LaunchTrace.mark("history.opened")
             if development == nil {
             writer = store.map { SummaryWorker(store:$0) }
             if let store {
@@ -471,8 +521,10 @@ import WriterBackend
                 #if DEVELOPMENT_SOURCE_CHECKS
                 typedExpiry=TypedTextLaunch.wire(store:store,keys:Self.typedKeyStore).timer
                 #else
+                TypedTextExpiryTimer.runsOffMain=true
                 typedExpiry=TypedTextLaunch.wire(store:store,keys:{KeychainTypedKeyStore.forStore($0)}).timer
                 #endif
+                LaunchTrace.mark("typing.key.wired")
                 let bridge=AssistantTypedBridgeServer(home:store.home) { [weak store] request in
                     store?.assistantBridgeAnswer(request,enabled:AIReadsTypedSetting.isOn()) ?? ["status":"error"]
                 }
@@ -497,6 +549,8 @@ import WriterBackend
                 }
                 #endif
                 coordinator?.onStateChanged = { [weak self] in self?.refreshCaptureStatus() }
+                // claude/perf3-1005: the heartbeat's typing reads go with it, off the main thread.
+                coordinator?.beatReads = { [weak self] in self?.typing.beatReads() }
                 // A failed save pauses recording; it starts again by itself (StorageRetry). A good heartbeat ends that.
                 coordinator?.onStorageFault = { [weak self] in
                     // Only recording the person has on starts again: a late write failing after their Pause changes nothing.
@@ -532,7 +586,9 @@ import WriterBackend
                     self.capture=nil;self.stopped=true;self.refreshCaptureStatus()
                 }
             })
+            LaunchTrace.mark("history.wired")
             historyOpened(policy:policy,saver:saver,settled:settled)
+            LaunchTrace.mark("history.ready")
         } catch MemError.invalid(let message) where message == Coordinator.lockHeld {
             // Nothing of this copy's stays open (the lock was taken between the check above and the Coordinator).
             closeHalfOpenHistory()
@@ -1185,19 +1241,21 @@ import WriterBackend
         if !schedulingPause, pauseUntil != nil, let state=coordinator?.session.state, state != "paused", state != "error" { cancelTimedPause() }
         // The session's state and reason are in this line (`Coordinator.label`), so a change there still redraws the
         // views that derive from them.
+        // claude/permflash-015: read first, so the line below already follows what is shown of the permissions.
+        readPermissions()
         var line = coordinator?.label ?? (historyOpening ? "Capture OFF. Opening the history again." : "Capture OFF. Storage unavailable.")
-        if let resumeUnavailable { line += " " + resumeUnavailable + ". " + resumeExplanation }
+        if let resumeUnavailable, !permissionBlockerUnsettled { line += " " + resumeUnavailable + ". " + resumeExplanation }
         if let operationalIssue { line += " " + operationalIssue + ". Original local evidence remains available unless storage itself is unavailable." }
         if recording { line += " " + AccessibilityReader.status }
         if status != line { status = line }
-        readPermissions()
         noteRecording(recording)
         // Once recording is off its start time no longer applies. A later start that skips startCapture
         // (a permission granted back while the session still says recording) then shows no time.
         if !recording && transitions.recordingSince != nil {transitions.notRecording()}
         let kind=recordingState.kind
         if kind != presentedKind {presentedKind=kind;dayData.refreshToday(false)}
-        typing.refresh(frontmostBundle:NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "")
+        // claude/perf3-1005: a heartbeat read typing off the main thread just now (`TypingModel.beatReads`).
+        if !typing.takeBeatRefresh() {typing.refresh(frontmostBundle:NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "")}
         syncLockWatch()
         syncPermissionWatch()
     }
@@ -1222,10 +1280,33 @@ import WriterBackend
             else if awake && !wake.suspended && Date().timeIntervalSince(since) >= InputMonitoringWatch.confirmAfter {launchReadUnconfirmedSince=nil}
         }
         noteInputMonitoring(read)
-        if read != permissionSnapshot {permissionSnapshot=read}
+        lastPermissionRead=read
+        showPermissions(read)
         considerAutoRelaunch(read)
         // Only whether a read happened is shown (`presentation.permissions`); a new time on every tick redrew everything.
         if permissionsCheckedAt == nil {permissionsCheckedAt=activity.now()}
+    }
+    /// claude/permflash-015: what the surfaces show of a read (`permissionSnapshot`). Asleep, locked or switched away, an
+    /// off read says nothing; in the first seconds after that ends it must hold for longer (`settleAfterWake`). While an
+    /// off read waits to hold, one more read runs once it has had the time, so a permission really turned off shows by
+    /// itself about `PermissionSettle.settle` after its first off read, with nothing else refreshing.
+    private func showPermissions(_ read:PermissionSnapshot) {
+        let now=Date()
+        let afterWake=inputWatchQuietUntil.map { now < $0 } ?? false
+        let settle=afterWake ? PermissionSettle.settleAfterWake : PermissionSettle.settle
+        let shown:PermissionSnapshot
+        if permissionReadAsIs {permissionReadAsIs=false;shown=permissionShown.take(read)}
+        else {shown=permissionShown.read(read,at:now,settle:settle,counts:awake && !wake.suspended)}
+        if shown != permissionSnapshot {permissionSnapshot=shown}
+        guard permissionShown.unsettled,!permissionSettleReadSet else {return}
+        permissionSettleReadSet=true
+        DispatchQueue.main.asyncAfter(deadline:.now()+settle+0.1) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else {return}
+                self.permissionSettleReadSet=false
+                if self.permissionShown.unsettled {self.refreshCaptureStatus()}
+            }
+        }
     }
     /// perm-1004: Input Monitoring turned on after launch needs DayDream to reopen. Once both permissions read on,
     /// DayDream restarts itself, once (`PermissionRelaunch.restartsByItself`), after the page's one line has shown for
@@ -1304,6 +1385,7 @@ import WriterBackend
     /// reads in the first `InputMonitoringWatch.afterWake` after it ends don't count.
     private func inputWatchInterrupted() {
         inputMonitoringWatch.interrupted()
+        permissionShown.interrupted()
         inputWatchQuietUntil=Date().addingTimeInterval(InputMonitoringWatch.afterWake)
     }
     /// "Check Again": re-reads permissions and the recording state. Never prompts.
@@ -1467,6 +1549,8 @@ import WriterBackend
             let permitted=Self.permissionsGranted()
             if !permitted {
                 if starting == .automatic, !permissionLossSettled, let again=automaticAgain { holdForPermission(again); return }
+                // claude/permflash-015: the person's own Start is shown as it read, at once (nothing waits to settle).
+                if starting == .person {permissionReadAsIs=true}
                 try coordinator.start(permitted:false); refreshCaptureStatus(); return
             }
             // Both read on: any start still waiting to read them again is this one.
@@ -2041,9 +2125,26 @@ import WriterBackend
         setOpenAtLogin(true,asked:false)
     }
     func readOpenAtLogin() {
-        let on=openAtLoginAvailable && Self.loginItem.status() == .enabled
-        if on != openAtLogin {openAtLogin=on}
+        let item=Self.loginItem
+        guard openAtLoginAvailable,item.statusOffMain else {
+            let on=openAtLoginAvailable && item.status() == .enabled
+            if on != openAtLogin {openAtLogin=on}
+            return
+        }
+        // perf2-1005: macOS's answer off the main thread; only the latest read lands.
+        loginReads &+= 1
+        let read=loginReads
+        DispatchQueue.global(qos:.userInitiated).async {
+            let on=item.status() == .enabled
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self,read == self.loginReads,self.openAtLoginAvailable else {return}
+                    if on != self.openAtLogin {self.openAtLogin=on}
+                }
+            }
+        }
     }
+    private var loginReads:UInt64=0
     /// The switch. Turning it on registers DayDream; if macOS wants the person's approval first, System Settings opens
     /// at Login Items, where they allow it.
     func setOpenAtLogin(_ on:Bool,asked:Bool=true) {
@@ -2064,6 +2165,9 @@ import WriterBackend
         // gold r2 (ADV-8): the history is still opening: tried now, so Start then goes through setup as it would have.
         if historyOpening, coordinator == nil {personStartWhileOpening(); if coordinator == nil {return}}
         guard let step=setupStepForStart() else {startCapture();return}
+        // claude/permflash-015: Start goes to the Permissions page: what it read is shown as it is, at once, so the page
+        // opens on what to allow (nothing waits to settle after the person's own Start).
+        if step == .permissions {permissionReadAsIs=true;readPermissions()}
         setupRequest=step
         openSetup()
     }
@@ -2214,7 +2318,7 @@ import WriterBackend
     /// Why recording is not on now, from the session, the permission reads and the resume blocker.
     func currentStopCause()->RecordingStopCause {
         RecordingStopCause.infer(sessionState:coordinator?.session.state,sessionReason:coordinator?.session.reason,
-                                 accessibility:permissionSnapshot.accessibility,inputMonitoring:permissionSnapshot.inputMonitoring,
+                                 accessibility:lastPermissionRead.accessibility,inputMonitoring:lastPermissionRead.inputMonitoring,
                                  blocker:resumeUnavailable,suspended:wake.suspended || !awake || wakeSystem.screenLocked())
     }
     /// Every status refresh reports whether recording is on; a change is where a stop is noticed. The
@@ -2545,7 +2649,7 @@ import WriterBackend
         let held=retrying || waiting
         var inputs=RecordingStateInputs(recording:recording,stopped:held ? false:stopped || staleDenial,development:development != nil,
                                     pauseUntil:pauseUntil,pausedAt:pausedAt,recordingSince:recordingSince,stoppedAt:stoppedAt,
-                                    resumeUnavailable:shownBlocker,sessionState:held ? "paused":staleDenial ? nil:session?.state,
+                                    resumeUnavailable:presentedBlocker,sessionState:held ? "paused":staleDenial ? nil:session?.state,
                                     sessionReason:waiting ? Self.waitingReason:retrying ? storageRetryReason:staleDenial ? nil:session?.reason,
                                     accessibilityGranted:permissionSnapshot.accessibility,inputMonitoringGranted:permissionSnapshot.inputMonitoring,
                                     operationalIssue:shownIssue ?? (resumeUnavailable == nil ? historySetAsideIssue : nil))
@@ -2741,30 +2845,10 @@ import WriterBackend
             } }
         }
     }
-    /// Setup's Start Recording with Web pages in Chrome on (the switch is on by default): macOS's Automation question
-    /// for Chrome comes up now if Chrome is running, else once the first time Chrome comes to the front, so pages
-    /// aren't silently missed. The same `allowChromeAccess` as Settings' Allow…: macOS asks only while it hasn't been
-    /// answered, and nothing asks while the switch is off by then.
-    func askChromeAccessAfterSetup() {
-        guard development == nil,ReleaseFeatures.chromePageHistory,browserPagesSaved,!chromeExcluded else {return}
-        // Owner, 10/2: macOS's question only follows a press of the Chrome row's Allow. Unpressed: nothing asks (Settings'
-        // Allow… is there). Pressed and already answered: nothing more to ask.
-        guard chromeSetupAsked else {return}
-        if Self.chromeAnswered(chromeAccess) {return}
-        let env=chromeAccessEnvironment
-        if env.running() != nil {allowChromeAccess();return}
-        guard !chromeAccessAskWaiting else {return}
-        chromeAccessAskWaiting=true
-        env.onNextChromeActivation { [weak self] in MainActor.assumeIsolated {
-            guard let self else {return}
-            self.chromeAccessAskWaiting=false
-            guard self.development == nil,self.browserPagesSaved,!self.chromeExcluded else {return}
-            self.allowChromeAccess()
-        } }
-    }
-    /// Setup's Chrome step (`DaydreamOnboardingChromeStep`): its one button. The same `allowChromeAccess` as Settings'
-    /// Allow…; with Google Chrome closed, Chrome opens first (in the background, from the person's click) and macOS asks
-    /// once it runs. Nothing here reads a page.
+    /// Setup's Chrome row (`DaydreamOnboardingChromeRow`): its one button. The same `allowChromeAccess` as Settings'
+    /// Allow…; with Google Chrome closed, Chrome opens first (in the background, from the person's click, as the row's
+    /// line says before the press) and macOS asks once it runs. chromeask-1005 (owner 10/5): this press is the only
+    /// place setup lets macOS ask; nothing asks after setup or when Chrome next comes forward. Nothing here reads a page.
     func askChromeAccessInSetup() {
         // The row shows before Apps saves Web pages in Chrome: the press asks whatever the switch (a question, nothing read).
         guard development == nil,ReleaseFeatures.chromePageHistory,!chromeExcluded,!askingChromeAccess,!chromeOpeningForSetup else {return}
@@ -2818,12 +2902,158 @@ import WriterBackend
         guard development == nil,!askingChromeAccess else {return}
         let state:ChromeAccessState
         switch access {case .unverified: state = .unverified; case .status(let status): state = afterAsk(.from(status:status)); case .twoCopies: state = .twoCopies}
+        remindChromeOff(state)
         guard state != chromeAccess else {return}
         chromeAccessGeneration += 1
         chromeAccess=state
     }
     /// Privacy & Security › Automation. Opening it changes nothing.
-    func openChromeAutomationSettings() {NSWorkspace.shared.open(ChromeAccessState.systemSettingsURL)}
+    func openChromeAutomationSettings() {
+        chromeAccessEnvironment.openPane()
+        watchChromeRecovery()
+    }
+    /// chromeask-1005: "Chrome pages aren't being saved." (menu bar, Settings, the status popover, the reminder).
+    /// Refused: Ask again (`askChromeAgain`). Not asked yet: Fix opens the setup card with the Chrome row
+    /// (`DaydreamChromeCard`), whose Allow is where macOS asks.
+    func fixChromeAccess(openSetup:(()->Void)?=nil) {
+        chromeReminder.dismiss()
+        if ChromeAccessMemory.fix(lineAccess:chromeLineAccess) == .askAgain {askChromeAgain();return}
+        guard development == nil else {return}
+        chromeCardRequested=true
+        if let openSetup {openSetup()} else {openSetupWindow?()}
+    }
+    /// The access the Chrome line reads: the last answer while Chrome is closed (or not read yet), else the newest read.
+    var chromeLineAccess:ChromeAccessState {
+        switch chromeAccessShown {
+        case .chromeNotRunning,.unknown,.checking: return chromeLastAnswer ?? chromeAccessShown
+        default: return chromeAccessShown
+        }
+    }
+    /// Ask again (owner 10/5; setup's and Settings' Chrome row, the Chrome line, the reminder): macOS never asks again
+    /// after Don't Allow, so DayDream clears its own Automation answer (`ChromeAutomationReset`: AppleEvents, its own
+    /// bundle id, nothing else) and asks again at once, from this press (opening a closed Chrome in the background, as
+    /// setup's Allow does). Where the reset can't run, or macOS answers with no question on screen, the guide beside
+    /// System Settings shows the switch instead.
+    func askChromeAgain() {
+        guard development == nil,ReleaseFeatures.chromePageHistory,!chromeExcluded,!askingChromeAccess,!chromeOpeningForSetup,
+              !chromeResetting else {return}
+        chromeReminder.dismiss()
+        let env=chromeAccessEnvironment
+        guard env.installed() else {return}
+        guard ChromeAccessMemory.refused(chromeLineAccess) || ChromeAccessMemory.refused(chromeAccess) else {
+            askChromeAccessInSetup();return
+        }
+        guard !chromeResetFailed,let arguments=ChromeAutomationReset.arguments(ownBundleID:env.ownBundleID()) else {
+            showChromeGuide();return
+        }
+        chromeResetting=true
+        objectWillChange.send()
+        env.background {
+            let status=env.resetAutomation(arguments)
+            env.main { [weak self] in MainActor.assumeIsolated {
+                guard let self else {return}
+                self.chromeResetting=false
+                RecordingLog.note("Ask again: Chrome access answer cleared, exit \(status).")
+                guard status == 0,self.development == nil,!self.chromeExcluded else {
+                    self.chromeResetFailed=true
+                    self.objectWillChange.send()
+                    self.showChromeGuide()
+                    return
+                }
+                // macOS has no answer now: the question comes back on this ask.
+                self.chromeAskFailed=false
+                self.chromeLastAnswer = .notAsked;ChromeAccessMemory.save(.notAsked)
+                self.chromeAskingAgain=true
+                self.askChromeAccessInSetup()
+                if !self.askingChromeAccess && !self.chromeOpeningForSetup {self.chromeAskingAgain=false}
+            } }
+        }
+    }
+    /// Ask again's question answered: an answer with no question on screen (macOS asks no more: a managed Mac, an older
+    /// macOS) opens the guide. Allowed, refused in the question, or Chrome didn't open: nothing more.
+    private func chromeAskedAgain(_ state:ChromeAccessState) {
+        chromeAskingAgain=false
+        if state == .askFailed {showChromeGuide()}
+    }
+    /// The fallback: System Settings at Privacy & Security › Automation with the guide beside it, and the recovery watch
+    /// (turning the switch on is picked up with no restart; the guide then shows a check and closes).
+    private func showChromeGuide() {
+        guard development == nil else {return}
+        RecordingLog.note("Ask again: macOS can't ask, the guide shows the switch.")
+        openChromeAutomationSettings()
+        chromeGuide.show()
+    }
+    /// A new answer from macOS (a read or the question). Refused to allowed: the recorder reads Chrome again now
+    /// (no restart), and the reminder, the guide and the recovery watch end.
+    private func chromeAccessAnswered(_ answer:ChromeAccessState,was:ChromeAccessState) {
+        let before=chromeLastAnswer
+        if before != answer {chromeLastAnswer=answer;ChromeAccessMemory.save(answer)}
+        guard answer == .allowed else {return}
+        chromeRecoveryWatch?.invalidate();chromeRecoveryWatch=nil;chromeRecoveryUntil=nil
+        chromeReminder.dismiss()
+        chromeGuide.done()
+        chromeResetFailed=false
+        if before != nil && before != .allowed {
+            RecordingLog.note("Chrome access turned on: Chrome pages are read again.")
+            capture?.pages.reset()
+            capture?.pages.trigger(.rerun)
+        }
+    }
+    /// Reads Chrome's status every 2 s (no question; Chrome must be running for macOS to answer) for up to 10 minutes,
+    /// or until it is allowed. Coming back to DayDream reads it too (the activation read).
+    private func watchChromeRecovery() {
+        guard development == nil,chromeAccess != .allowed else {return}
+        chromeRecoveryUntil=Date().addingTimeInterval(ChromeAccessMemory.recoveryWindow)
+        guard chromeRecoveryWatch == nil else {return}
+        chromeRecoveryWatch=Timer.scheduledTimer(withTimeInterval:ChromeAccessMemory.recoveryPeriod,repeats:true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else {return}
+                if self.chromeAccess == .allowed || (self.chromeRecoveryUntil.map {Date() > $0} ?? true) {
+                    self.chromeRecoveryWatch?.invalidate();self.chromeRecoveryWatch=nil;self.chromeRecoveryUntil=nil;return
+                }
+                self.rereadChromeAccessQuietly()
+            }
+        }
+    }
+    /// The recovery watch's read: Chrome's status only (no question, no spinner, no signature check), and a full
+    /// `checkChromeAccess` only once it changed, so a row showing "Chrome is off" never flickers while it waits.
+    private func rereadChromeAccessQuietly() {
+        let env=chromeAccessEnvironment
+        guard development == nil,!askingChromeAccess,let pid=env.running() else {return}
+        let shown=chromeLineAccess
+        env.background {
+            let state=ChromeAccessState.from(status:env.status(pid))
+            env.main { [weak self] in MainActor.assumeIsolated {
+                guard let self,!self.askingChromeAccess,state != .unknown,state != .chromeNotRunning else {return}
+                let mapped:ChromeAccessState=self.chromeAskFailed && (state == .notAsked || state == .denied) ? .askFailed : state
+                if mapped != shown {self.checkChromeAccess()}
+            } }
+        }
+    }
+    /// The access setup's and Settings' Chrome rows draw: macOS's last refusal or permission while Chrome is closed, a
+    /// read hasn't come back yet or one is running, so a refused row never turns back into "macOS will ask once" (macOS
+    /// won't) and never flickers while it is read again. A question in flight (`askingChromeAccess`) shows its spinner.
+    var chromeRowAccess:ChromeAccessState {
+        // Ask again clearing DayDream's answer: the question is on its way (the spinner, the drawing of the question).
+        if chromeResetting {return .checking}
+        switch chromeAccess {
+        case .chromeNotRunning,.unknown,.checking:
+            if !askingChromeAccess,!chromeOpeningForSetup,let answer=chromeLastAnswer,answer != .notAsked {return answer}
+            return chromeAccess
+        default: return chromeAccess
+        }
+    }
+    /// Google Chrome is running now (no prompt; the setup row says Allow opens it in the background otherwise).
+    var chromeRunning:Bool {chromeAccessEnvironment.running() != nil}
+    /// chromeask-1005: page history read Chrome in front while access is refused, after setup: one calm in-app line,
+    /// once ever, with Fix. Not while Chrome is excluded or Web pages in Chrome is off (nothing reads then).
+    private func remindChromeOff(_ state:ChromeAccessState) {
+        guard development == nil,state == .denied || state == .askFailed,browserPagesSaved,!chromeExcluded,
+              chromeAccessEnvironment.setupFinished(),!ChromeAccessMemory.reminded() else {return}
+        ChromeAccessMemory.markReminded()
+        RecordingLog.note("Chrome access is off: one reminder shown.")
+        chromeReminder.show { [weak self] in self?.fixChromeAccess() }
+    }
     /// Settings ▸ Diagnostics: "Web pages in Chrome". Never a page, a site or a window's mode.
     var chromePagesDiagnostics:String {ChromeAccessState.diagnostics(on:browserPagesSaved,access:chromeAccess,chromeExcluded:chromeExcluded)}
 
@@ -2882,6 +3112,7 @@ import WriterBackend
         actions.openApplications=openApplicationsAction
         actions.openSettingsSection={ [weak self] in self?.openSettings($0) }
         actions.retryIssue={ [weak self] in self?.retryIssue() }
+        actions.fixChrome={ [weak self] in self?.fixChromeAccess() }
         actions.openRecall={ [weak self] in
             guard let activity=self?.activity,activity.canSearch else {return}
             activity.recallPresented=true
@@ -2990,7 +3221,7 @@ import WriterBackend
         // The status line names the saved summary setting (Coordinator.label). The store is written in the
         // writer's didSet, after this publishes, so the refresh waits for the next main run loop turn.
         noteWriter.$provider.removeDuplicates().dropFirst().receive(on:RunLoop.main)
-            .sink { [weak self] _ in self?.refreshCaptureStatus() }
+            .sink { [weak self] _ in self?.coordinator?.summaryWriterChanged(); self?.refreshCaptureStatus() }
             .store(in:&sinks)
         $savedPrivacy.map(\.blockedApps).removeDuplicates()
             .sink { apps in
@@ -3088,7 +3319,7 @@ struct MemoryWindow: View {
         }
         .frame(width:geometry.size.width.isFinite ? max(560,geometry.size.width):560,
                height:geometry.size.height.isFinite ? max(340,geometry.size.height):340)
-        .onAppear {contentHeight=geometry.size.height}
+        .onAppear {contentHeight=geometry.size.height;LaunchTrace.mark("window.memory")}
         .onChange(of:geometry.size.height) {contentHeight=$0}
       }
       .frame(minWidth:560,maxWidth:.infinity,minHeight:340,maxHeight:.infinity)
@@ -3154,13 +3385,14 @@ extension MemoryViewModel {
         // Stop only while there is something to stop: Recording or Paused (a timed pause, a failed save's retries, a wait
         // for an import), never Off or Needs Permission. A history set aside at launch (G45) shows only with no blocker.
         let kind=recordingState.kind
-        var presentation=CapturePresentation(title:shortState,issue:shownIssue ?? shownBlocker ?? (resumeUnavailable == nil ? historySetAsideIssue : nil),
-                                             recording:recording,canResume:resumeUnavailable == nil,
+        var presentation=CapturePresentation(title:shortState,issue:shownIssue ?? presentedBlocker ?? (resumeUnavailable == nil ? historySetAsideIssue : nil),
+                                             recording:recording,canResume:resumeUnavailable == nil || permissionBlockerUnsettled,
                                              canStop:kind == .recording || kind == .paused)
         // Redesigned surfaces read the four-state model; legacy views keep reading the title above.
         presentation.state=recordingState
         presentation.permissions=permissionsCheckedAt == nil ? nil:permissionSnapshot
-        presentation.browserHistory=BrowserHistoryLine.make(recording:recording,pagesOn:browserPagesSaved,access:chromeAccessShown,chromeExcluded:chromeExcluded)
+        presentation.browserHistory=BrowserHistoryLine.make(recording:recording,pagesOn:browserPagesSaved,access:chromeLineAccess,chromeExcluded:chromeExcluded)
+        presentation.chromeAskAgain=ChromeAccessMemory.refused(chromeLineAccess)
         return presentation
     }
 }
@@ -3189,8 +3421,8 @@ struct ChromeAccessEnvironment {
     var ask:((pid_t)->OSStatus)?
     var background:(@escaping ()->Void)->Void
     var main:(@escaping ()->Void)->Void
-    /// Main thread: runs the closure once, the next time Google Chrome comes to the front (setup's ask while Chrome
-    /// isn't running, `askChromeAccessAfterSetup`). The checks stand in a fake; nothing asks from here.
+    /// Main thread: runs the closure once, the next time Google Chrome comes to the front (an upgrade's access read,
+    /// `checkChromeAccess`; never a question). The checks stand in a fake; nothing asks from here.
     var onNextChromeActivation:(@escaping ()->Void)->Void = {_ in}
     /// Any thread: seconds since boot, to tell an Allow… answered at once (no question shown) from one a person answered.
     var uptime:()->TimeInterval = {ProcessInfo.processInfo.systemUptime}
@@ -3199,6 +3431,14 @@ struct ChromeAccessEnvironment {
     /// Main thread: opens Google Chrome in the background for setup's Chrome step, then calls back on the main thread
     /// with whether it opened. Only `askChromeAccessInSetup` (the person's click) calls it. The checks stand in a fake.
     var openChrome:(@escaping (Bool)->Void)->Void = {$0(false)}
+    /// Main thread: opens Privacy & Security › Automation (`ChromeAccessState.systemSettingsURL`; opening it changes
+    /// nothing), only from a press (Open System Settings, Fix). The checks stand in a counter.
+    var openPane:()->Void = {}
+    /// Ask again: the running app's bundle id (`ChromeAutomationReset` resets only DayDream's own).
+    var ownBundleID:()->String? = {Bundle.main.bundleIdentifier}
+    /// Any thread: runs `/usr/bin/tccutil` with exactly `reset AppleEvents <DayDream's id>` and returns its exit status
+    /// (`ChromeAutomationReset.runLive` refuses anything else). The checks stand in a recorder; nothing resets there.
+    var resetAutomation:([String])->Int32 = {_ in -1}
     static var live:ChromeAccessEnvironment {
         ChromeAccessEnvironment(
             running:{ChromeEventSender.chosenProcess()},
@@ -3252,7 +3492,9 @@ struct ChromeAccessEnvironment {
                         settle(0)
                     }
                 }
-            })
+            },
+            openPane:{NSWorkspace.shared.open(ChromeAccessState.systemSettingsURL)},
+            resetAutomation:{ChromeAutomationReset.runLive($0)})
     }
 }
 /// The memory window's content for the launch session: "Getting ready…" while launch prepares the history, then the
@@ -3265,10 +3507,10 @@ struct DaydreamMainWindowContent: View {
         if session.signedWriterAcceptance {
             Text("Signed writer acceptance · Recording OFF").padding().task {await SignedWriterTrial.run()}
         } else if let model=session.model {MemoryWindow(model:model)} else if let failure=session.failure {Text(failure).padding()}
-        else if session.preparing {DaydreamPreparingWindow()} else {SyntheticWindow()}
+        else if session.preparing {DaydreamPreparingWindow().onAppear {session.windowShown()}} else {SyntheticWindow()}
         #else
         if let model=session.model {MemoryWindow(model:model)} else if let failure=session.failure {Text(failure).padding()}
-        else {DaydreamPreparingWindow()}
+        else {DaydreamPreparingWindow().onAppear {session.windowShown()}}
         #endif
     }
 }
@@ -3277,6 +3519,7 @@ struct DaydreamMainWindowContent: View {
 struct DaydreamPreparingWindow:View {
     var body:some View {
         VStack(spacing:12) { ProgressView(); Text(MenuBarMenu.preparingLine).font(.system(size:13)).foregroundStyle(.secondary) }
+            .onAppear {LaunchTrace.mark("window.preparing")}
             .accessibilityElement(children:.combine)
             .frame(minWidth:560,maxWidth:.infinity,minHeight:340,maxHeight:.infinity)
     }
@@ -3313,7 +3556,7 @@ struct DaydreamAppMenuBarPanel: View {
 }
 #if !DEVELOPMENT_SOURCE_CHECKS
 struct MacMemApplication: App {
-    @StateObject private var session = DaydreamLaunchSession()
+    @StateObject private var session = DaydreamLaunchSession(deferModel:ProcessInfo.processInfo.environment["DAYDREAM_LAUNCH_SYNC_MODEL"] != "1")
     #if DAYDREAM_QA_HARNESS && DAYDREAM_OWNER_TYPING
     @MainActor static func main() {
         if ChromeNormalMainProbeAdmission.requested(CommandLine.arguments) {
@@ -3347,7 +3590,9 @@ struct MacMemApplication: App {
         #endif
         Window("DayDream permissions",id:"permissions") {
             if let model=session.model {
-                PermissionRequestsHost(model:model) {DaydreamPermissionSettings(enabled:model.development == nil)}
+                PermissionRequestsHost(model:model) {
+                    DaydreamPermissionSettings(enabled:model.development == nil,known:model.permissionSnapshot,allowedBefore:model.permissionsAllowedBefore)
+                }
             } else {DaydreamPermissionSettings(enabled:false)}
         }.windowResizability(.contentSize)
             .commandsRemoved()

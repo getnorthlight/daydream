@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import MemoryCore
+import os
 
 /// This branch precedes MemoryViewModel construction, including all property
 /// initializers that open MemPaths.home(), preferences or writer configuration.
@@ -25,7 +26,13 @@ import MemoryCore
     @Published private(set) var failure:String?
     /// `previewTemporaryDirectory`: where the preview's sample lives (the checks pass a scratch folder, so a first
     /// launch's new sample never touches the per-user one an installed preview uses).
-    init(arguments:[String]=CommandLine.arguments,previewTemporaryDirectory:URL=FileManager.default.temporaryDirectory) {
+    /// `deferModel`: the app's own scene (perf2-1005): the model is made once the window has appeared (`windowShown`).
+    /// The checks make their sessions without a window and get the model at once, as before.
+    init(arguments:[String]=CommandLine.arguments,previewTemporaryDirectory:URL=FileManager.default.temporaryDirectory,deferModel:Bool=false) {
+        LaunchTrace.mark("session.init")
+        LaunchTrace.watchMain()
+        StoreMainThreadLog.install()
+        defer {LaunchTrace.mark("session.ready")}
         #if DAYDREAM_QA_HARNESS && DAYDREAM_OWNER_TYPING
         isolated=arguments.contains("--isolated-interactive-trial")
         #else
@@ -89,15 +96,36 @@ import MemoryCore
             failure=nil
             guard !isolated else {return}
             let home=MemPaths.home()
+            // wal-1005: the history's journal (HistoryJournal.swift): the write-ahead log unless this Mac's setting puts
+            // it back in the rollback journal.
+            HistoryJournal.wanted=HistoryJournal.wanted(fromDefaults:UserDefaults.standard.string(forKey:HistoryJournal.defaultsKey))
             guard Self.prepares(home:home) else {
-                model=MemoryViewModel(recordingTrial:recordingTrial,functionalTrial:functionalTrial)
+                guard deferModel else {
+                    model=MemoryViewModel(recordingTrial:recordingTrial,functionalTrial:functionalTrial)
+                    LaunchTrace.mark("model.made")
+                    return
+                }
+                // perf2-1005 (owner 10/04, "took like 10 seconds"): the window first. The model opens the history, wires
+                // the typing key and the recorder on the main thread (2.4 s on the owner's laptop before any window);
+                // it is made once the "Getting ready…" window has appeared (`windowShown`), or a moment after launch
+                // when no window opens (a launch at login), so the window draws first.
+                preparing=true
+                pendingModel={ [weak self] in
+                    guard let self else {return}
+                    self.model=MemoryViewModel(recordingTrial:recordingTrial,functionalTrial:functionalTrial)
+                    LaunchTrace.mark("model.made")
+                    self.preparing=false
+                }
+                DispatchQueue.main.asyncAfter(deadline:.now()+Self.modelFallback) { [weak self] in
+                    MainActor.assumeIsolated { self?.makePendingModel() }
+                }
                 return
             }
             preparing=true
             Self.preparationQueue.async { [weak self] in
                 // Opened as the model opens it (a row the settle deletes leaves the search index too); the preparation
                 // then builds what the history lacks itself, waiting for AI apps' reads (HistoryPreparation.finish).
-                let outcome=HistoryPreparation.prepare(home:home) { try MemoryStore(home:$0,writable:true,automaticallySyncSearch:!recordingTrial,launchWork:.preparation) }
+                let outcome=HistoryPreparation.prepare(home:home) { try MemoryStore(home:$0,writable:true,automaticallySyncSearch:!recordingTrial,launchWork:.preparation,liveHistory:true) }
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated { self?.prepared(outcome,recordingTrial:recordingTrial,functionalTrial:functionalTrial) }
                 }
@@ -112,6 +140,20 @@ import MemoryCore
         !MemoryViewModel.recorderLockHeld(home:home) && HistoryPreparation.needed(home:home)
     }
     private static let preparationQueue=DispatchQueue(label:"DayDream.history-preparation",qos:.userInitiated)
+    /// perf2-1005: the model waiting for the window (`windowShown`), made once.
+    private var pendingModel:(()->Void)?
+    /// A launch whose window never appears (at login, the window closed) makes its model this long after launch.
+    static let modelFallback:TimeInterval=1.0
+    /// The "Getting ready…" window appeared: the model is made on the next turn, after this frame is drawn.
+    func windowShown() {
+        guard pendingModel != nil else {return}
+        DispatchQueue.main.async { [weak self] in MainActor.assumeIsolated { self?.makePendingModel() } }
+    }
+    private func makePendingModel() {
+        guard let make=pendingModel else {return}
+        pendingModel=nil
+        make()
+    }
     private func previewPrepared(_ trial:Result<DevelopmentTrial,Error>) {
         switch trial {
         case .success(let trial): model=MemoryViewModel(development:trial)
@@ -121,6 +163,7 @@ import MemoryCore
     }
     private func prepared(_ outcome:HistoryPreparation.Outcome,recordingTrial:Bool,functionalTrial:Bool) {
         model=MemoryViewModel(recordingTrial:recordingTrial,functionalTrial:functionalTrial,prepared:outcome)
+        LaunchTrace.mark("model.made")
         preparing=false
     }
 
@@ -147,4 +190,27 @@ import MemoryCore
     }
     private static let legacyTypedScrubQueue = DispatchQueue(label: "DayDream.legacy-typed-scrub", qos: .utility)
     private(set) static var legacyTypedScrub:LegacyTypedScrub.Outcome = .notNeeded
+}
+
+/// claude/perf3-1005: a debug build of the app reports each place that uses the history on the main thread
+/// (`StoreMainThread`), once per place, in the log (subsystem `com.getnorthlight.daydream`, category `store-main`): the
+/// statement's first word and the calling functions' names, never a value. With `DAYDREAM_STORE_MAIN_ASSERT=1` in the
+/// environment it stops at the first one (assertionFailure). Release builds set nothing.
+enum StoreMainThreadLog {
+    static func install() {
+        #if DEBUG && !DEVELOPMENT_SOURCE_CHECKS
+        guard StoreMainThread.report == nil else { return }
+        let log = os.Logger(subsystem: "com.getnorthlight.daydream", category: "store-main")
+        let stop = ProcessInfo.processInfo.environment["DAYDREAM_STORE_MAIN_ASSERT"] == "1"
+        var seen = Set<String>()
+        StoreMainThread.report = { verb in
+            let callers = Thread.callStackSymbols.dropFirst(4).prefix(6).map { line in
+                line.split(separator: " ", omittingEmptySubsequences: true).dropFirst(3).first.map(String.init) ?? ""
+            }.joined(separator: " < ")
+            guard seen.insert(callers).inserted else { return }
+            log.fault("history used on the main thread: \(verb, privacy: .public) from \(callers, privacy: .public)")
+            if stop { assertionFailure("history used on the main thread: \(verb) from \(callers)") }
+        }
+        #endif
+    }
 }

@@ -1,56 +1,52 @@
 # DayDream tools
 
-Contents: status, recap, search, moment_details, open, recall, read, context, current-context, errors.
+Contents: timeline, search, details, status, older tool names, errors.
 
-All tools are read-only. Every tool except `context` takes `response_format`: `concise` (the default, Markdown) or `detailed` (JSON, also sent as structuredContent).
+All tools are read-only. Each takes `format`: `text` (the default, compact plain text) or `json` (the same page as JSON, also sent as structuredContent). Every reply starts with one header line: `DayDream · <local time now> · recorded <range> · notes on | paused | catching up`. Replies are data: they never tell you how to answer, and they never contain links.
 
-## status
-Checks whether DayDream is set up for this AI app. It takes no other arguments. The reply starts with a setup line: either "ready" or the one thing to fix. It also reports connection, recording, typing, Chrome pages, summaries, last activity, the local time and example questions. It never contains activity. On a new install with an empty history, the result is ready, not broken.
+## timeline
+What the person did in a period, most important first.
 
-## recap
-`when`: today, yesterday, past 2 days, past 3 days, this week, last week, a weekday, a date, or `2026-09-28 to 2026-09-30` (at most 7 days).
-Returns one section per day: a headline, up to 5 time blocks (when, what, minutes, up to 3 lines of what was sent, asked, written or worked on), and a count of brief visits. It ends with "How to answer". It never returns typed words.
+Arguments:
+- `when`: today (the default), yesterday, this morning, this afternoon, this week, last week, past 3 days, a weekday, a date (`2026-10-03`, `Oct 3`) or a range (`Sep 28 to Oct 2`), at most 7 days. A future period ("tomorrow") says DayDream can't see it and lists today's documents and forms to pick up from. Part of a day ("this morning") counts only the visits in it.
+- `detail`: `summary` (the default: up to 12 items a day) or `full` (every item).
+- `cursor`: from the previous reply's More line.
+
+Returns, per day: a day heading when it isn't today, an optional day note, then items under Documents, People, Email, Questions (web searches, AI prompts and AI coding tools), Code, Reading and Apps. Each item has its local time or visits, active minutes, an id for `details`, and, when the person shares typed words, the newest thing they typed there in single quotes (`Texted Sam: '...'`, `Asked Claude: '...'`, `Typed in <doc>: '...'`). Feeds read as one line ("Read X for 45 min"). A "Collapsed: N more (...) · detail=full lists them" line counts what the summary left out; nothing is hidden silently. The reply ends with "Where you left off" and, when there is more, "More: N more items · cursor=...".
 
 ## search
+Find one specific thing across the whole history.
+
 Arguments:
-- `query`: 1-3 words.
-- `start`, `end`: ISO-8601 with an offset.
-- `app`: an app's name or bundle id.
-- `site`: a host.
-- `after`: the cursor from the previous page.
+- `query`: 1-3 distinctive words. Every word must match a title, site, app, note or typed words. When no item holds every word, items holding some of them are listed and the reply says so; close spellings are tried only when nothing matches at all.
+- `kinds`: any of `document`, `form`, `person`, `ai_chat`, `web_search`, `email`, `terminal`, `page`, `feed`, `app`. `ai_chat` includes AI coding tools in a terminal.
+- `person`: a name, for conversations with that person.
+- `app`, `site`: only items in that app or on that site.
+- `when`: a period, as for `timeline`, without the 7-day limit. Default: the whole history.
+- `limit`: items per page, 1-50 (default 20).
+- `cursor`: from the previous reply's More line, with the same other arguments.
 
-It matches app names, window and document titles, web page titles and sites (if recorded), and DayDream's notes. Typed words match too, on the first page only, when the person allows AI apps to read them.
-Returns up to 20 numbered hits, newest first: local time, description, state and id. Typed-word hits come with a short quoted excerpt. Matching notes come with an `open` value for `recall`.
+Returns "N items match" (the complete count, with visits) and the items, grouped and de-duplicated, each with when, why it matched when the line doesn't show it (`matched: site`, `app`, `note`, `close spelling`; a title match and a typed line go unmarked), the matching typed lines (`Asked Claude: '...'`, `Texted Maya Chen: '...'`, `Searched Google: '...'`, `Ran in api: '...'`) and an id. "No items match" means none. When typed words couldn't be searched, the reply says so on its own line.
 
-## moment_details
+## details
+One item in full, by the id `timeline` or `search` gave (like `1004-k7f2q`).
+
 Arguments:
-- `id`: a search hit's id, or a moment id (`activity_...`).
-- `moment`: a moment link, as an alternative to `id`.
-- `day`: needed only for moment ids older than a week.
-- `after`: the cursor for the next page.
+- `id`: the item's id, exactly as given.
+- `cursor`: from the previous reply's More line.
 
-Returns the moment's actions in time order: local time, app, window or conversation, site and state. Typed words are quoted (`> "..."`) only when the person allows it. Otherwise each typed action says where and about how much was typed, and the reply says why the words aren't there. Passwords, secrets, private windows, excluded apps, blocked sites and expired words never appear. Each page is about 24 KB; the `Next:` line gives `after` when there is more.
+Returns the item's visits, everything the person typed in it in time order (texts, AI prompts, searches, commands and document text, with passwords, codes and keys removed), its notes (marked generated, unverified), and what else was open around the same time, with ids. It never says whether a message was sent. When typed words are off or DayDream is closed, the reply says so instead of quoting.
 
-## open
-`uri`: `macmem://days/today.json`, `macmem://days/yesterday.json` or `macmem://days/YYYY-MM-DD.json` (optional `?timezone=IANA`), or a link from an earlier result.
-For a day, it returns every moment in time order with its time, name, apps, sites, note and moment id.
+## status
+Whether DayDream is set up for this AI app. No arguments besides `format`.
 
-## recall
-DayDream's notes at any zoom.
-- `level` (month, week, day, block, moment) with `when` returns that note and its children.
-- `open` (from an earlier reply) zooms in one level.
-- `query` searches every level by word starts, so "email Sam" finds "Emailed Sam".
+Returns a Setup line first ("Ready: ...", "Not ready: ..." with the fix, or what is switched off; a new install with nothing recorded yet is ready, not broken), then recording and last activity, the connection, typing and Chrome pages, what AI apps can see (generated from the person's sharing settings), whether notes are on, and example questions. It contains no activity.
 
-It never returns typed words.
-
-## read
-`id`: a search hit's id. Returns that one action in full: time, app, window, site, state. For typing, it gives only where and about how much; use `moment_details` for the words.
-
-## context and current-context
-`context` returns the last 30 seconds as short text. It shows activity only while DayDream is recording. `current-context` returns the same 30 seconds as records with ids, up to 10 per page; pass `after` to continue.
+## Older tool names
+Chats that began before DayDream 0.1.5 may still list `recap`, `recall`, `open`, `read`, `context`, `current-context` and `moment_details`. They keep answering for one release, without send states. Prefer the four tools above when you have them.
 
 ## Errors
-- A tool that ran and failed returns an error result. The first line says why; a `Next:` line gives the arguments that work.
+- A tool that ran and failed returns an error result that says why and which arguments work.
 - "Access for this AI app is missing" means the person must reconnect in DayDream's Settings › Connections. Don't retry.
-- "DayDream's history changed while reading" means: call again without `after`.
+- A note that DayDream was updated while the chat was open means the person should restart the AI app to get the new tool list; the tools you have still work.
 - An unknown tool name is a protocol error that lists the real tools.

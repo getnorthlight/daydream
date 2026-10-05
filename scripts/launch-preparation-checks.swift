@@ -401,8 +401,9 @@ func mainKeepsTurning(during work: @escaping () -> Void, alongside: (() -> Void)
 
         // MARK: D. A usual launch.
         let usual = root.appendingPathComponent("usual")
-        // As the app leaves it after a launch (the owner build settles website typing rows once).
-        _ = try open(usual).settleWebsiteTypingRows(now: now)
+        // As the app leaves it after a launch (the owner build settles website typing rows once). wal-1005: the app makes
+        // its history in the write-ahead log (one in the rollback journal, as 0.1.4 left it, needs one preparation).
+        _ = try MemoryStore(home: usual, writable: true, automaticallySyncSearch: false, liveHistory: true).settleWebsiteTypingRows(now: now)
         t = wallNow()
         expect(!HistoryPreparation.needed(home: usual), "a sound history with its indexes: launch prepares it anyway")
         expect(!HistoryPreparation.needed(home: root.appendingPathComponent("none yet")), "no history yet: launch prepares it anyway")
@@ -429,11 +430,15 @@ func mainKeepsTurning(during work: @escaping () -> Void, alongside: (() -> Void)
             let settled = HistoryPreparation.prepare(home: usual) { try MemoryStore(home: $0, writable: true, automaticallySyncSearch: false, launchWork: .preparation) }
             let settleMs = ms(t)
             settleHolder.process.waitUntilExit()
-            expect(settleMs > 1600 && settled.complete && Raw(usual).count("SELECT count(*) FROM metadata WHERE id='\(MemoryStore.websiteSettleID)'") == 1
+            // wal-1005: `usual` is in WAL (as the app makes it), where a read never holds a commit up: the settle lands
+            // beside the read at once. In the rollback journal it waits for the read (> 1.6 s).
+            let wal = HistoryJournal.onDisk(usual.appendingPathComponent("memory.sqlite").path) == .wal
+            expect((wal || settleMs > 1600) && settled.complete && Raw(usual).count("SELECT count(*) FROM metadata WHERE id='\(MemoryStore.websiteSettleID)'") == 1
                    && !HistoryPreparation.needed(home: usual),
                    String(format: "owner build: a read held across the settle's commit: %@ after %.0f ms, settled %d", "\(settled)", settleMs,
                           Raw(usual).count("SELECT count(*) FROM metadata WHERE id='\(MemoryStore.websiteSettleID)'")))
-            pass(String(format: "owner build: …and it waits for a read another process holds across its commit (%.0f ms)", settleMs))
+            pass(String(format: wal ? "owner build: …and a read another process holds across its commit doesn't hold it up in WAL (%.0f ms)"
+                                    : "owner build: …and it waits for a read another process holds across its commit (%.0f ms)", settleMs))
         } else {
             expect(!HistoryPreparation.needed(home: usual), "public build: launch prepares for website typing rows it never keeps")
             pass("public build: no website typing rows to settle, nothing to prepare")

@@ -173,6 +173,10 @@ extension MemoryStore {
     ///   `typed_after(source:"key-lost")` stub; no new key is made;
     /// - ready: any row whose day key is missing or that fails to open becomes
     ///   a key-lost stub (counted, never logged).
+    /// perf2-1005: while typing, the typing key's Keychain item is read ahead off the main thread
+    /// (`TypedTextVault.prefetch`), so the seal at commit needn't read it there.
+    public func prefetchTypedKey() { attachedVault?.prefetch() }
+
     @discardableResult public func reconcileTypedVault(now: Date = Date()) throws -> TypedVaultState {
         lock.lock(); defer { lock.unlock() }
         guard let vault = attachedVault else { return .unavailable }
@@ -412,6 +416,13 @@ extension MemoryStore {
     }
 
     private func settleLegacyTypedText(seal: Bool, before: Date?, cutoff: Date?, now: Date) throws -> Int {
+        // perf2-1005 (owner 10/04, slow open): a history with no build 4 plain-text row (every history since) is found so
+        // with a read, not a write transaction: launch no longer waits on the main thread for another connection's lock
+        // (up to 1.5 s) to learn there is nothing to settle.
+        if try rows("SELECT 1 FROM records WHERE json_extract(body,'$.kind')='keyboard.text_input' AND coalesce(json_extract(body,'$.text'),'')<>'' AND json_extract(body,'$.typed') IS NULL LIMIT 1").isEmpty {
+            legacyTypedClear = true
+            return 0
+        }
         var scannedEmpty = false
         let changed = try transaction { () -> Int in
             let legacy = try rows("SELECT id,body FROM records WHERE json_extract(body,'$.kind')='keyboard.text_input' AND coalesce(json_extract(body,'$.text'),'')<>'' AND json_extract(body,'$.typed') IS NULL ORDER BY id")

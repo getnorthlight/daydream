@@ -4,7 +4,7 @@ import Foundation
 /// `open` handles each result gives (week -> day -> block -> moment -> lines), or search every level's notes with
 /// `query` (each hit says its level and time). Read only; the notes are model-written and unverified.
 extension MemoryStore {
-    public static let recallNote="DayDream's notes, written by a model from what was on screen and typed; they can be incomplete or wrong. Lines keep the notes' verbs: Asked, Emailed or Texted means DayDream saw the send key; Wrote or Drafted means it didn't."
+    public static let recallNote="DayDream's notes, written by a model from what was on screen and typed; they can be incomplete or wrong. Lines keep the notes' verbs: Asked, Emailed or Texted means DayDream saw the send key; Wrote or Typed means it didn't."
 
     public func assistantRecall(level:String?,when:String?,open:String?,query:String?,timezone:String?=nil,now:Date=Date()) throws -> String {
         let tz=timezone.flatMap { TimeZone(identifier:$0) != nil ? $0 : nil } ?? TimeZone.current.identifier
@@ -113,7 +113,7 @@ extension MemoryStore {
             node["level"]="moment"
             node["lines"]=try (m.generated?.output.bullets ?? []).map { b -> [String:Any] in
                 let first=try b.actionIDs.compactMap { try action($0,now:now)?.at }.min()
-                return ["level":"line","text":b.text,"when":first.map { AssistantView.when($0,zone:TimeZone(identifier:timezone) ?? .current) } ?? "","state":b.assertion]
+                return ["level":"line","text":DisplayWords.undraft(b.text),"when":first.map { AssistantView.when($0,zone:TimeZone(identifier:timezone) ?? .current) } ?? "","state":AssistantView.shownState(b.assertion)]
             }
             node["actions"]=ActionResources.activityURI(m.id,day:bits[1],timezone:timezone)
             return node
@@ -175,8 +175,9 @@ extension MemoryStore {
         var node:[String:Any]=["level":level.rawValue,"open":level.rawValue+":"+(level == .block ? (note?.id ?? "") : period)]
         guard let note else { node["when"]=period; node["written"]="not written yet"; return node }
         node["when"]=level == .block ? AssistantView.when(note.start,zone:TimeZone(identifier:timezone) ?? .current)+" to "+AssistantView.clock(note.end,zone:TimeZone(identifier:timezone) ?? .current) : Self.childLabel(note,timezone:timezone)
-        node["title"]=note.title
-        node["lines"]=note.lines.map(\.text)
+        // claude/dayeval-1005: never "draft" to an AI app.
+        node["title"]=DisplayWords.undraft(note.title)
+        node["lines"]=note.lines.map { DisplayWords.undraft($0.text) }
         // Threads (blocks and days): what each was about, who, and its focused minutes; the first is the main thread.
         if let threads=note.threads, !threads.isEmpty {
             node["threads"]=threads.prefix(8).map { t -> [String:Any] in
@@ -207,8 +208,8 @@ extension MemoryStore {
         var out:[String:Any]=["level":"now","when":AssistantView.when(first.start,zone:zone)+" to "+AssistantView.clock(last,zone:zone),
                               "about":main.label,"minutes":max(1,Int((Double(main.seconds)/60).rounded())),
                               "written":"by code from what is on screen; no note is written for this stretch yet"]
-        if let line=main.intent { out["line"]=line }
-        let side=LevelThreads.bullets(threads,max:LevelThreads.maxBullets(.block)).map(\.text)
+        if let line=main.intent { out["line"]=DisplayWords.undraft(line) }
+        let side=LevelThreads.bullets(threads,max:LevelThreads.maxBullets(.block)).map { DisplayWords.undraft($0.text) }
         if !side.isEmpty { out["lines"]=side }
         out["moments"]=open.suffix(8).map { momentSummary($0,day:day,timezone:timezone) }
         return out
@@ -220,7 +221,7 @@ extension MemoryStore {
         if let note=m.generated {
             // notes-quality: the sent or asked line first, never a line that says nothing.
             let lines=note.output.bullets.map(\.text)
-            out["title"]=note.output.title; out["preview"]=MomentGist.intent(lines) ?? lines.first { !Self.recallFiller($0) } ?? ""
+            out["title"]=DisplayWords.undraft(note.output.title); out["preview"]=DisplayWords.undraft(MomentGist.intent(lines) ?? lines.first { !Self.recallFiller($0) } ?? "")
         }
         else { out["title"]=m.subject; out["written"]="no note yet" }
         return out
@@ -327,7 +328,13 @@ extension MemoryStore {
             if level == "line" || (h["in"] != nil && level != "moment") { return 1 }
             return level == "moment" || level == "block" ? 2 : 3
         }
-        return hits.sorted { (tier($0.hit),$1.at) < (tier($1.hit),$0.at) }.prefix(limit).map(\.hit)
+        // claude/dayeval-1005: matched and ranked on the stored words, shown never saying "draft".
+        return hits.sorted { (tier($0.hit),$1.at) < (tier($1.hit),$0.at) }.prefix(limit).map { h in
+            var h=h.hit
+            for k in ["text","in"] { if let v=h[k] as? String { h[k]=DisplayWords.undraft(v) } }
+            if let v=h["state"] as? String { h["state"]=AssistantView.shownState(v) }
+            return h
+        }
     }
     /// notes-quality: lines that say nothing (the day card leaves them out too): "Had the inbox open.", "Wrote a message
     /// in Messages.", "Typed in Chrome.", "Used Slack.". Never served as a hit. fix/sx-all round 2: the one shared list

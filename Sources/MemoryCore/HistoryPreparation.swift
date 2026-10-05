@@ -47,6 +47,8 @@ public enum HistoryPreparation {
         var info = stat()
         // No history yet: the first open makes an empty one, indexes and all, at once.
         guard lstat(path, &info) == 0 else { return false }
+        // wal-1005: a history not yet in the journal the app keeps it in (HistoryJournal.swift) switches here, once.
+        if let journal = HistoryJournal.onDisk(path), journal != HistoryJournal.wanted { return true }
         var db: OpaquePointer?
         defer { sqlite3_close(db) }
         guard sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK else { return true }
@@ -99,19 +101,46 @@ public enum HistoryPreparation {
     /// read-only before this writer) is tried again after a pause. A read that held the history for the whole patience
     /// leaves the rest to the next launch; so does a build that can't be made (an unreadable row). True when all is done.
     static func finish(_ store: MemoryStore, patience: TimeInterval) -> Bool {
+        // wal-1005: first the journal (HistoryJournal.swift), so the builds below already let AI apps read beside them.
+        // It needs a moment with no other connection reading or saving: one that doesn't come within `switchPatience`
+        // leaves the history as it is (it works as before). When builds followed (they wait out the reads in their way),
+        // it is tried once more after them; otherwise the next launch tries again.
+        let journal = min(patience, HistoryJournal.switchPatience)
+        var switched = switchJournal(store, HistoryJournal.wanted, within: journal)
+        var built = false
         var complete = true
         for name in MemoryStore.preparationOrder where !store.hasTimeIndex(name) {
+            built = true
             switch patiently(store, patience, { try store.buildTimeIndex(name) }, done: { store.hasTimeIndex(name) }) {
             case .done: continue
             case .failed: complete = false
             case .held: return false
             }
         }
-        if MemoryStore.websiteRows != nil, !store.websiteRowsSettled(),
-           patiently(store, patience, { _ = try store.settleWebsiteTypingRows() }, done: { store.websiteRowsSettled() }) != .done {
-            complete = false
+        if MemoryStore.websiteRows != nil, !store.websiteRowsSettled() {
+            built = true
+            if patiently(store, patience, { _ = try store.settleWebsiteTypingRows() }, done: { store.websiteRowsSettled() }) != .done {
+                complete = false
+            }
         }
-        return complete
+        if !switched && built { switched = switchJournal(store, HistoryJournal.wanted, within: journal) }
+        return complete && switched
+    }
+    /// wal-1005: puts the history in `wanted` (`MemoryStore.useJournal`), trying every 10 ms for up to `patience`, each
+    /// try waiting at most a quarter second for other connections. A try that meets another connection's save fails at
+    /// once (SQLite doesn't wait there: the switch reads first), so it is tried again often rather than waited on: the
+    /// gap between two saves is short. true when the history is in `wanted`.
+    static func switchJournal(_ store: MemoryStore, _ wanted: HistoryJournal.Mode, within patience: TimeInterval) -> Bool {
+        if HistoryJournal.onDisk(store.file) == wanted { return true }
+        let end = Date().addingTimeInterval(patience)
+        repeat {
+            do {
+                if try store.waiting(max(0.01, min(end.timeIntervalSinceNow, 0.25)), { try store.useJournal(wanted) }) { return true }
+            } catch where CaptureFault.busy(error) {
+            } catch { return false }
+            usleep(10_000)
+        } while Date() < end
+        return HistoryJournal.onDisk(store.file) == wanted
     }
     /// `open`, tried again after a pause when it failed on a lock sooner than the patience (a reader in this process
     /// that opened read-only before this writer fails its first write at once: SQLITE_IOERR_LOCK), as `patiently` does.

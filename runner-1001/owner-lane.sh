@@ -17,7 +17,7 @@ OAPPFILES="$APPFILES Sources/MacMemApp/ChromeTypingWitness.swift"
 if [ -z "${OWNER_UI:-}" ]; then
   # claude/day-review-1003: the day review with Messages typing (texting-heavy day, a high-stakes text, quotes).
   if [ -f scripts/day-review-checks.swift ]; then
-    step compile-owner-day-review swiftc -parse-as-library "${OSW[@]}" -target arm64-apple-macosx14.0 -module-cache-path "$I/modcache" \
+    step compile-owner-day-review swiftc -parse-as-library "${OSW[@]}" -target arm64-apple-macosx15.0 -module-cache-path "$I/modcache" \
       -I "$OB/Modules" -I Sources/CSQLite -I WriterBackend/Sources/CLlamaBridge/include "${OLLAMA[@]}" \
       scripts/day-review-checks.swift "$OB"/WriterBackend.build/*.swift.o "$OB"/CLlamaBridge.build/WriterLlama.cpp.o \
       $(oobjs MemoryCore HistoryCore MemoryUI CoreIntegration PrivacyPolicy BrowserBridge) -lsqlite3 -lc++ -o "$OUT/owner-day-review"
@@ -30,6 +30,15 @@ if [ -z "${OWNER_UI:-}" ]; then
       scripts/search-results-ui-checks.swift $(oobjs MemoryCore HistoryCore PrivacyPolicy MemoryUI) -lsqlite3 -lc++ -o "$OUT/owner-search-results-ui"
     mkdir -p "$OUT/owner-search-results-ui-dd"
     step owner-search-results-ui env DD_CHECK_OUT="$OUT/owner-search-results-ui-dd" "$OUT/owner-search-results-ui"
+  fi
+  # claude/dayeval-1005: the synthetic-persona day review eval with the shipped flags.
+  if [ -f scripts/day-review-eval-checks.swift ]; then
+    step compile-owner-day-review-eval swiftc -parse-as-library "${OSW[@]}" -target arm64-apple-macosx15.0 -module-cache-path "$I/modcache" \
+      -I "$OB/Modules" -I Sources/CSQLite scripts/day-review-eval-checks.swift $(oobjs MemoryCore HistoryCore PrivacyPolicy) -lsqlite3 -o "$OUT/owner-day-review-eval"
+    mkdir -p "$OUT/owner-day-review-eval-root"
+    step owner-day-review-eval env DAY_REVIEW_ROOT="$OUT/owner-day-review-eval-root" DAY_REVIEW_EVAL_OUT="$OUT/owner-day-review-eval-cards" nice "$OUT/owner-day-review-eval"
+    step owner-day-review-eval-score python3 scripts/day-review-eval.py --cards "$OUT/owner-day-review-eval-cards/default" \
+      --refs "$OUT/owner-day-review-eval-cards/refs.json" --min 95 --require privacy=1 nofiller=0.9 order=1 texting=0.9 coverage=0.9
   fi
   # Store-level checks (typed vault, preferences, the setup typing choice, data home, controls).
   for pair in typed-store:typed-store preference-save:preference-save typing-choice:onboarding-typing-choice \
@@ -86,7 +95,7 @@ if [ -z "${OWNER_UI:-}" ]; then
   OWRITERSRC="Sources/MacMemApp/WriterIntegration.swift Sources/MacMemApp/WriterScheduling.swift Sources/MacMemApp/WriterPreferences.swift Sources/MacMemApp/LevelPower.swift adapters/CoreWriterBinding.swift adapters/LevelWriterBinding.swift"
   for name in writer-cadence writer-state writer-spin notes-writer; do
     [ -f scripts/$name-checks.swift ] || continue
-    step compile-owner-$name swiftc -parse-as-library "${OSW[@]}" -target arm64-apple-macosx13.0 -module-cache-path "$I/modcache" \
+    step compile-owner-$name swiftc -parse-as-library "${OSW[@]}" -target arm64-apple-macosx15.0 -module-cache-path "$I/modcache" \
       -I "$OB/Modules" -I Sources/CSQLite -I WriterBackend/Sources/CLlamaBridge/include "${OLLAMA[@]}" \
       $OWRITERSRC scripts/$name-checks.swift "$OB"/WriterBackend.build/*.swift.o "$OB"/CLlamaBridge.build/WriterLlama.cpp.o \
       $(oobjs MemoryCore HistoryCore MemoryUI CoreIntegration PrivacyPolicy BrowserBridge) -lsqlite3 -lc++ -o "$OUT/owner-$name"

@@ -138,24 +138,31 @@ public actor LevelWriterBinding {
         return written
     }
     private func clauseAttempts(_ request:DayReviewClauseRequest,generate:Generate,now:Date,rejections:inout [String]) async throws -> ClauseStep? {
-        var evidence=DayReviewClauses.evidence(request)
+        // claude/dayeval-1005: the writer on this Mac also reads the thread's typed prompts and document words; a cloud writer
+        // never does (its generator is "cloud/…"). The words live in this request only while it is written.
+        var request=request
+        if generator.hasPrefix("local/") {
+            let typed=try StoreWait.lettingMainIn { try store.reviewTypedFacts(request,writer:.local,now:now) }
+            if !typed.isEmpty { request.notes+=typed }
+        }
+        var evidence=DayReviewClauses.activeEvidence(request)
         for attempt in 0..<2 {
             try Task.checkCancellation()
             let raw:String
-            do { raw=try await generate(DayReviewClauses.instruction,evidence,DayReviewClauses.maxTokens,DayReviewClauses.prefill) }
+            do { raw=try await generate(DayReviewClauses.activeInstruction,evidence,DayReviewClauses.maxTokens,DayReviewClauses.prefill) }
             catch is CancellationError {throw CancellationError()} catch { throw ModelFailure(underlying:error) }
             // An answer that arrives after the writer was turned off is never saved.
             try Task.checkCancellation()
             do {
-                let text=try DayReviewClauses.validate(raw,request:request)
-                let clause=try StoreWait.lettingMainIn { try store.commitReviewClause(request,text:text,generator:DayReviewClauses.version,now:now) }
+                let text=try DayReviewClauses.activeValidate(raw,request:request)
+                let clause=try StoreWait.lettingMainIn { try store.commitReviewClause(request,text:text,generator:DayReviewClauses.activeVersion,now:now) }
                 return ClauseStep(clause:clause,source:attempt == 0 ? "model" : "repair",rejections:rejections)
             } catch let reject as DayReviewClauses.Reject {
                 rejections.append("clause: "+reject.reason)
-                evidence=DayReviewClauses.repair(request,previous:raw,problem:reject.reason)
+                evidence=DayReviewClauses.activeRepair(request,previous:raw,problem:reject.reason)
             } catch MemError.invalid(let message) where message.contains("copy") || message.contains("typed") {
                 rejections.append("core: "+message)
-                evidence=DayReviewClauses.repair(request,previous:raw,problem:"Say it in your own words.")
+                evidence=DayReviewClauses.activeRepair(request,previous:raw,problem:"Say it in your own words.")
             }
         }
         return nil

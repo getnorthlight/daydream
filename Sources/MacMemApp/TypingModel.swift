@@ -113,31 +113,82 @@ import PrivacyPolicy
         // Runs on every recording heartbeat: a published value is written only when it changed (each write redraws
         // every view watching typing, the menu bar dot included).
         guard let store else { if indicator != .off { indicator = .off }; return }
-        var vault = store.typedVaultState
+        apply(Self.read(store: store, frontmostBundle: frontmostBundle, keyPanel: keyPanel, now: now(), retryLocked: lockedRetryDue()))
+    }
+    /// claude/perf3-1005: the heartbeat's typing refresh, read off the main thread (on `Coordinator.beatQueue`, with
+    /// the heartbeat; `reads` is what that queue runs) and handled on the main thread (what `reads` returns), the
+    /// same reads and the same handling as `refresh(frontmostBundle:)`. Called on the main thread.
+    func beatReads() -> (() -> (() -> Void))? {
+        guard let store else { return nil }
+        // The key panel is read here: the system's key focus is read on the main thread only (NativeTypingRoute).
+        let front = frontmostBundle(), panel = keyPanel(), clock = now, retry = lockedRetryDue()
+        return { [weak self] in
+            let reading = Self.read(store: store, frontmostBundle: front, keyPanel: { panel }, now: clock(), retryLocked: retry)
+            return {
+                MainActor.assumeIsolated {
+                    guard let self, self.store === store else { return }
+                    self.lastFront = front
+                    self.apply(reading)
+                    // Only for the status refresh that follows in this turn (`onStateChanged`).
+                    self.beatApplied = true
+                    DispatchQueue.main.async { [weak self] in MainActor.assumeIsolated { self?.beatApplied = false } }
+                }
+            }
+        }
+    }
+    /// The heartbeat just refreshed this model (`beatReads`): the status refresh that follows it doesn't read again.
+    /// Reading it clears it.
+    func takeBeatRefresh() -> Bool { defer { beatApplied = false }; return beatApplied }
+    private var beatApplied = false
+    private func lockedRetryDue() -> Bool {
+        lastUnlockRetry.map { now().timeIntervalSince($0) >= Self.unlockRetrySeconds || now() < $0 } ?? true
+    }
+    /// What one refresh read: each value up to the first read given up because another connection held the history a
+    /// moment (`heldUp`; gold r3-store, on a thread inside `StoreWait.bounded`).
+    struct Reading {
+        var vault: TypedVaultState
+        var retriedLocked = false
+        var policy: TypedTextPolicy?
+        var keyLost: Bool?
+        var target = ""
+        var indicator: TypingIndicatorState?
+        var heldUp = false
+    }
+    /// The reads, on any thread (the store serializes them).
+    nonisolated static func read(store: MemoryStore, frontmostBundle: String, keyPanel: () -> String?, now: Date, retryLocked: Bool) -> Reading {
+        var reading = Reading(vault: store.typedVaultState)
         // A locked Keychain is read again now and then (app activation calls
         // this), so typing resumes after an unlock without a relaunch.
-        if vault == .locked, lastUnlockRetry.map({ now().timeIntervalSince($0) >= Self.unlockRetrySeconds || now() < $0 }) ?? true {
-            lastUnlockRetry = now()
-            _ = try? store.retryLockedTypedVault(now: now())
-            vault = store.typedVaultState
+        if reading.vault == .locked, retryLocked {
+            reading.retriedLocked = true
+            _ = try? store.retryLockedTypedVault(now: now)
+            reading.vault = store.typedVaultState
         }
-        if self.vault != vault { self.vault = vault }
         // Unreadable settings show nothing rather than a guess. gold r3-store: except when another connection held
-        // the history a moment (the main thread's wait is bounded, `StoreWait.heldUpNow`): what shows stays
-        // as last read, and the next heartbeat reads again (the pause chord isn't let go for a moment's busy file).
+        // the history a moment (the wait is bounded, `StoreWait.heldUpNow`): what shows stays as last read, and the
+        // next heartbeat reads again (the pause chord isn't let go for a moment's busy file).
         let policyRead = Result { try store.typedTextPolicy() }
-        if case .failure = policyRead, StoreWait.heldUpNow { readAgainAfterHold(); return }
-        let policy = (try? policyRead.get()) ?? TypedTextPolicy()
-        if self.policy != policy { self.policy = policy }
+        if case .failure = policyRead, StoreWait.heldUpNow { reading.heldUp = true; return reading }
+        reading.policy = (try? policyRead.get()) ?? TypedTextPolicy()
         let keyLostRead = Result { try store.typedKeyLostNotice() }
-        if case .failure = keyLostRead, StoreWait.heldUpNow { readAgainAfterHold(); return }
-        let keyLost = (try? keyLostRead.get()) ?? false
+        if case .failure = keyLostRead, StoreWait.heldUpNow { reading.heldUp = true; return reading }
+        reading.keyLost = (try? keyLostRead.get()) ?? false
+        reading.target = keyPanel() ?? frontmostBundle
+        let indicatorRead = Result { try store.typingIndicator(frontmostBundle: reading.target, now: now) }
+        if case .failure = indicatorRead, StoreWait.heldUpNow { reading.heldUp = true; return reading }
+        reading.indicator = (try? indicatorRead.get()) ?? .off
+        return reading
+    }
+    /// What a refresh read, shown: a published value is written only when it changed.
+    private func apply(_ reading: Reading) {
+        if reading.retriedLocked { lastUnlockRetry = now() }
+        if vault != reading.vault { vault = reading.vault }
+        guard let policy = reading.policy else { readAgainAfterHold(); return }
+        if self.policy != policy { self.policy = policy }
+        guard let keyLost = reading.keyLost else { readAgainAfterHold(); return }
         if self.keyLost != keyLost { self.keyLost = keyLost }
-        let target = keyPanel() ?? frontmostBundle
-        judgedBundle = target
-        let indicatorRead = Result { try store.typingIndicator(frontmostBundle: target, now: now()) }
-        if case .failure = indicatorRead, StoreWait.heldUpNow { readAgainAfterHold(); return }
-        let indicator = (try? indicatorRead.get()) ?? .off
+        judgedBundle = reading.target
+        guard let indicator = reading.indicator else { readAgainAfterHold(); return }
         if self.indicator != indicator { self.indicator = indicator }
         syncHotkey()
         scheduleEndOfPause()

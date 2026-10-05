@@ -41,7 +41,9 @@ import functional_payload  # noqa: E402
 import writer_payload  # noqa: E402
 
 SHA1 = 'A' * 40
-MACHO = bytes.fromhex('cffaedfe') + (0x0100000C).to_bytes(4, 'little') + bytes(24)
+# A thin arm64 Mach-O header with one LC_BUILD_VERSION (macOS, minos 15.0): what release.platform_problems needs.
+MACHO = (struct.pack('<8I', 0xfeedfacf, 0x0100000C, 0, 2, 1, 24, 0, 0)
+         + struct.pack('<6I', 0x32, 24, 1, 0x000F0000, 0x000F0000, 0))
 
 ADHOC_HELPER = """Executable=/x/DayDream.app/Contents/MacOS/mac-mem
 Identifier=com.getnorthlight.daydream.mac-mem
@@ -770,6 +772,7 @@ def fixture_repo(folder, public_key=FIXTURE_KEY, writer=None):
     (`writer`: writer_files(...), default a good signed set)."""
     root = Path(folder) / 'repo'
     files = {'packaging/Info.plist': (dr.ROOT / 'packaging/Info.plist').read_bytes(),
+             'Package.swift': (dr.ROOT / 'Package.swift').read_bytes(),  # its macOS 15 floor (release.package_platform_problems)
              'packaging/updates.json': json.dumps({**FIXTURE_UPDATES, 'public_key': public_key}).encode(),
              'packaging/Daydream.icns': b'icns-fixture', 'LICENSE': b'MIT fixture\n', 'NOTICE': b'notice fixture\n',
              'THIRD-PARTY-NOTICES.md': b'third-party fixture\n', 'WriterBackend/Notices/llama-MIT.txt': b'mit fixture\n',
@@ -848,6 +851,29 @@ class StageFromCommit(SignedRuntimeFixture, unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             dr.cmd_stage(args, runner=runner, root=self.repo, builder=self.builder)
         return runner
+
+    def test_stage_refuses_anything_but_macos_15_on_apple_silicon(self):
+        """claude/crashguard-015: 0.1.5 is macOS 15.0+ on Apple silicon only (0.1.4 crashed on macOS 15)."""
+        with self.assertRaisesRegex(dr.ReleaseError, 'LSMinimumSystemVersion must be 15.0'):
+            self.stage('--min-macos', '14.0', out='out-14')
+        x86 = struct.pack('<8I', 0xfeedfacf, 0x01000007, 3, 2, 1, 24, 0, 0) + MACHO[32:]
+        # A universal (arm64 + x86_64) binary passes the build's "has arm64" check; release refuses it.
+        fat = struct.pack('>2I', 0xcafebabe, 2) + struct.pack('>5I', 0x0100000C, 0, 4096, len(MACHO), 12) + struct.pack('>5I', 0x01000007, 3, 8192, len(x86), 12)
+        fat = fat + bytes(4096 - len(fat)) + MACHO + bytes(4096 - len(MACHO)) + x86
+        old = struct.pack('<8I', 0xfeedfacf, 0x0100000C, 0, 2, 1, 24, 0, 0) + struct.pack('<6I', 0x32, 24, 1, 0x000E0000, 0x000F0000, 0)
+        for header, message in ((fat, 'mac-mem must be arm64 only'), (old, 'mac-mem must be built for macOS 15.0')):
+            original = MACHO
+            try:
+                globals()['MACHO'] = header
+                with self.subTest(message=message), self.assertRaisesRegex(dr.ReleaseError, message):
+                    self.stage(out='out-' + message.split()[-1])
+            finally:
+                globals()['MACHO'] = original
+        # Package.swift's floor comes from the exported commit.
+        (self.repo / 'Package.swift').write_text((self.repo / 'Package.swift').read_text().replace('.macOS("15.0")', '.macOS("14.0")').replace('.macOS(.v15)', '.macOS(.v14)'))
+        git(self.repo, 'commit', '-q', '-am', 'macOS 14')
+        with self.assertRaisesRegex(dr.ReleaseError, 'Package.swift must declare platforms'):
+            self.stage(out='out-package')
 
     def test_stage_ships_memory_ui_resources(self):
         self.stage()

@@ -420,7 +420,10 @@ extension MemoryStore {
     /// waits for a summarizer and never needs the network. Processes without
     /// a key still delete words (with stubs); the key drop then waits for the app.
     @discardableResult public func expireTypedText(now wall: Date = Date()) throws -> TypedExpiryReport {
-        try expireTypedTextImplementation(now:wall,preservingNarrative:false)
+        let report = try expireTypedTextImplementation(now:wall,preservingNarrative:false)
+        // wal-1005: no expired ciphertext stays in the write-ahead log either (HistoryJournal.swift).
+        if report.expired > 0 || report.orphans > 0 || !report.droppedKeys.isEmpty { foldRemoved() }
+        return report
     }
     @discardableResult func expireTypedTextForSummaryMaintenance(now wall:Date) throws -> TypedExpiryReport {
         try observingTypedNarrativeMaintenance(now:wall) {try expireTypedTextImplementation(now:wall,preservingNarrative:true)}

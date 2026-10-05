@@ -1208,6 +1208,8 @@ def cmd_stage(args, runner=None, root=ROOT, builder=build_products, sparkle_dir=
     release.manifest(target, source_commit=commit)
     release.audit(target)
     problems = info_problems(info, writer_id, args.updates, chrome_pages, update_data) + lint_binaries(target, runner) + xattr_problems(target, runner)
+    # claude/crashguard-015: macOS 15.0 in Info.plist and Package.swift, arm64-only Swift products built for 15.0.
+    problems += release.package_platform_problems(source) + release.platform_problems(target)
     problems += qa_harness_problems(info, (contents / 'MacOS/MacMem').read_bytes(), qa_harness)
     problems += icon_problems(info, (resources / 'Daydream.icns').read_bytes(), source)
     if not qa_harness:

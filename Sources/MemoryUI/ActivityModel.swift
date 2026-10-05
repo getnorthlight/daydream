@@ -337,7 +337,8 @@ public enum ActivityWords {
             } else if ["selection.changed", "terminal.value_changed"].contains(e.kind), !text.isEmpty {
                 fact = "Text on screen in \(e.app): \(text.prefixString(160))."
             } else if !text.isEmpty {
-                fact = "A draft in \(e.app): \(text.prefixString(160))."
+                // Never "draft" (owner 10/05; most of them were sent): the words were typed, which is all that is known.
+                fact = "Typed in \(e.app): \(text.prefixString(160))."
             } else {
                 fact = "Had \(e.title.isEmpty ? "a window" : e.title) open in \(e.app)."
             }

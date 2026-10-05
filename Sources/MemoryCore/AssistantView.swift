@@ -109,13 +109,14 @@ public enum AssistantView {
             case "reported": return "\(app) reported (not verified): “\(text)”"
             case "planned": return "Stated a plan in \(app): “\(text)”"
             case "requested": return "Asked \(app): “\(text)”"
-            case "drafted_request": return "Drafted a request in \(app): “\(text)”"
+            case "drafted_request": return "Wrote a request in \(app): “\(text)”"
             case "typed": return "Typed in \(app): “\(text)”"
             case "viewed_search": return "Search results for “\(text)”"
             default: break
             }
         }
-        return plain(a.description)
+        // claude/dayeval-1005 (owner 10/05): never "draft" to an AI app either; matched above on the stored words.
+        return DisplayWords.undraft(plain(a.description))
     }
     /// The canonical action behind a stored memory item, with its correction.
     static func action(_ item:MemoryItem) -> CanonicalAction {
@@ -151,10 +152,18 @@ public enum AssistantView {
         if object["evidenceIDs"] != nil, object["kind"] is String, object["description"] is String, let at=object["at"] as? String,
            let data=try? JSONSerialization.data(withJSONObject:object), let action=try? JSONDecoder().decode(CanonicalAction.self,from:data) {
             result["when"]=when(at,zone:zone); result["snippet"]=line(action,typed:action.kind == "keyboard.text_input" ? typed?(action.id) : nil)
+            // claude/dayeval-1005 (owner 10/05): never "draft" to an AI app, in the fields kept as stored too.
+            for key in ["description","observedDescription"] { if let v=object[key] as? String { result[key]=DisplayWords.undraft(v) } }
+            for key in ["state","observedState"] { if let v=object[key] as? String { result[key]=shownState(v) } }
             if slim {
                 for key in actionInternals { result[key]=nil }
                 result["app"]=AppNames.display(app:action.app,bundle:action.bundle)
             }
+        } else if let text=object["text"] as? String, let assertion=object["assertion"] as? String {
+            // A stored note's bullet: its words and its label as AI apps read them.
+            result["text"]=DisplayWords.undraft(text); result["assertion"]=shownState(assertion)
+        } else if let title=object["title"] as? String, object["bullets"] is [Any], object["generator"] is String {
+            result["title"]=DisplayWords.undraft(title)
         } else if slim, object["inputRevision"] != nil, object["status"] is String {
             // An activity (moment) or a day summary.
             if let generated=object["generated"] as? [String:Any], let data=try? JSONSerialization.data(withJSONObject:generated),
@@ -212,21 +221,24 @@ public enum AssistantView {
         // levels) never left the Mac; before, it was reported as a cloud model's.
         generator.hasPrefix("local/") ? "the local model on this Mac" : generator.isEmpty || generator.hasPrefix("code/") ? "DayDream on this Mac" : "a cloud model through OpenRouter (the model host is asked not to keep the activity)"
     }
+    /// claude/dayeval-1005 (owner 10/05: never "draft" to an AI app; most of them were sent): an action's state as AI apps
+    /// read it. "draft" and "drafted_request" are "typed": the words were typed and no send key was seen.
+    public static func shownState(_ state:String) -> String { ["draft","drafted_request"].contains(state) ? "typed" : state }
     static let generic:Set<String>=["activity note","day summary"]
     public static func note(_ generated:GeneratedNote?) -> AssistantNote? {
         guard let output=generated?.output else { return nil }
         let points=output.bullets.prefix(5).compactMap { bullet -> String? in
-            let text=bullet.text.trimmingCharacters(in:.whitespacesAndNewlines)
+            let text=DisplayWords.undraft(bullet.text.trimmingCharacters(in:.whitespacesAndNewlines))
             guard !text.isEmpty else { return nil }
-            // The client's model sees labels, not action states: say which points are someone's claim or an unsent draft.
+            // The client's model sees labels, not action states: say which points are someone's claim. claude/dayeval-1005
+            // (owner 10/05): never "draft" (most of them were sent): the point says "Wrote"/"Typed" itself.
             switch bullet.assertion {
             case "interpretation": return "(interpretation) "+text
             case "reported": return "(reported) "+text
-            case "draft": return "(draft) "+text
             default: return text
             }
         }
-        let title=output.title.trimmingCharacters(in:.whitespacesAndNewlines)
+        let title=DisplayWords.undraft(output.title.trimmingCharacters(in:.whitespacesAndNewlines))
         guard !points.isEmpty || !title.isEmpty else { return nil }
         return AssistantNote(title:title.isEmpty || generic.contains(title.lowercased()) ? nil : title,points:points)
     }
@@ -401,7 +413,7 @@ extension MemoryStore {
         guard let item=try read(id,now:now), try action(id,now:now) != nil else { return nil }
         let zone=TimeZone.current, e=item.evidence, action=AssistantView.action(item)
         var result=["id":id,"at":e.at,"when":AssistantView.when(e.at,zone:zone,seconds:true),
-                    "app":AppNames.display(app:e.app,bundle:e.bundle),"snippet":AssistantView.line(action,typed:try typedStatuses([id],now:now)[id]),"state":action.state]
+                    "app":AppNames.display(app:e.app,bundle:e.bundle),"snippet":AssistantView.line(action,typed:try typedStatuses([id],now:now)[id]),"state":AssistantView.shownState(action.state)]
         if !e.title.isEmpty { result["title"]=e.title }
         if let host=URL(string:e.url)?.host, !host.isEmpty { result["site"]=host }
         if e.kind == "keyboard.text_input" {

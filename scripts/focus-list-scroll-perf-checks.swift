@@ -318,7 +318,8 @@ final class PerfWindow: NSWindow {
         window.setContentSize(size)
         window.contentView = host
         host.frame = NSRect(origin: .zero, size: size)
-        let loaded = wait(20) { probe.rowFrames.count >= 100 }
+        // perf2-1005: the rows are lazy; only the cards near the visible area lay out (every row did before).
+        let loaded = wait(20) { browser.today.snapshot != nil && probe.rowFrames.count >= 8 }
         check(loaded, "hosted: today's rows lay out", "\(probe.rowFrames.count) rows")
         // fix/prompt-row: the asks land on their rows (off the main thread), cut to one line.
         let asked = wait(20) { (browser.today.snapshot?.moments.filter { $0.prompt != nil }.count ?? 0) >= 5 }
@@ -369,10 +370,11 @@ final class PerfWindow: NSWindow {
 
         // The same sweep with the pointer resting mid-list: each frame the row now under it takes the hover.
         guard let point = probe.point else { check(false, "hosted: the probe's pointer hook"); exit(1) }
-        let rows = probe.rowFrames, pointerY = scroll.contentView.bounds.height / 2
+        let pointerY = scroll.contentView.bounds.height / 2
         var lit = Set<String>()
         let pointed = sweep(host, scroll) { y in
-            let id = rows.first { $0.value.minY <= y + pointerY && y + pointerY < $0.value.maxY }?.key
+            // The rows laid out now (lazy rows: the ones near the visible area).
+            let id = probe.rowFrames.first { $0.value.minY <= y + pointerY && y + pointerY < $0.value.maxY }?.key
             if let id { lit.insert(id) }
             point(id, false)
         }

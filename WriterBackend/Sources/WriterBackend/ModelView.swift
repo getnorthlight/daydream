@@ -477,14 +477,14 @@ public struct ModelItem: Sendable {
         if !unsent.isEmpty { b += "; then typed " + ModelView.joinAnd(unsent.map { ModelView.shown($0, ModelView.quoteChars).text }) + " with no send seen" }
         if !leadPhrases().isEmpty { b += ". Start with: " + leadPhrases().joined(separator: ", ") }
         else if surface() == "social", let a = answered(), compose() != "posted" {
-            let what = compose() == "quoted" ? "Drafted a quote of " : compose() == "commented" && community() != nil ? "Drafted a comment on " : "Drafted a reply to "
+            let what = compose() == "quoted" ? "Wrote a quote of " : compose() == "commented" && community() != nil ? "Wrote a comment on " : "Wrote a reply to "
             b += ". Start with: " + what + a + (who().isEmpty || (compose() == "commented" && community() != nil) ? "" : " on " + who())
         }
         else if surface() == "social" { b += ". Start with: Wrote a post" + (who().isEmpty ? "" : " on " + who()) }
         else if !who().isEmpty, let s = surface(), ["email", "text", "chat"].contains(s) {
             // notes-quality: a draft still names who: "Drafted an email to Sam", "Drafted a text to Q7".
             let w = who(), to = s == "email" && addressee().isEmpty ? " about " : channel().isEmpty ? " to " : " in "
-            b += ". Start with: " + (s == "email" ? "Drafted an email" : s == "text" ? "Drafted a text" : "Drafted a message") + to + w
+            b += ". Start with: " + (s == "email" ? "Wrote an email" : s == "text" ? "Wrote a text" : "Wrote a message") + to + w
         }
         return b
     }

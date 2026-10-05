@@ -1,6 +1,6 @@
 # Summaries
 
-DayDream can write a short note about a moment (a group of related actions) or a whole day. This page explains when that happens, what the writer sees, how its answer is checked, and how the cloud and local options work. It describes the current code: the writer versions `deepseek-v4-flash-0731-zdr-prompt20-validator26` (cloud) and `qwen35-4b-q4-b9723-prompt21-validator32` (on this Mac), and `code-moment8-validator14` for notes written by code with no model.
+DayDream can write a short note about a moment (a group of related actions) or a whole day. This page explains when that happens, what the writer sees, how its answer is checked, and how the cloud and local options work. It describes the current code: the writer versions `deepseek-v4-flash-0731-zdr-prompt21-validator27` (cloud) and `qwen35-4b-q4-b9723-prompt22-validator33` (on this Mac), and `code-moment9-validator15` for notes written by code with no model.
 
 The code lives in the `WriterBackend/` package: the view and the checks are in `ModelView.swift` and `CanonicalNotes.swift`. The app side is in `Sources/MacMemApp/WriterIntegration.swift` and `Sources/MacMemApp/WriterScheduling.swift`, and notes are stored by `Sources/MemoryCore/DerivedNotes.swift`.
 
@@ -37,7 +37,7 @@ Waiting work is listed in `WriterScheduling/pending-v1.json` in the data folder.
 
 **Terminals and AI coding tools.** A line typed in a terminal (Terminal, Ghostty, iTerm2 and others) whose window shows an AI coding tool (Claude Code, Codex, Gemini CLI, Aider: from the window title, such as Claude Code's "✳" title, or from a line that started the tool) is a prompt to that tool, so its line reads "Asked Claude Code to ..." or "Told Claude Code ...", one per distinct request, giving its gist. Other lines run with Return are shell commands, which code says by what they were for in one line ("Entered commands to build the Swift package and run the Swift tests in harborline"), never "Wrote code in Ghostty". Entering a command shows it was run, not its result.
 
-**One summary, no filler.** Wherever a moment's lines are shown (its card, a card that joins several moments of one app, and recaps for AI apps), code's place-only lines ("Typed a draft in Ghostty.", "Used the send key in Ghostty.", "Wrote code in Ghostty.", "Pressed Return") appear only when no line says more, each line appears once (a line that only repeats the start of a fuller one is left out), and a card shows at most about 4 lines, the most informative. The saved note keeps every line and the actions each cites.
+**One summary, no filler.** Wherever a moment's lines are shown (its card, a card that joins several moments of one app, and recaps for AI apps), code's place-only lines ("Typed in Ghostty.", "Used the send key in Ghostty.", "Wrote code in Ghostty.", "Pressed Return") appear only when no line says more, each line appears once (a line that only repeats the start of a fuller one is left out), and a card shows at most about 4 lines, the most informative. The saved note keeps every line and the actions each cites.
 
 For local AI tools and terminals, independently filtered captured requests are grouped into a contiguous session so the summary can describe what you asked. The cloud view retains separate typed items. Every original action remains in What happened, before and after a summary arrives. Stand-in summaries show at most five newest distinct excerpts from permitted local source; secrets and one-time codes remain withheld.
 
@@ -51,7 +51,7 @@ i2. Numbers: typed "move 200 from dining out to savings" in "Budget — househol
 i3. Claude: typed text (not captured) in "Launch plan" over about 2 minutes
 ```
 
-**Messages.** Texts you send in one Messages conversation are one item, the texts in order, so the note says it in one bullet: "Texted Sam that you and friends are going to ZUX tomorrow and asked if they want to meet there." A text that was saved in pieces (a pause or a switch mid-word) reads joined, as you typed it. The conversation is the name Messages shows in its window; with no name read, the bullet says "Texted someone ...", never "unknown", and a text with no name is never put with another conversation. A draft you leave in a conversation after sending is mentioned at most in that bullet, never as its own "Typed a draft" line. The person you texted is called by name or "they", never "he" or "she", and "you" in that bullet means you.
+**Messages.** Texts you send in one Messages conversation are one item, the texts in order, so the note says it in one bullet: "Texted Sam that you and friends are going to ZUX tomorrow and asked if they want to meet there." A text that was saved in pieces (a pause or a switch mid-word) reads joined, as you typed it. The conversation is the name Messages shows in its window; with no name read, the bullet says "Texted someone ...", never "unknown", and a text with no name is never put with another conversation. Words you type and leave in a conversation after sending are mentioned at most in that bullet, never as its own "Typed a draft" line. The person you texted is called by name or "they", never "he" or "she", and "you" in that bullet means you.
 
 **Replies and comments.** A reply, quote or comment says what it answered, from the page DayDream read when you sent it (its author and the start of the post, never your words): "Replied to Ada's post about small tools beating big frameworks, saying it'll help with weekend projects." Viewing that post gets no line of its own. A reply you leave unsent is "Drafted a reply to Ada's post on X"; a Reddit comment is "Commented on r/swift".
 
@@ -83,7 +83,7 @@ The model answers with one JSON object:
 
 A moment gets 1 to 3 bullets and a day 2 to 5; the writer is asked for 1 or 2 for a moment. Each bullet is one sentence of at most 240 characters. The title is at most 60 characters.
 
-The checks (validator14) throw the answer away when a bullet:
+The checks (validator15) throw the answer away when a bullet:
 
 - cites an item that isn't in the list, has no items, or repeats or nearly repeats another bullet;
 - says something was sent, emailed, messaged, replied or delivered, unless an item shows the app confirmed it was sent;
@@ -103,11 +103,11 @@ Each rejection comes with a fixed reason. The reason never quotes your history, 
 
 **Every item is covered.** Items the model left out that were only open are added by code. Typed text, sent messages, reports, notes, requests and plans must be in a bullet; an answer that leaves one out is thrown away.
 
-**Salvage.** When an answer still fails, DayDream keeps every bullet that passes, and writes up to three plain bullets in code for what's left, such as "Drafted an email to Sam." or "Messaged #eng.": who it went to, or a subject or place code read from the window, never a topic taken from your typed words. It never writes more than that: if more would be needed, or code can name nothing concrete, the note stays pending.
+**Salvage.** When an answer still fails, DayDream keeps every bullet that passes, and writes up to three plain bullets in code for what's left, such as "Wrote an email to Sam." or "Messaged #eng.": who it went to, or a subject or place code read from the window, never a topic taken from your typed words. It never writes more than that: if more would be needed, or code can name nothing concrete, the note stays pending.
 
 **Code's own note.** When no answer holds even after repair and salvage, code writes the moment's note from its facts. A Messages conversation gets one line in code's own words, never your typed words (a note may not repeat them, and it outlives them): who it went to, at most two names your texts write with a capital, and whether a sent text asked something, like "Texted Jamie Lin about ZUX and asked a question." or "Texted someone in Messages.". A reply, quote or comment gets "Replied to Ada's post on X (“<the start of that post>”)." and an email you sent "Emailed Sam.". Prompts sent to an AI coding tool in a terminal get the tool and the session's own title, like "Asked Claude Code about “Tallybird app design review” (5 prompts).", never a bare "Asked Claude Code." and never "Drafted" for a prompt sent with Return.
 
-**The last check.** Before a note is saved, the app checks it once more, with the real action IDs: known writer version, whole items, derived labels, every bullet's wording, full coverage and the title. Only notes from this writer version pass (`qwen35-4b-q4-b9723-prompt21-validator32` on this Mac, `deepseek-v4-flash-0731-zdr-prompt20-validator26` in the cloud, `code-moment8-validator14` by code).
+**The last check.** Before a note is saved, the app checks it once more, with the real action IDs: known writer version, whole items, derived labels, every bullet's wording, full coverage and the title. Only notes from this writer version pass (`qwen35-4b-q4-b9723-prompt22-validator33` on this Mac, `deepseek-v4-flash-0731-zdr-prompt21-validator27` in the cloud, `code-moment9-validator15` by code).
 
 **Older notes.** A moment note from an older writer version on the last 4 days is written again by the current one. The older note stays shown until the new one is saved. Older days keep their notes as written.
 

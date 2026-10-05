@@ -151,6 +151,8 @@ import Foundation
                 let p = Process(); p.executableURL = URL(fileURLWithPath: cli)
                 p.arguments = ["--home", home.path, "--client", reader.client, "--recipient", reader.recipient, "mcp"]
                 var env = ProcessInfo.processInfo.environment; env["MAC_MEM_CAPABILITY"] = capability; env["DAYDREAM_TEST_FRESHEN_REQUEST"] = "com.example.ai-read-check"
+                // agent-tools v2: these pin the 0.1.4 tools (moment_details, the legacy search), listed in legacy mode.
+                env[ToolsetMode.environmentKey] = ToolsetMode.legacy.rawValue
                 p.environment = env
                 let input = Pipe(), output = Pipe(); p.standardInput = input; p.standardOutput = output; p.standardError = FileHandle.nullDevice
                 try p.run()
@@ -177,9 +179,9 @@ import Foundation
             // Concise (the default): the same words, as quotes, only because the setting is on; ids, local times, Next lines.
             let concise = try mcp([("moment_details", ["id": "t3"]), ("search", ["query": "ZUX"]), ("moment_details", ["id": "t3", "after": "o:25"])])
             sample("concise-on", concise)
-            check(concise.count == 3 && concise[0].contains("> \u{201C}note \(marker)") && concise[0].contains("draft, not sent") && concise[0].contains("moment `activity_")
+            check(concise.count == 3 && concise[0].contains("> \u{201C}note \(marker)") && concise[0].contains(" \u{00B7} typed") && !concise[0].contains("not sent") && !concise[0].contains("draft") && concise[0].contains("moment `activity_")
                   && concise[0].contains("Next: more of this moment with the same id and after `o:25`") && !concise[0].contains("\"actions\""),
-                  "mcp concise moment_details (on): quoted words, draft not sent, the moment id and the next page")
+                  "mcp concise moment_details (on): quoted words, no send state, the moment id and the next page")
             check(concise[1].contains("**Typed words that match**") && concise[1].contains("> \u{201C}") && concise[1].contains("id `t") && concise[1].contains("Next:"),
                   "mcp concise search (on): typed hits quoted with their ids and a Next line")
             check(!concise.joined().contains(token) && !concise.joined().contains("old \(marker)") && !concise.joined().contains("private \(marker)"),

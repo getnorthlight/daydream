@@ -64,12 +64,8 @@ enum DaydreamPermission: String, CaseIterable, Identifiable {
     var detail: String {
         self == .accessibility ? "Reads app names, window titles and text." : Self.inputMonitoringDetail
     }
-    /// SF Symbols 5 `accessibility` from macOS 14; SF Symbols 4 `figure.arms.open` on macOS 13.
-    var tileSymbol: String {
-        guard self == .accessibility else { return "keyboard" }
-        if #available(macOS 14.0, *) { return "accessibility" }
-        return "figure.arms.open"
-    }
+    /// SF Symbols 5 `accessibility` (DayDream needs macOS 15).
+    var tileSymbol: String { self == .accessibility ? "accessibility" : "keyboard" }
 }
 
 /// What the permission page can ask the app to do (SPEC 6.3 R2), handed to `PermissionGrantView` through the
@@ -303,6 +299,87 @@ public struct InputMonitoringWatch: Equatable, Sendable {
     }
 }
 
+/// What the surfaces SHOW of one permission's reads (claude/permflash-015; owner's laptop 10/04: "the permission screen
+/// flash for like 2 frames even though everything was enabled"). macOS's privacy service can answer "not allowed" for a
+/// moment (2 ms to about a second at any time, up to 3 s right after a wake or an unlock: permission-blip-checks), and
+/// every surface used to draw each read as it came. Now a read that says allowed shows at once, and one that says not
+/// allowed shows only once the reads have stayed that way for `settle` (a later read, at least that long after the
+/// first, still says so; any read that says allowed in between ends it). Until then what showed before still shows; a
+/// permission nothing is known about yet shows as neither (`shown` nil), never as off. Only what is shown waits:
+/// recording has its own rule (`SettledPermission`), and the person's own Start takes its read as it is (`take`).
+public struct PermissionSettle: Equatable, Sendable {
+    /// Longer than the 1.2 s "not allowed" the checks model away from a wake, and three of the recorder's 0.5 s
+    /// heartbeats; a permission really turned off in System Settings shows about this long after its first off read.
+    public static let settle: TimeInterval = 1.5
+    /// In the first `InputMonitoringWatch.afterWake` after a wake, an unlock or a switch back the answer can stay wrong
+    /// for up to 3 s (permission-blip-checks H and I); a start that reads it off then gives up after this long too
+    /// (`MemoryViewModel.permissionHoldQuiet`), and says so.
+    public static let settleAfterWake: TimeInterval = 4
+    /// What shows: true allowed, false not allowed, nil not known yet.
+    public private(set) var shown: Bool?
+    /// The first of the off reads now waiting to hold.
+    private var offSince: Date?
+    /// It was allowed before (setup was finished once, or a read said so). Until then there is nothing to flash away
+    /// from, so the first off read is the answer at once (a new install's Permissions page).
+    private var allowedBefore: Bool
+
+    public init(shown: Bool? = nil, allowedBefore: Bool = true) {
+        self.shown = shown
+        self.allowedBefore = allowedBefore || shown == true
+    }
+    /// An off read is waiting to hold: read again once `settle` has passed.
+    public var unsettled: Bool { offSince != nil }
+    /// A read. `counts` false (asleep, locked, another user on screen): an off read says nothing, as for
+    /// `InputMonitoringWatch`. Returns what shows now.
+    @discardableResult public mutating func read(_ allowed: Bool, at now: Date, settle: TimeInterval = PermissionSettle.settle,
+                                                 counts: Bool = true) -> Bool? {
+        if allowed { shown = true; offSince = nil; allowedBefore = true; return shown }
+        guard counts else { offSince = nil; return shown }
+        guard shown != false else { offSince = nil; return shown }
+        guard allowedBefore else { shown = false; return shown }
+        guard let since = offSince, now >= since else { offSince = now; return shown }
+        if now.timeIntervalSince(since) >= settle { shown = false; offSince = nil }
+        return shown
+    }
+    /// The person's own Start read it: that read is the answer at once.
+    public mutating func take(_ allowed: Bool) {
+        shown = allowed; offSince = nil
+        if allowed { allowedBefore = true }
+    }
+    /// A sleep, lock or user switch began or ended: an off read before it holds nothing after it.
+    public mutating func interrupted() { offSince = nil }
+}
+
+/// Both recording permissions as the surfaces show them (`PermissionSettle` for each).
+public struct ShownPermissions: Equatable, Sendable {
+    public private(set) var accessibility: PermissionSettle
+    public private(set) var inputMonitoring: PermissionSettle
+
+    /// `known`: what showed last (another surface's settled reads), so a page that opens starts from it.
+    public init(known: PermissionSnapshot = PermissionSnapshot(), allowedBefore: Bool = true) {
+        accessibility = PermissionSettle(shown: known.accessibility, allowedBefore: allowedBefore)
+        inputMonitoring = PermissionSettle(shown: known.inputMonitoring, allowedBefore: allowedBefore)
+    }
+    /// What shows now.
+    public var snapshot: PermissionSnapshot {
+        PermissionSnapshot(accessibility: accessibility.shown, inputMonitoring: inputMonitoring.shown)
+    }
+    public var unsettled: Bool { accessibility.unsettled || inputMonitoring.unsettled }
+    /// A read of both (a nil read leaves that permission as it shows). Returns what shows now.
+    @discardableResult public mutating func read(_ read: PermissionSnapshot, at now: Date, settle: TimeInterval = PermissionSettle.settle,
+                                                 counts: Bool = true) -> PermissionSnapshot {
+        if let on = read.accessibility { accessibility.read(on, at: now, settle: settle, counts: counts) }
+        if let on = read.inputMonitoring { inputMonitoring.read(on, at: now, settle: settle, counts: counts) }
+        return snapshot
+    }
+    @discardableResult public mutating func take(_ read: PermissionSnapshot) -> PermissionSnapshot {
+        if let on = read.accessibility { accessibility.take(on) }
+        if let on = read.inputMonitoring { inputMonitoring.take(on) }
+        return snapshot
+    }
+    public mutating func interrupted() { accessibility.interrupted(); inputMonitoring.interrupted() }
+}
+
 /// When the page says "Drag the card into the list" (owner, 9/28: "once you open system settings and it is not enabled it
 /// will say drag the card into the list"). Hidden until a card's Open System Settings opened its pane; shown once a read
 /// at least `delay` after that still finds the permission missing (the page's reads: every 2 seconds and on coming back
@@ -349,9 +426,12 @@ public struct PermissionGrantView: View {
     let readInputMonitoring: () -> Bool
     let embedded: Bool
     let onStatusChange: (Bool, Bool) -> Void
-    @State private var accessibility = false
-    @State private var inputMonitoring = false
-    @State private var read = false
+    /// claude/permflash-015: what the cards show of the page's reads (`PermissionSettle`): a moment's "not allowed" from
+    /// macOS never turns an Allowed card back into its button. A permission nothing is known about yet draws no state.
+    @State private var shown: ShownPermissions
+    @State private var read: Bool
+    /// A read is set to run once the off reads now waiting have had time to hold.
+    @State private var settleReadSet = false
     @State private var openError: String?
     @State private var recoveryExpanded: Bool
     /// A card's System Settings pane was opened from this page and a permission is still missing: the window floats.
@@ -384,9 +464,16 @@ public struct PermissionGrantView: View {
                 recoveryExpandedInitially: Bool = false,
                 showsRelaunchRow: Bool = true,
                 dragHint: PermissionDragHint = PermissionDragHint(),
+                known: PermissionSnapshot = PermissionSnapshot(),
+                allowedBefore: Bool = false,
                 chromeRow: PermissionChromeRow? = nil,
                 showsAIReadsToggle: Bool = false,
                 onStatusChange: @escaping (Bool, Bool) -> Void = { _, _ in }) {
+        // `known`: what the app last showed of the permissions, so the page opens on it (an Allowed card from its first
+        // frame). `allowedBefore`: setup was finished once, so a first read that says off must hold before it shows;
+        // false (a first setup, the renders) shows it at once.
+        _shown = State(initialValue: ShownPermissions(known: known, allowedBefore: allowedBefore))
+        _read = State(initialValue: known.accessibility != nil || known.inputMonitoring != nil)
         self.enabled = enabled
         self.appURL = appURL
         self.readAccessibility = readAccessibility
@@ -432,14 +519,22 @@ public struct PermissionGrantView: View {
         } message: { Text(openError ?? "") }
     }
 
-    /// Missing permissions after the first read; empty before it and in a disabled preview.
+    /// Missing permissions after the first read; empty before it and in a disabled preview. One whose reads haven't
+    /// settled yet (`known` false) is neither missing nor allowed.
     private var missing: [DaydreamPermission] {
         guard enabled, read else { return [] }
-        return DaydreamPermission.allCases.filter { !allowed($0) }
+        return DaydreamPermission.allCases.filter { known($0) && !allowed($0) }
     }
+
+    private var accessibility: Bool { shown.snapshot.accessibility == true }
+    private var inputMonitoring: Bool { shown.snapshot.inputMonitoring == true }
 
     private func allowed(_ permission: DaydreamPermission) -> Bool {
         permission == .accessibility ? accessibility : inputMonitoring
+    }
+
+    private func known(_ permission: DaydreamPermission) -> Bool {
+        (permission == .accessibility ? shown.snapshot.accessibility : shown.snapshot.inputMonitoring) != nil
     }
 
     private var relaunch: PermissionRelaunch? {
@@ -453,7 +548,8 @@ public struct PermissionGrantView: View {
 
     /// Back twice from System Settings with both still off: the remove-and-add-again step comes first.
     private var showsReAddFirst: Bool {
-        enabled && read && moveWarning == nil && returns.showsReAddFirst(accessibility: accessibility, inputMonitoring: inputMonitoring)
+        enabled && read && moveWarning == nil && missing.count == DaydreamPermission.allCases.count
+            && returns.showsReAddFirst(accessibility: accessibility, inputMonitoring: inputMonitoring)
     }
 
     private var content: some View {
@@ -531,7 +627,7 @@ public struct PermissionGrantView: View {
             Group {
                 if !enabled {
                     Text("Unavailable in this preview").font(.system(size: 12)).foregroundStyle(.secondary)
-                } else if !read {
+                } else if !read || !known(permission) {
                     EmptyView()
                 } else if isAllowed {
                     HStack(spacing: 5) {
@@ -552,7 +648,7 @@ public struct PermissionGrantView: View {
         .overlay(alignment: .leading) {
             Image(systemName: "line.3.horizontal").font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.tertiary).padding(.leading, 9)
-                .opacity(draggable && !isAllowed && read ? 1 : 0)
+                .opacity(draggable && !isAllowed && read && known(permission) ? 1 : 0)
                 .accessibilityHidden(true)
         }
         .background(Self.cardColor, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -567,7 +663,7 @@ public struct PermissionGrantView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(permission.title + " permission")
-        .accessibilityValue(!enabled ? "Unavailable in this preview" : !read ? "Not checked" : isAllowed ? "Allowed" : "Not allowed")
+        .accessibilityValue(!enabled ? "Unavailable in this preview" : !read || !known(permission) ? "Not checked" : isAllowed ? "Allowed" : "Not allowed")
         .accessibilityHint(permission.purpose)
         .help(PermissionRowHelp.cardHelp(appName: appName, permission: permission.title))
     }
@@ -598,19 +694,34 @@ public struct PermissionGrantView: View {
     /// Setup's Google Chrome row: the same card as Accessibility and Input Monitoring (icon, name, one line, one button).
     /// Its Allow asks macOS (the caller's `allow`, the app's one ask path) only on the person's press; an answered or
     /// allowed access shows its state like the other rows. It never gates Continue.
+    /// chromeask-1005 (owner 10/5): before the press its line says what macOS will ask and why, beside a small drawing of
+    /// that question with Allow ringed; refused, "Chrome pages are off." with Ask again (the caller's `askAgain`: macOS
+    /// asks again). Nothing here asks macOS or opens Chrome.
     private func chromeCard(_ row: PermissionChromeRow) -> some View {
         let trailing = PermissionChromeRow.trailing(access: row.access, pagesOn: row.pagesOn, canTurnOn: row.turnOn != nil)
+        let subtitle = PermissionChromeRow.subtitle(access: row.access, typing: row.typing, opensChrome: row.opensChrome)
+        let art = PermissionChromeRow.illustration(access: row.access)
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 14) {
+                // The drawing takes the icon's place (it names Chrome itself), so the card grows little and the page
+                // still fits: macOS's question, before the press and while it asks.
                 Group {
-                    if let icon = row.icon { Image(nsImage: icon).resizable().interpolation(.high) }
-                    else { Image(systemName: "globe").font(.system(size: 28)).foregroundStyle(.secondary) }
+                    switch art {
+                    case .ask?:
+                        ChromeAskDrawing(chromeIcon: row.icon).permissionElement("chrome.drawing.ask")
+                    case nil:
+                        Group {
+                            if let icon = row.icon { Image(nsImage: icon).resizable().interpolation(.high) }
+                            else { Image(systemName: "globe").font(.system(size: 28)).foregroundStyle(.secondary) }
+                        }
+                        .frame(width: 44, height: 44).accessibilityHidden(true)
+                    }
                 }
-                .frame(width: 44, height: 44).accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(PermissionChromeRow.title).font(.system(size: 15, weight: .semibold))
-                    Text(PermissionChromeRow.reason).font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text(subtitle).font(.system(size: 12)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                        .permissionElement("chrome.line")
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 Group {
@@ -622,10 +733,18 @@ public struct PermissionGrantView: View {
                             Text(ChromeAccessState.allowed.value).font(.system(size: 13)).foregroundStyle(.secondary)
                         }
                     case .refused:
-                        Button { row.openSettings() } label: { OpenSystemSettingsLabel() }
-                            .buttonStyle(PermissionButtonStyle(prominent: false)).disabled(!enabled)
-                            .accessibilityLabel("Open Automation in System Settings")
-                            .permissionElement("open.chrome")
+                        if let askAgain = row.askAgain {
+                            Button(PermissionChromeRow.askAgainTitle) { askAgain() }
+                                .buttonStyle(PermissionButtonStyle(prominent: true)).disabled(!enabled)
+                                .accessibilityHint(ChromeAccessNotice.askAgainHint)
+                                .permissionElement("askagain.chrome")
+                        } else {
+                            Button { row.openSettings() } label: { OpenSystemSettingsLabel() }
+                                .buttonStyle(PermissionButtonStyle(prominent: true)).disabled(!enabled)
+                                .accessibilityLabel("Open Automation in System Settings")
+                                .accessibilityHint(subtitle)
+                                .permissionElement("open.chrome")
+                        }
                     case .turnOn:
                         Button(PermissionChromeRow.turnOnTitle) { row.turnOn?() }
                             .buttonStyle(PermissionButtonStyle(prominent: true)).disabled(!enabled)
@@ -635,12 +754,13 @@ public struct PermissionGrantView: View {
                         Button(PermissionChromeRow.allowTitle) { row.allow() }
                             .buttonStyle(PermissionButtonStyle(prominent: true)).disabled(!enabled)
                             .accessibilityLabel("Allow Google Chrome")
+                            .accessibilityHint(subtitle)
                             .permissionElement("allow.chrome")
                     }
                 }
                 .fixedSize()
             }
-            .padding(.leading, 26).padding(.trailing, 16).padding(.vertical, 12).frame(minHeight: 74)
+            .padding(.leading, art == nil ? 26 : 14).padding(.trailing, 16).padding(.vertical, art == nil ? 12 : 10).frame(minHeight: 74)
             .background(Self.cardColor, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.primary.opacity(0.07), lineWidth: 1))
             .shadow(color: Color.black.opacity(0.08), radius: 6, x: 0, y: 3)
@@ -651,6 +771,7 @@ public struct PermissionGrantView: View {
             if let line = PermissionChromeRow.line(access: row.access, asked: row.asked, pagesOn: row.pagesOn, settings: row.settings) {
                 Text(line).font(.system(size: 12)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 4)
+                    .permissionElement("chrome.below")
             }
         }
     }
@@ -797,9 +918,16 @@ public struct PermissionGrantView: View {
 
     private func refresh() {
         guard enabled else { return }
-        accessibility = readAccessibility()
-        inputMonitoring = readInputMonitoring()
-        read = true
+        var next = shown
+        next.read(PermissionSnapshot(accessibility: readAccessibility(), inputMonitoring: readInputMonitoring()), at: Date())
+        if next != shown { shown = next }
+        if !read { read = true }
+        // An off read waiting to hold is read again once it has had the time (the page's own timer is 2 s).
+        if next.unsettled, !settleReadSet {
+            settleReadSet = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + PermissionSettle.settle + 0.1) { settleReadSet = false; refresh() }
+        }
+        let accessibility = next.snapshot.accessibility == true, inputMonitoring = next.snapshot.inputMonitoring == true
         if (accessibility || inputMonitoring) && returns.count > 0 { returns.reset() }
         // Set only when it changes (an unchanged hint never redraws the page).
         var hint = dragHint
@@ -809,7 +937,7 @@ public struct PermissionGrantView: View {
         if floating && accessibility && inputMonitoring { floating = false; window.set(floating: false) }
         // The pane's own permission is allowed (macOS may now show its Quit & Reopen sheet there: never cover it), or
         // another app is in front (a notice that was missed).
-        if floating, PermissionWindowFloat.lowers(allowedNow: floatingFor.map(allowed) ?? false,
+        if floating, PermissionWindowFloat.lowers(allowedNow: floatingFor.map { $0 == .accessibility ? accessibility : inputMonitoring } ?? false,
                                                   frontBundle: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
                                                   frontPID: NSWorkspace.shared.frontmostApplication?.processIdentifier) {
             floating = false; window.set(floating: false)
@@ -922,6 +1050,9 @@ private struct PermissionTile: View {
 
 /// Setup's Google Chrome row on the Permissions card (owner, 10/2): shown while Chrome is installed and its access isn't
 /// decided (the app decides: `DaydreamOnboardingChromeRow`). `allow` is the app's one ask path, called only on a press.
+/// chromeask-1005 (owner 10/5): macOS asks once and never again after Don't Allow, so the row primes the question before
+/// the press (`primer`, with `ChromeAskDrawing`) and, once refused, says so (`offLine`) beside Ask again (`askAgain`:
+/// the app clears its own Automation answer and macOS asks again, in context).
 public struct PermissionChromeRow {
     public let icon: NSImage?
     public let access: ChromeAccessState
@@ -935,20 +1066,57 @@ public struct PermissionChromeRow {
     public let turnOn: (() -> Void)?
     /// Settings' row: a refusal says where to allow it without a press on this page.
     public let settings: Bool
+    /// Typing is on (setup's switch, or the saved one): the primer says the page is what you're typing on.
+    public let typing: Bool
+    /// Setup's Allow opens a closed Chrome in the background first (`askChromeAccessInSetup`), and the primer says so.
+    public let opensChrome: Bool
+    /// Refused: the app's Ask again (`askChromeAgain`). nil keeps Open System Settings (`openSettings`).
+    public let askAgain: (() -> Void)?
 
     public init(icon: NSImage?, access: ChromeAccessState, asked: Bool, allow: @escaping () -> Void, openSettings: @escaping () -> Void,
-                pagesOn: Bool = true, turnOn: (() -> Void)? = nil, settings: Bool = false) {
+                pagesOn: Bool = true, turnOn: (() -> Void)? = nil, settings: Bool = false, typing: Bool = true, opensChrome: Bool = false,
+                askAgain: (() -> Void)? = nil) {
         self.icon = icon; self.access = access; self.asked = asked; self.allow = allow; self.openSettings = openSettings
-        self.pagesOn = pagesOn; self.turnOn = turnOn; self.settings = settings
+        self.pagesOn = pagesOn; self.turnOn = turnOn; self.settings = settings; self.typing = typing; self.opensChrome = opensChrome
+        self.askAgain = askAgain
     }
 
     public static let title = "Google Chrome"
     public static let reason = ChromePagesCard.setupLine
     public static let allowTitle = "Allow"
+    /// Before the press (owner 10/5): what macOS will ask, and why, in one breath.
+    public static let primer = "macOS will ask once. Click Allow so DayDream knows which page you're typing on."
+    /// The same with typing off: the page is still what DayDream reads, just not for typing.
+    public static let primerTypingOff = "macOS will ask once. Click Allow so DayDream knows which Chrome page you're on."
+    /// Setup with Chrome closed: Allow opens it in the background so macOS can ask now, from this press, never later.
+    public static let opensChromeLine = "Chrome opens in the background to ask."
+    /// Refused (owner 10/5): short, beside Ask again (DayDream clears its own answer, and macOS asks again).
+    public static let offLine = "Chrome pages are off."
+    public static let askAgainTitle = ChromeAccessNotice.askAgainTitle
 
     public enum Trailing: Equatable, Sendable { case progress, allowed, refused, allow, turnOn }
+    /// The drawing in the icon's place: macOS's question with Allow ringed (before and while it asks).
+    public enum Illustration: Equatable, Sendable { case ask }
     public static let turnOnTitle = "Turn On"
     public static let pagesOffLine = "Chrome access is allowed, but saving web pages in Chrome is off."
+
+    /// The line under the title: the primer until macOS answered, "Chrome pages are off." once refused, else what
+    /// Chrome pages save.
+    public static func subtitle(access: ChromeAccessState, typing: Bool, opensChrome: Bool) -> String {
+        switch access {
+        case .unknown, .notAsked, .chromeNotRunning, .checking:
+            let primer = typing ? primer : primerTypingOff
+            return opensChrome && access != .checking ? primer + " " + opensChromeLine : primer
+        case .denied, .askFailed: return offLine
+        case .allowed, .unverified, .twoCopies: return reason
+        }
+    }
+    public static func illustration(access: ChromeAccessState) -> Illustration? {
+        switch access {
+        case .unknown, .notAsked, .chromeNotRunning, .checking: return .ask
+        case .denied, .askFailed, .allowed, .unverified, .twoCopies: return nil
+        }
+    }
     /// Settings' row: Allowed with recording Chrome off offers Turn On (one click); everything else as setup's row.
     public static func trailing(access: ChromeAccessState, pagesOn: Bool, canTurnOn: Bool) -> Trailing {
         access == .allowed && !pagesOn && canTurnOn ? .turnOn : trailing(access: access)
@@ -957,12 +1125,12 @@ public struct PermissionChromeRow {
         if access == .allowed && !pagesOn { return pagesOffLine }
         guard settings else { return line(access: access, asked: asked) }
         switch access {
-        case .denied, .askFailed, .unverified, .twoCopies, .chromeNotRunning: return access.helper
-        case .checking, .allowed, .notAsked, .unknown: return nil
+        case .unverified, .twoCopies, .chromeNotRunning: return access.helper
+        case .denied, .askFailed, .checking, .allowed, .notAsked, .unknown: return nil
         }
     }
-    /// The row's one control: a spinner while macOS asks or a read runs, Allowed, System Settings once refused (macOS
-    /// won't ask again), else Allow. Every state has its way on, and none of them holds Continue.
+    /// The row's one control: a spinner while macOS asks or a read runs, Allowed, Ask again once refused, else Allow.
+    /// Every state has its way on, and none of them holds Continue.
     public static func trailing(access: ChromeAccessState) -> Trailing {
         switch access {
         case .checking: return .progress
@@ -971,11 +1139,71 @@ public struct PermissionChromeRow {
         case .unknown, .notAsked, .chromeNotRunning, .unverified, .twoCopies: return .allow
         }
     }
-    /// The one line under the row: nothing before the press; after it, why macOS gave no answer, or where to allow it.
+    /// The one line under the row: nothing before the press, and nothing once refused (the row's own line says so,
+    /// beside Ask again); after a press macOS couldn't answer, why (Chrome didn't open, can't be verified, two copies).
     public static func line(access: ChromeAccessState, asked: Bool) -> String? {
+        guard asked else { return nil }
         switch access {
-        case .denied, .askFailed: return asked ? access.helper : nil
-        default: return DaydreamChromeStepContent.line(access: access, asked: asked)
+        case .chromeNotRunning, .unverified, .twoCopies: return access.helper
+        case .unknown, .notAsked, .checking, .allowed, .denied, .askFailed: return nil
         }
     }
 }
+
+// MARK: - Chrome drawings (chromeask-1005)
+
+/// The two small drawings on the Chrome row, drawn rather than pictured so they stay sharp at every scale and follow
+/// light and dark. Nothing in them is a control: they only show what macOS shows.
+private enum ChromeDrawingStyle {
+    /// macOS's alert and Settings panels.
+    static let panel = Color(nsColor: NSColor(name: nil) {
+        $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(white: 0.17, alpha: 1) : NSColor(white: 1, alpha: 1)
+    })
+    static let quietButton = Color.primary.opacity(0.09)
+    static let textBar = Color.primary.opacity(0.13)
+    static let ring = Color.accentColor.opacity(0.45)
+
+    static func icon(_ image: NSImage?, fallback: String, size: CGFloat) -> some View {
+        Group {
+            if let image { Image(nsImage: image).resizable().interpolation(.high) }
+            else { Image(systemName: fallback).resizable().scaledToFit().foregroundStyle(.secondary) }
+        }
+        .frame(width: size, height: size)
+    }
+    static var appIcon: NSImage? { NSApp?.applicationIconImage }
+}
+
+/// macOS's Automation question as it will appear, small: DayDream's icon (Chrome's on it), the question, and Don't
+/// Allow beside Allow, with Allow ringed (the button to press).
+struct ChromeAskDrawing: View {
+    let chromeIcon: NSImage?
+    static let width: CGFloat = 140
+
+    var body: some View {
+        VStack(spacing: 4) {
+            ZStack(alignment: .bottomTrailing) {
+                ChromeDrawingStyle.icon(ChromeDrawingStyle.appIcon, fallback: "app.fill", size: 16)
+                ChromeDrawingStyle.icon(chromeIcon, fallback: "globe", size: 8).offset(x: 3, y: 2)
+            }
+            Text("\u{201C}DayDream\u{201D} wants access to control \u{201C}Google Chrome\u{201D}.")
+                .font(.system(size: 6.8, weight: .semibold)).multilineTextAlignment(.center).lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 5) {
+                Text("Don\u{2019}t Allow").font(.system(size: 6.5)).frame(maxWidth: .infinity).frame(height: 13)
+                    .background(ChromeDrawingStyle.quietButton, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                Text("Allow").font(.system(size: 6.5, weight: .semibold)).foregroundStyle(.white).frame(maxWidth: .infinity).frame(height: 13)
+                    .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(ChromeDrawingStyle.ring, lineWidth: 2).padding(-3))
+            }
+            .padding(.top, 1)
+        }
+        .padding(.horizontal, 9).padding(.top, 7).padding(.bottom, 8)
+        .frame(width: Self.width)
+        .background(ChromeDrawingStyle.panel, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(Color.primary.opacity(0.1), lineWidth: 0.5))
+        .shadow(color: Color.black.opacity(0.12), radius: 3, x: 0, y: 1.5)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("macOS will show: DayDream wants access to control Google Chrome. Click Allow.")
+    }
+}
+

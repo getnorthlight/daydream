@@ -5,8 +5,8 @@ import MemoryCore
 // Settings ▸ Apps to remember ▸ "Web pages in Chrome" (Chrome page history, SPEC §11.1). Values only:
 // the host (MacMemApp's `DaydreamAppSettings`) passes the saved switch, the access state and the
 // owner's sites, and gets the person's choices back through closures. Nothing here reads Chrome,
-// asks macOS for anything or saves: the Allow button calls `allow`, which the app routes to the one
-// place that may ask (the app model's Allow path).
+// asks macOS for anything or saves: Allow calls `allow` and Ask again `askAgain`, which the app routes to
+// the one place that may ask (setup's Allow path).
 
 /// Whether DayDream may read Google Chrome's page in front (macOS Privacy & Security › Automation).
 /// Read without a prompt when the card appears, after Allow and when the app becomes active.
@@ -192,6 +192,8 @@ public struct ChromePagesCard: View {
     private let remove: (String) throws -> Void
     private let allow: () -> Void
     private let openSystemSettings: () -> Void
+    /// Refused: the app's Ask again (`askChromeAgain`). nil keeps Open System Settings (renders that predate it).
+    private let askAgain: (() -> Void)?
     private let checkAccess: () -> Void
     @State private var draft = ""
     @State private var error: String?
@@ -203,17 +205,19 @@ public struct ChromePagesCard: View {
     /// - `unavailableNote`: false where the page around the card already says why nothing can change (Settings ›
     ///   Apps to remember shows the one-sentence problem line), so the card doesn't add a second reason.
     /// - `checkAccess`: reads access without a prompt; called when the card appears while the saved switch
-    ///   is on, and when the saved switch turns on. `allow` is called only by the Allow… button.
+    ///   is on, and when the saved switch turns on. `allow` is called only by the access row's Allow (the app routes it
+    ///   to setup's Allow path), `askAgain` only by its Ask again.
     /// - `expanded`: Settings' open/closed row (owner decision 2026-10-03). A click on the title row (not the switch) shows or
     ///   hides "Save email subjects" and the sites; Chrome access, while it needs a click, shows either way. nil: always open.
     public init(on: Binding<Bool>, savedOn: Bool, access: ChromeAccessState, chromeExcluded: Bool = false, sites: [String], enabled: Bool,
                 unavailableNote: Bool = true, emailSubjects: Binding<Bool>? = nil, expanded: Binding<Bool>? = nil,
                 add: @escaping (String) throws -> Void, remove: @escaping (String) throws -> Void,
-                allow: @escaping () -> Void, openSystemSettings: @escaping () -> Void, checkAccess: @escaping () -> Void) {
+                allow: @escaping () -> Void, openSystemSettings: @escaping () -> Void, askAgain: (() -> Void)? = nil,
+                checkAccess: @escaping () -> Void) {
         _on = on; self.expanded = expanded; self.emailSubjects = emailSubjects; self.savedOn = savedOn; self.access = access; self.chromeExcluded = chromeExcluded; self.sites = sites; self.enabled = enabled
         self.unavailableNote = unavailableNote
         self.add = add; self.remove = remove; self.allow = allow; self.openSystemSettings = openSystemSettings
-        self.checkAccess = checkAccess
+        self.askAgain = askAgain; self.checkAccess = checkAccess
     }
 
     /// The switch goes straight to the host both ways (owner 9/28: no second question). Saving the switch on records
@@ -231,9 +235,11 @@ public struct ChromePagesCard: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            // fix/apps-declutter (owner 9/29, "too cluttered"): no line under the title, no Learn more. Chrome access
-            // shows only while it needs a click, and then also with the row closed: it is the one way to make the switch work.
-            if savedOn, access != .allowed, access != .checking {
+            // fix/apps-declutter (owner 9/29, "too cluttered"): no line under the title, no Learn more. chromeask-1005
+            // (owner 10/5): Chrome access, in the same states as setup's row and the menu bar: Allow, "Chrome pages aren't
+            // being saved." with Ask again, or Allowed. While it needs a click it shows with the row closed too (the one
+            // way to make the switch work); Allowed and a read in progress only with the row open.
+            if savedOn, (access != .allowed && access != .checking) || (expanded?.wrappedValue ?? true) {
                 rule
                 accessRow.padding(.horizontal, 12).padding(.vertical, 10)
             }
@@ -305,29 +311,77 @@ public struct ChromePagesCard: View {
         .frame(minHeight: 28)
     }
 
+    /// chromeask-1005: the access row's one button, as setup's row and the menu bar offer it.
+    public enum AccessButton: Equatable, Sendable { case allow, askAgain, tryAgain }
+    public static func accessButton(_ access: ChromeAccessState) -> AccessButton? {
+        switch access {
+        case .notAsked, .chromeNotRunning: return .allow
+        case .denied, .askFailed: return .askAgain
+        case .unknown, .unverified: return .tryAgain
+        case .checking, .allowed, .twoCopies: return nil
+        }
+    }
+    public static func accessButtonTitle(_ button: AccessButton) -> String {
+        switch button {
+        case .allow: return PermissionChromeRow.allowTitle
+        case .askAgain: return ChromeAccessNotice.askAgainTitle
+        case .tryAgain: return "Try Again"
+        }
+    }
+    /// The row's words: Chrome pages aren't being saved while access is off (never asked or refused), else "Chrome
+    /// access" beside its state (Allowed, a spinner, or what's wrong).
+    public static func accessText(_ access: ChromeAccessState) -> String {
+        access.accessOff || access == .chromeNotRunning ? ChromeAccessNotice.line : accessLabel
+    }
+    /// The line under it: before macOS asks, the primer setup's row uses (with Chrome closed, that Allow opens it in the
+    /// background to ask); a Chrome that can't be read, why. Nothing once refused (Ask again says it) or allowed.
+    public static func accessHelper(_ access: ChromeAccessState) -> String? {
+        switch access {
+        case .notAsked: return PermissionChromeRow.primerTypingOff
+        case .chromeNotRunning: return PermissionChromeRow.primerTypingOff + " " + PermissionChromeRow.opensChromeLine
+        case .unverified, .twoCopies: return access.helper
+        case .unknown, .checking, .allowed, .denied, .askFailed: return nil
+        }
+    }
+
     private var accessRow: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 10) {
-                Text(Self.accessLabel).font(.system(size: 13))
+                Text(Self.accessText(access)).font(.system(size: 13))
+                    .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
-                Text(access.value).font(.system(size: 12)).foregroundStyle(.secondary)
-                if let title = access.buttonTitle {
-                    Button(title) {
-                        switch access.action {
-                        case .allow: allow()
-                        case .openSystemSettings: openSystemSettings()
-                        case .tryAgain: checkAccess()
-                        case nil: break
-                        }
+                switch access {
+                case .checking:
+                    ProgressView().controlSize(.small).accessibilityLabel(ChromeAccessState.checking.value)
+                case .allowed:
+                    HStack(spacing: 5) {
+                        Image(systemName: "checkmark.circle.fill").font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Color(nsColor: .systemGreen)).accessibilityHidden(true)
+                        Text(ChromeAccessState.allowed.value).font(.system(size: 12)).foregroundStyle(.secondary)
                     }
-                    .controlSize(.small)
+                case .unknown, .unverified, .twoCopies:
+                    Text(access.value).font(.system(size: 12)).foregroundStyle(.secondary)
+                default:
+                    EmptyView()
                 }
-                if access.offersSystemSettings {
-                    Button("Open System Settings", action: openSystemSettings).controlSize(.small)
+                if let button = Self.accessButton(access) {
+                    if button == .askAgain, askAgain == nil {
+                        Button("Open System Settings", action: openSystemSettings).controlSize(.small)
+                    } else {
+                        Button(Self.accessButtonTitle(button)) {
+                            switch button {
+                            case .allow: allow()
+                            case .askAgain: askAgain?()
+                            case .tryAgain: checkAccess()
+                            }
+                        }
+                        .buttonStyle(.borderedProminent).controlSize(.small)
+                        .accessibilityHint(button == .askAgain ? ChromeAccessNotice.askAgainHint : "")
+                    }
                 }
             }
             .accessibilityElement(children: .contain)
-            if let helper = access.helper {
+            if let helper = Self.accessHelper(access) {
                 Text(helper).font(.system(size: 12)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }

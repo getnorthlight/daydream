@@ -22,6 +22,7 @@ func runWebTypingChecks() throws {
     try checkWebSearchCapture()
     #endif
     try checkWebSendGrace()
+    try checkWebWokenComposers()
     try checkWebLeave()
     try checkWebLightKeys()
     try checkWebUnmarkedBoxes()
@@ -29,6 +30,7 @@ func runWebTypingChecks() throws {
     try checkWebRefusedKeysCost()
     try checkWebFrameOrder()
     try checkWebFieldHold()
+    try checkWebLateKeyKeepsChecked()
     // Review 10:35 (Codex QF-1, test 1): the whole field-hold suite again with boundary recovery on. On the synchronous
     // route it must change nothing: every assertion above holds unchanged.
     WebRig.recoverBracketedBoundaries = true
@@ -753,6 +755,95 @@ private func checkWebSearchCapture() throws {
     try check(!WebTypedRow.valid(forged) && !WebTypedRow.valid(other), "search capture (fix/chrome-x2): a search row claims no field and no other site")
 }
 #endif
+
+/// claude/xtyping-1005 (owner laptop 10/04, public 0.1.4: nothing typed on X was saved). Chrome's accessibility was asleep
+/// (no assistive client had asked its application its role), so every join was refused `notFocused`. Website typing now
+/// wakes it when Chrome comes to the front (`BrowserTypingJoin.wake`), and a join that finds it asleep wakes it too.
+/// End to end through the burst, with synthetic pages shaped like the ones on 127.0.0.1 in the live check: X's home
+/// composer, a reply under a post (inline), the reply dialog (role=dialog), and a chat pane shaped like Snapchat's web
+/// chat (a contenteditable or textarea, Return sends). Each saves its exact words, and its send is captured.
+private func checkWebWokenComposers() throws {
+    let pid = FakeChromeWorld.chromePID
+    let words = "see you at the synthetic meetup"
+    struct Case { let name, url, title, label: String; let role: String; let dialog: Bool; let chordSends: Bool }
+    let post = "Synthetic User on X: \"sample post\" / X"
+    let cases = [
+        Case(name: "X home composer", url: "https://x.com/home", title: "(2) Home / X", label: "Post text", role: "AXTextArea", dialog: false, chordSends: true),
+        Case(name: "X reply under a post (inline)", url: "https://x.com/synthetic_user/status/1000000000000000001", title: post, label: "Post your reply",
+             role: "AXTextArea", dialog: false, chordSends: true),
+        Case(name: "X reply dialog (role=dialog)", url: "https://x.com/compose/post", title: post, label: "Post your reply", role: "AXTextArea", dialog: true, chordSends: true),
+        Case(name: "Snapchat-shaped chat (contenteditable)", url: "https://www.snapchat.com/web/00000000-0000-4000-8000-000000000001", title: "Snapchat",
+             label: "Send a chat", role: "AXTextArea", dialog: false, chordSends: false),
+        Case(name: "Snapchat-shaped chat (one-line textbox)", url: "https://www.snapchat.com/web/00000000-0000-4000-8000-000000000001", title: "Snapchat",
+             label: "Send a chat", role: "AXTextField", dialog: false, chordSends: false),
+    ]
+    func rig(_ c: Case) -> WebRig {
+        let r = WebRig(url: c.url); r.useLight = true
+        r.w.windows[0].name = c.title; r.w.window.title = c.title + " - Google Chrome"
+        r.w.field.role = c.role
+        r.w.field.labels = BrowserTypingFieldLabels(texts: [c.label], identifiers: c.chordSends ? ["notranslate", "public-DraftEditor-content"] : [])
+        let divs = r.w.deepen(dom: c.chordSends ? 40 : 18)
+        if c.dialog { divs[10].subrole = "AXApplicationDialog" } else { divs[2].subrole = "AXLandmarkMain" }
+        return r
+    }
+    func facts(_ r: WebRig) -> SendFacts? {
+        r.commits.first.map { c in
+            SendRules.facts(bundle: c.proof.bundle, host: BrowserSites.host(of: c.proof.url), title: BrowserSites.host(of: c.proof.url) ?? "",
+                            field: c.proof.sendField.isEmpty ? "unknown" : c.proof.sendField,
+                            composerPlace: c.proof.sendPlace.isEmpty ? nil : c.proof.sendPlace, seal: c.reason)
+        }
+    }
+    func send(_ r: WebRig, _ c: Case) {
+        if c.chordSends {
+            // The route's Command-Return: the click save at the key, then the boundary (as in `checkWebSendGrace`).
+            let at = r.w.clock; r.w.clock += 2_000_000
+            _ = r.burst.pointerDown(r.pageResult(), at: at, now: r.w.clock, policy: r.policy, reason: .submitChord, write: r.write)
+            r.burst.boundary(.submitChord, at: at, now: r.w.clock, focusMoved: true)
+        } else {
+            _ = r.key(.submit)
+        }
+    }
+    for c in cases {
+        // Chrome asleep as it comes to the front: website typing wakes it, then the words are typed and sent.
+        var r = rig(c); r.w.sleeping = true
+        let woke = r.join.wake(environment: r.w.environment, appleEvents: r.w.ae, accessibility: r.w.access)
+        r.type(words); send(r, c)
+        let f = facts(r)
+        try check(woke && r.words == [words] && f?.send == "detected" && f?.sendBy == (c.chordSends ? "commandReturn" : "return")
+                  && f?.surface == (c.chordSends ? "social" : "chat"),
+                  "woken Chrome, \(c.name): the exact words are saved and the send captured (\(r.words), \(String(describing: f)))")
+        // Before the fix (no wake): every key refused, nothing saved.
+        r = rig(c); r.w.sleeping = true; r.w.wakes = false
+        r.type(words); send(r, c)
+        try check(r.rows.isEmpty && r.reads == 0, "asleep Chrome that is never woken, \(c.name): nothing read or saved (the owner's laptop)")
+        // No front wake (Chrome asleep with no app switch since): the first key's join wakes Chrome and is refused, and the
+        // refusal's quiet period (`quietNanoseconds`, 400 ms) drops the keys inside it unread, as for any refused key; the
+        // words after it are saved, never more than was typed. (The front wake is what keeps the first words.)
+        r = rig(c); r.w.sleeping = true
+        r.type(words); send(r, c)
+        let lostAtMost = 2 + Int(BrowserTypingTiming.quietNanoseconds / 82_000_000)
+        try check(r.rows.count == 1 && words.hasSuffix(r.words[0]) && !r.words[0].isEmpty && r.words[0].count >= words.count - lostAtMost,
+                  "asleep Chrome woken by the first key, \(c.name): the rest of the words are saved (\(r.words))")
+    }
+    // Typing turned off: the front wake never touches Chrome (no Apple Event, no role read), and nothing is saved.
+    let off = rig(cases[3]); off.w.sleeping = true; off.w.enabled = false
+    try check(!off.join.wake(environment: off.w.environment, appleEvents: off.w.ae, accessibility: off.w.access) && off.w.aeCount == 0
+              && !off.w.log.contains("ax:wake"), "typing off: Chrome is never woken (no Apple Event, no Accessibility read)")
+    // Privacy holds on the woken page: an Incognito window open, a password field (secure input), the chat's site switch off.
+    var r = rig(cases[3]); r.w.sleeping = true; r.w.addWindow("555", mode: "incognito", front: false)
+    try check(!r.join.wake(environment: r.w.environment, appleEvents: r.w.ae, accessibility: r.w.access) && !r.w.log.contains("ax:wake"),
+              "an Incognito window open: Chrome is not woken")
+    r.type(words); _ = r.key(.submit)
+    try check(r.rows.isEmpty, "an Incognito window open: nothing saved from the chat")
+    r = rig(cases[3]); r.w.secure = true
+    r.type(words); _ = r.key(.submit)
+    try check(r.rows.isEmpty, "secure input on (a password field): nothing saved from the chat")
+    let messagesOff = WebRig(choices: TypedCategoryChoices(messagesAndEmail: false), url: cases[3].url)
+    messagesOff.w.field.labels = BrowserTypingFieldLabels(texts: ["Send a chat"], identifiers: []); messagesOff.w.field.role = "AXTextArea"
+    messagesOff.type(words); _ = messagesOff.key(.submit)
+    try check(messagesOff.rows.isEmpty, "Messages and email off: nothing saved from a Snapchat-shaped chat")
+    _ = pid
+}
 
 /// fix/chrome-x2 (owner, 2026-10-03, build 20261003140001: a post on X and a search typed in Google's own box saved no
 /// typed words). A send gesture's own join runs after the page may already have reacted to it: X closes its post window
@@ -1933,5 +2024,74 @@ private func checkAppCoverageSites() throws {
     docs.tabID = "7"; docs.documentID = UUID().uuidString; docs.frameID = "windows-1"; docs.url = "https://docs.google.com"
     try check(WebTypingGate.typing(docs, policy: policy, generation: 0, now: 1_000, expanded: true, site: { rules.permits(host: $0) }).reason == .excludedSite,
               "app coverage, Chrome: Google Docs is refused at the website gate too")
+}
+
+/// claude/axjoin-1005 (owner decision 10/04: a late key cost the whole X reply on a busy laptop). A key whose allowed
+/// join started more than `maxKeyLag` after it was typed is dropped unread (review I2), with the quiet period; the text
+/// admitted before it is parked at the gap, saved only when the settle's fresh joins prove its field again, and dropped
+/// by any refusal before that. Other drops still retract the unit.
+private func checkWebLateKeyKeepsChecked() throws {
+    func late(_ r: WebRig) -> BrowserTypingStep {
+        let typed = r.w.clock; r.w.clock += BrowserTypingTiming.maxKeyLagNanoseconds + 50_000_000
+        return r.burst.key(.insert(nil), join: r.result, light: r.lightResult, held: r.heldResult, typedAt: typed, now: { r.w.clock },
+                           policy: r.policy, read: { r.reads += 1; return "#" }, write: r.write)
+    }
+    for light in [false, true] {
+        // A late key mid-unit: the checked part saves as one row, the late key is dropped unread, the next keys are a new row.
+        let r = WebRig(); r.useLight = light
+        r.type("hello wor")
+        let reads = r.reads
+        let step = late(r)
+        guard case .dropped = step else { throw MemError.invalid("FAILED: late key: dropped (\(step))") }
+        try check(r.reads == reads && r.burst.dropReason == .late && !r.burst.session.hasLive && r.burst.session.parkedCount == 1,
+                  "late key (light \(light)): dropped unread, the checked part parked at the gap")
+        r.type("ld")
+        try check(r.reads == reads, "late key (light \(light)): keys in its quiet period are dropped unread too")
+        r.w.clock += 500_000_000; r.settle()
+        r.type("next words"); r.key(.submit)
+        try check(r.words == ["hello wor", "next words"] && !r.words.joined().contains("#"),
+                  "late key (light \(light)): the checked part saves as one row, the next keys as a new one (\(r.words))")
+    }
+    // A late key, then an Incognito window: nothing after it is saved (the parked part neither).
+    do {
+        let r = WebRig()
+        r.type("before the switch")
+        _ = late(r)
+        r.w.addWindow("666", mode: "incognito")
+        r.w.clock += 500_000_000; r.settle()
+        r.type("private words"); r.key(.submit)
+        try check(r.rows.isEmpty && r.burst.session.parkedCount == 0 && !r.burst.session.hasLive,
+                  "late key, then Incognito: nothing saved (\(r.words))")
+    }
+    // A late key in a unit whose end-of-unit check refuses: nothing is saved.
+    let refusals: [(String, (WebRig) -> Void)] = [
+        ("the field turns sensitive", { $0.w.field.labels = BrowserTypingFieldLabels(texts: ["Card number"], identifiers: []) }),
+        ("a password field", { $0.w.field.subrole = "AXSecureTextField" }),
+        ("a blocked site", { $0.sites.alwaysBlocked.append("example.org") }),
+        ("another page", { $0.page("https://other.example.net/x") }),
+        ("the window list changed", { $0.w.addWindow("404", mode: "normal", front: false) }),
+        ("secure input", { $0.w.secure = true }),
+    ]
+    for (what, change) in refusals {
+        let r = WebRig()
+        r.type("draft words")
+        _ = late(r)
+        change(r)
+        r.w.clock += 500_000_000; r.settle(secure: what == "secure input")
+        try check(r.rows.isEmpty, "late key, then \(what) before the settle: nothing saved (\(r.words))")
+    }
+    // Every other drop still retracts the unit: a key admitted by another burst's proof (focus moved to another
+    // field with no click or key the route saw; a parked unit would be saved there, G12).
+    do {
+        let r = WebRig()
+        r.type("abc")
+        let other = FakeAXNode("other-field", role: "AXTextField", parent: r.w.group, owner: FakeChromeWorld.chromePID)
+        other.labels = BrowserTypingFieldLabels(texts: ["Title"], identifiers: [])
+        r.w.axFocus = other
+        r.type("d")
+        try check(r.burst.dropReason == .otherBurst || r.burst.dropReason == nil, "another burst's key: dropped as another burst")
+        r.w.clock += 500_000_000; r.settle()
+        try check(!r.words.contains("abc"), "another burst's key: the unit is retracted, as before (\(r.words))")
+    }
 }
 #endif

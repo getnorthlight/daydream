@@ -24,7 +24,7 @@ enum ComposeSendChecks {
         // Messages x3: the conversation's name on every send; no name: someone.
         let (jamie,_)=ComposeIdentity.messages(title:"Jamie Lin")
         for _ in 0..<3 {pass(line("text",to:jamie.name) == "Sent to Jamie Lin","Messages send: Sent to Jamie Lin")}
-        pass(line("text",send:"unknown",to:"Jamie Lin") == "Draft to Jamie Lin (not sent)","Messages draft: Draft to Jamie Lin (not sent)")
+        pass(line("text",send:"unknown",to:"Jamie Lin") == "Typed to Jamie Lin","Messages, not sent: Typed to Jamie Lin, never draft (not sent)")
         pass(line("text",to:ComposeIdentity.messages(title:"New Message").0.name) == "Sent to someone","New Message, no To: Sent to someone")
         pass(ComposeIdentity.messages(title:"+1 (555) 010-7788").0.name == nil,"a phone-number title names nobody")
         // X: a reply via the button, and via Cmd-Return, on Ada's status page; the parent post is the context.
@@ -38,7 +38,7 @@ enum ComposeSendChecks {
         let home=ComposeIdentity.x(pageTitle:"Home / X",path:"/home",labels:["Post text"])
         pass(!home.reply && home.1.isEmpty,"X home composer: a new post, no context")
         pass(line("social",field:"textArea",sendBy:"commandReturn",home.0,home.1) == "Posted on X","X post: Posted on X")
-        pass(line("social",field:"textArea",send:"unknown",home.0,home.1) == "Draft in X (not sent)","X post discarded: a draft")
+        pass(line("social",field:"textArea",send:"unknown",home.0,home.1) == "Typed in X","X post not sent: Typed in X, never draft")
         pass(line("social",field:"textArea",sendBy:"button",control:"quote",reply.0,reply.1) == "Quoted Ada's post on X","X quote post")
         // Reddit: a comment on a post; the post's title is the context.
         let r=ComposeIdentity.reddit(pageTitle:"How do I profile SwiftUI redraws? : r/swift",path:"/r/swift/comments/abc123/how_do_i_profile/")
@@ -59,7 +59,7 @@ enum ComposeSendChecks {
         // Terminals and an unknown composer.
         pass(line("code",field:"textArea") == "Ran a command","terminal: Ran a command")
         pass(line("other",field:"oneLine") == "Sent","an unknown composer: Sent, no destination")
-        pass(line("other",field:"oneLine",send:"unknown") == "Draft (not sent)","an unknown composer's draft")
+        pass(line("other",field:"oneLine",send:"unknown") == "Typed","an unknown composer, not sent: Typed")
         pass(ComposeSend.clipContext(String(repeating:"word ",count:40)).count <= ComposeSend.contextLimit,"context is always clipped")
     }
 }

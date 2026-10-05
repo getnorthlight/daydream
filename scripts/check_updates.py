@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 import shutil
 import stat
+import struct
 import subprocess
 import tempfile
 import unittest
@@ -270,13 +271,20 @@ class KeyFile(TempCase):
         self.assertNotIn("security find-generic-password", source)
 
 
+# claude/crashguard-015: a thin arm64 Mach-O built for macOS 15.0 (header + LC_BUILD_VERSION), as release.platform_problems
+# requires of the three Swift products; Sparkle's generate_appcast reads its architecture too.
+def macho(minos=0x000F0000, cpu=0x0100000C, tail=b""):
+    return (struct.pack("<8I", 0xfeedfacf, cpu, 0, 2, 1, 24, 0, 0) + struct.pack("<6I", 0x32, 24, 1, minos, minos, 0)
+            + bytes(4096) + tail)
+
+
 def synthetic_app(folder, build, short_version, public_key, name="DayDream.app"):
     """An unsigned app bundle Sparkle's tools accept: a shell-script executable and the update keys."""
     app = Path(folder) / name
     (app / "Contents/MacOS").mkdir(parents=True)
     (app / "Contents/Resources").mkdir()
     exe = app / "Contents/MacOS/MacMem"
-    exe.write_text("#!/bin/sh\nexit 0\n")
+    exe.write_bytes(macho())
     exe.chmod(0o755)
     info = {"CFBundleIdentifier": "com.getnorthlight.daydream", "CFBundleName": "DayDream", "CFBundleExecutable": "MacMem",
             "CFBundlePackageType": "APPL", "CFBundleVersion": str(build), "CFBundleShortVersionString": short_version,
@@ -370,6 +378,17 @@ class SparkleInterop(TempCase):
         signature = release.check_appcast(feed, prefix, "DayDream-0.1.0.zip", 20260926120000, "0.1.0 Beta")
         self.assertTrue(signature)
         text = feed.read_text()
+        # claude/crashguard-015: Sparkle infers the macOS 15.0 floor and arm64 from the app; check_appcast requires both.
+        self.assertIn("<sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>", text)
+        self.assertIn("<sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>", text)
+        for old, new in (("<sparkle:minimumSystemVersion>15.0<", "<sparkle:minimumSystemVersion>14.0<"),
+                         ("<sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>", ""),
+                         ("<sparkle:hardwareRequirements>arm64<", "<sparkle:hardwareRequirements>x86_64<"),
+                         ("<sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>", "")):
+            changed = self.root / "changed.xml"
+            changed.write_text(text.replace(old, new))
+            with self.subTest(old=old, new=new), self.assertRaisesRegex(ValueError, "DO NOT publish"):
+                release.check_appcast(changed, prefix, "DayDream-0.1.0.zip", 20260926120000, "0.1.0 Beta")
         self.assertIn("https://github.com/getnorthlight/daydream/releases/download/v0.1.0/DayDream-0.1.0.zip", text)
         self.assertIn("First beta.", text)
         subprocess.run(release.feed_verify_argv(key, feed), check=True, capture_output=True)
@@ -394,9 +413,9 @@ class Prepare(TempCase):
         contents = app / "Contents"
         # Every release is the full-typing build: its MacMem carries the website typing route (public-typing review).
         if typing:
-            (contents / "MacOS/MacMem").write_text("#!/bin/sh\n# WebTypingRoute\nexit 0\n")
-        (contents / "MacOS/mac-mem").write_bytes(b"mac-mem fixture")
-        (contents / "MacOS/mac-mem-backup").write_bytes(b"backup fixture")
+            (contents / "MacOS/MacMem").write_bytes(macho(tail=b"WebTypingRoute"))
+        (contents / "MacOS/mac-mem").write_bytes(macho(tail=b"mac-mem fixture"))
+        (contents / "MacOS/mac-mem-backup").write_bytes(macho(tail=b"backup fixture"))
         (contents / "Resources/before_turn.py").write_text("# fixture\n")
         # Every release carries the signed "On this Mac" runtime (owner decision 2026-09-26).
         if writer:
@@ -462,6 +481,53 @@ class Prepare(TempCase):
         narrow = self.release_app(public, typing=False, folder="narrow")
         with self.assertRaisesRegex(ValueError, "Not the full-typing build"):
             release.prepare(narrow, self.root / "out", key, 1, self.notes(), True, updates, runner=runner)
+        runner.assert_not_called()
+        self.assertFalse((self.root / "out").exists())
+
+    def test_not_macos_15_or_not_arm64_refused(self):
+        """claude/crashguard-015: 0.1.5 is macOS 15.0+ on Apple silicon only; anything else never reaches a tool."""
+        key, public = throwaway_key(self.root)
+        updates = self.updates(public)
+        runner = unittest.mock.Mock(side_effect=AssertionError("no tool may run"))
+        self.assertEqual(release.platform_problems(self.release_app(public, folder="good")), [])
+        self.assertEqual(release.package_platform_problems(), [])
+        x86 = 0x01000007
+        fat = (struct.pack(">2I", 0xcafebabe, 2) + struct.pack(">5I", 0x0100000C, 0, 4096, len(macho()), 14)
+               + struct.pack(">5I", x86, 3, 12288, len(macho()), 12))
+        fat = fat + bytes(4096 - len(fat)) + macho() + bytes(4096 - len(macho()) % 4096) + macho(cpu=x86)
+        cases = {
+            "info-14": ("plist", "14.0", "LSMinimumSystemVersion must be 15.0"),
+            "info-15.1": ("plist", "15.1", "LSMinimumSystemVersion must be 15.0"),
+            "info-missing": ("plist", None, "LSMinimumSystemVersion must be 15.0"),
+            "intel": ("mac-mem", macho(cpu=x86), "mac-mem must be arm64 only"),
+            "universal": ("MacMem", fat + b"WebTypingRoute", "MacMem must be arm64 only"),
+            "minos-14": ("mac-mem-backup", macho(minos=0x000E0000), "mac-mem-backup must be built for macOS 15.0"),
+            "not-macho": ("mac-mem", b"#!/bin/sh\nexit 0\n", "mac-mem must be arm64 only"),
+        }
+        for folder, (what, value, message) in cases.items():
+            app = self.release_app(public, folder=folder)
+            contents = app / "Contents"
+            if what == "plist":
+                info = plistlib.loads((contents / "Info.plist").read_bytes())
+                info.pop("LSMinimumSystemVersion") if value is None else info.update(LSMinimumSystemVersion=value)
+                (contents / "Info.plist").write_bytes(plistlib.dumps(info))
+            else:
+                (contents / "MacOS" / what).write_bytes(value)
+                release.manifest(app, "c" * 40)
+            with self.subTest(case=folder):
+                self.assertTrue(any(message in p for p in release.platform_problems(app)), release.platform_problems(app))
+                with self.assertRaisesRegex(ValueError, "Not a macOS 15 / Apple silicon release"):
+                    release.prepare(app, self.root / "out", key, 1, self.notes(), True, updates, runner=runner)
+        # The universal binary's own slices are both read.
+        self.assertEqual(release.macho_platform(self.root / "universal/DayDream.app/Contents/MacOS/MacMem")[0], (0x0100000C, x86))
+        # Package.swift's floor: .macOS(.v15) or "15.0" only.
+        for text, ok in (('platforms: [.macOS(.v15)]', True), ('platforms: [.macOS("15.0")]', True),
+                         ('platforms: [.macOS(.v14)]', False), ('platforms: [.macOS("13.0")]', False), ('platforms: []', False)):
+            folder = self.root / ("pkg-%d" % abs(hash(text)))
+            folder.mkdir()
+            (folder / "Package.swift").write_text("let package = Package(name: \"X\", %s)\n" % text)
+            with self.subTest(package=text):
+                self.assertEqual(release.package_platform_problems(folder) == [], ok)
         runner.assert_not_called()
         self.assertFalse((self.root / "out").exists())
 

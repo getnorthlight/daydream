@@ -91,15 +91,17 @@ public enum CanonicalGrounding {
     /// claude/final-1004 (integration for the public 0.1.4): ship-1004, scrub-1004, report-1004, mcp-prompts-1003,
     /// chrome-offmain-1003 and livefix-1004 together; one version above scrub-1004, everywhere (prompt21/validator32,
     /// cloud prompt20/validator26). The bump rewrites recent days' notes once, under the usual power rules.
-    public static let localVersion="qwen35-4b-q4-b9723-prompt21-validator32"
-    public static let cloudVersion="deepseek-v4-flash-0731-zdr-prompt20-validator26"
+    /// claude/dayeval-1005 (0.1.5): never "draft": prompt22 asks for "Wrote …", validator33 rewrites what is left (`undraft`).
+    public static let localVersion="qwen35-4b-q4-b9723-prompt22-validator33"
+    public static let cloudVersion="deepseek-v4-flash-0731-zdr-prompt21-validator27"
     /// notes-quality: a moment with nothing typed, searched, sent or on screen is written by code, with no model call.
     /// fix/sx-all round 2: moment2 says "Read"/"Looked at" only where typing would have been recorded.
     /// fix/sx-all round 3: moment3 writes no verbless place ("uploader.rs in harborline in Cursor"): an editor or terminal
     /// line says "Worked on" or "Used Claude Code", or the note marks only the place ("In Cursor."), which reads as filler.
     /// moment5: use recorded site before the container app, observed wording and attributed public-title excerpts.
     /// moment6: terminal entry proves invocation only; short video observations never imply watching.
-    public static let codeVersion="code-moment8-validator14"
+    /// moment9 (claude/dayeval-1005): never draft, unsent or not sent (`undraft`).
+    public static let codeVersion="code-moment9-validator15"
     /// Every version this build writes. A stored note with any other version is an earlier writer's: core rewrites it
     /// for recent days (MemoryCore `NoteWriterVersions.current` holds the same list; notes-quality checks the two agree).
     public static let currentVersions:[String]=[localVersion,cloudVersion,codeVersion,fallbackVersion]
@@ -112,7 +114,8 @@ public enum CanonicalGrounding {
     /// <session title> (5 prompts).").
     /// fallback8 (claude/int-1003): fallback7 from cc-label-1003 (AI-tool prompts) and messages2-1003 (a number-only
     /// conversation named in the stored bullet) together.
-    public static let fallbackVersion="code-fallback8-validator18"
+    /// fallback9 (claude/dayeval-1005): never draft, unsent or not sent: "Typed in Notes.", "Wrote a text to Sam" (`undraft`).
+    public static let fallbackVersion="code-fallback9-validator19"
     public static let fallbackProvider="code/fallback-notes"
     /// fix/sx-all round 2: the instruction for a view with a send code couldn't name ("name no one"). The real model took
     /// "Q7" and "Lumo" from the examples for such a send; this one's examples name no group chat or restaurant, and its
@@ -131,7 +134,7 @@ public enum CanonicalGrounding {
     /// 8,183 of 8,192 bytes (summary-terminal checks the fit).
     /// claude/cc-label-1003 (owner 10/03: "the actual prompts are far richer than the summary"): each bullet carries the
     /// request's specifics, never a bare "Asked <tool>"; 8,186 of 8,192 bytes with the named base instruction.
-    static let localSessionInstruction = #"- An "Own captured requests in this AI session" item: one short bullet for each distinct request (at most 4) with their shared intent and specifics, like "Asked <tool> to show X as a preview: grey button, sweep", never a bare "Asked <tool>" or "Typed a draft"."#
+    static let localSessionInstruction = #"- An "Own captured requests in this AI session" item: one short bullet for each distinct request (at most 4) with their shared intent and specifics, like "Asked <tool> to show X as a preview: grey button, sweep", never a bare "Asked <tool>" or "Typed in <tool>"."#
     static func unnamedSend(_ it:ModelItem)->Bool {it.kind == .typed && it.who().isEmpty && ["text","chat","email"].contains(it.surface() ?? "")}
     static let unnamedSwaps:[(String,String)]=[
         (#"like "Friday dinner at Lumo", "Export crash in tallybird""#,#"like "Export crash in tallybird""#),
@@ -188,17 +191,17 @@ public enum CanonicalGrounding {
 
     Bullets:
     - A moment gets 1 to 5 bullets and a day 2 to 5. Fewer is better. What was sent or asked comes first.
-    - Bullets say what was WRITTEN, SENT or DRAFTED. Things only read (text on screen, search results, REPORT) get a bullet only if nothing was.
+    - Bullets say what was WRITTEN or SENT. Things only read (text on screen, search results, REPORT) get a bullet only if nothing was.
     - Every bullet says what you DID, in the past tense, with no subject: "Texted Q7 about Friday dinner", never "The user texted", never "you" or "your" outside the gist of a text, and never only that something was open or used.
     - An item with "Start with:" has an observed submission gesture. Its bullet starts with one of those phrases. Give a concise account of the meaningful points, usually two clauses: what was stated or requested, and a relevant uncertainty, next step or follow-up question. A subject noun alone is not enough when those points were captured. Preserve "might", "not sure" and other uncertainty; a stated outcome is the message's claim, never your verified conclusion. Use your own words, or a short attributed quote of at most 5 words when it is clearer. Keep the whole bullet under 240 characters. Leave out greetings, thanks and sign-offs.
     - Each typing item is a separate action. Do not combine separate messages or repeat one action in paraphrased bullets. Related clauses within one item share one coherent bullet; an explicit approval may have a separate bullet.
-    - A Messages (text) item is one conversation. Write ONE bullet for the whole conversation with the gist of its texts, like "Texted Sam that you are going to ZUX and asked if they want to meet there" ("you" is the texter). Call them by name or "they"/"them", never "he" or "she". For "name no one": "Texted someone that ...". Never write "unknown" or a draft bullet beside its sends.
+    - A Messages (text) item is one conversation. Write ONE bullet for the whole conversation with the gist of its texts, like "Texted Sam that you are going to ZUX and asked if they want to meet there" ("you" is the texter). Call them by name or "they"/"them", never "he" or "she". For "name no one": "Texted someone that ...". Never write "unknown" or a second bullet beside its sends.
     - A reply, quote or comment says what it answered: "Replied to Ada's post about <its point>, saying <yours>"; no bullet for viewing it.
     - Expand an abbreviation only if the same typing item spells it out.
     - When a message contains a statement, an uncertain plan and a question, keep all three in one short bullet. For example, typed "The practice room request was turned down. I might try the community hall, but I'm not sure. Are there openings on Saturday?" becomes "Texted Rowan that the practice room request was declined, might try the community hall, and asked about Saturday availability." Never reduce it to "about booking a room" or turn the question into a settled plan.
     - Keep the explicit subject in the relevant bullet, even if the title also names it. Preserve a stated negative result (something unavailable, missing, unsuccessful or not happening) as the message's reported claim. Preserve every request and qualifier; never add a subject noun the items do not show.
     - Always name who or where it went, as the item names it: its to "..." or in "..." part, "on X", or the AI app. Never take who it went to from the typed words.
-    - Typed text with "sending unknown": start with "Drafted" or "Wrote" and still say to whom and about what, like "Drafted an email to Sam about pricing". For code or notes: "Wrote" or "Edited". On a pull request or issue: "Wrote the PR #530 description" or "Commented on PR #418 about the export test".
+    - Typed text with "sending unknown": start with "Wrote" and still say to whom and about what, like "Wrote an email to Sam about pricing". Never say draft or unsent. For code or notes: "Wrote" or "Edited". On a pull request or issue: "Wrote the PR #530 description" or "Commented on PR #418 about the export test".
     - "typed text (not captured)": say only who or where, like "Texted Q7"; never guess what it was about.
     - An item that was only in front needs no bullet. Write one only when its line shows it: "Worked on <title> in <app>" (in use for 10 minutes or more), "Reviewed PR #<n>: <title>" (only a pull request marked "someone else's pull request", in use for 2 minutes or more), "On a call: <meeting>" (a call app), "Watched <video title>" (a video for 5 minutes or more). Never write "had ... open", "used <app>" or "worked in <app>".
     - An item with "name no one" went to someone DayDream couldn't read: start with its "Start with:" word and no name, like "Texted that you're running late". Never take a name or place from these instructions.
@@ -429,7 +432,8 @@ public enum CanonicalGrounding {
 
     /// fix/summary-fallback (QA ChatGPT moment): a bullet that calls a typed row sealed with the send key a draft ("Drafted
     /// a message to ChatGPT" for two sent prompts). Never a false claim, but it hides the send: the bullet is refused.
-    static let draftLead=Pattern(#"(?i)^\s*(?:drafted|typed a draft|wrote a draft|started a draft)\b"#)
+    // claude/dayeval-1005: "Drafted a text" is shown as "Wrote a text" (`undraft`), so that lead under-claims a send too.
+    static let draftLead=Pattern(#"(?i)^\s*(?:drafted|typed a draft|wrote a draft|started a draft|wrote (?:a|an) (?:text|message|email|reply|dm)\b)"#)
     public static func underClaim(_ b:GroundedBullet,_ acts:[NoteAction])->Bool {
         acts.contains {$0.kind=="keyboard.text_input" && $0.state=="submitted"} && draftLead.search(b.text)
     }
@@ -1110,16 +1114,16 @@ public enum CanonicalGrounding {
         case "leak":return "bullet \(n) repeats internal wording, an app ID or text addressed to AI tools. Leave it out."
         case "sentences":return "bullet \(n) has more than one sentence. Write one sentence."
         case "alias":return "bullet \(n) writes an item id in its text. Put ids only in \"ids\"."
-        case "send":return "bullet \(n) says \"\(w)\", but only SENT items may use that word, even to retell a draft (\"will send\", not \"will be sent\"). Write \"drafted\" or \"typed\", and \"sending isn't confirmed\" when the item says so."
+        case "send":return "bullet \(n) says \"\(w)\", but only SENT items may use that word, even to retell typed words (\"will send\", not \"will be sent\"). Write \"wrote\" or \"typed\"."
         case "sendword":return "bullet \(n) has the word \"\(w)\", which DayDream allows only for SENT items, even inside a name or title. Leave the word out."
-        case "claim":return "bullet \(n) says \"\(w)\", which none of its items shows. Say only what the items show, or whose words it is (\"the draft says ...\", \"... reported ...\")."
+        case "claim":return "bullet \(n) says \"\(w)\", which none of its items shows. Say only what the items show, or whose words it is (\"the text says ...\", \"... reported ...\")."
         case "attention":return "bullet \(n) says \"\(w)\", which its items don't show. Say what you did there, or leave that item out."
-        case "unframed":return "bullet \(n) says \"\(w)\" as a fact, but those are words from a title, draft, page or report. Say whose words they are right before them, with no \";\" in between: \"the draft says ...\", \"the subject says ...\", \"... reported ...\"."
+        case "unframed":return "bullet \(n) says \"\(w)\" as a fact, but those are words from a title, typed text, page or report. Say whose words they are right before them, with no \";\" in between: \"the text says ...\", \"the subject says ...\", \"... reported ...\"."
         case "return":return "bullet \(n) says \"\(w)\" next to a Return press. Write \"came back to\" or \"pressed Return\"."
         case "duration":return "bullet \(n) states a time or a duration. Leave it out."
         case "worked":return "bullet \(n) says \"\(w)\" about an item that wasn't in use for 10 minutes. Leave that item out."
         case "wrote":return "bullet \(n) says \"\(w)\", but its items have no typed text."
-        case "typedframe":return "bullet \(n) states typed text as fact. Say that it was drafted or typed, or write \"the draft says ...\"."
+        case "typedframe":return "bullet \(n) states typed text as fact. Say that it was written or typed, or write \"the text says ...\"."
         case "screenframe":return "bullet \(n) states text from the screen or a search as fact. Write \"the page says ...\" or \"search results for ...\"."
         case "attribution":let (tag,hint)=cueHint[w]!;return "bullet \(n) uses a \(tag) item without saying whose words they are (\(hint))."
         case "notverified":return "bullet \(n) relays a REPORT. End it with \"; not verified\"."
@@ -1127,7 +1131,7 @@ public enum CanonicalGrounding {
         case "number":return "bullet \(n) has the number \(w), which is not in its items. Leave it out."
         case "name":return "bullet \(n) names \"\(w)\", which is not in its items. Use only names the items show, written as they are there."
         case "user":return "bullet \(n) says \"\(w)\". Use an action-led sentence without a personal subject; never write \"the user\", \"you\" or \"your\". Keep the captured statements and requests."
-        case "lead":return "bullet \(n) starts with \"\(w)\". Start a bullet about an item marked \"Start with:\" with one of those words, or \"Drafted\" or \"Wrote\"; about typing with \"sending unknown\", start with \"Drafted\", \"Wrote\" or \"Typed\"."
+        case "lead":return "bullet \(n) starts with \"\(w)\". Start a bullet about an item marked \"Start with:\" with one of those words, or \"Wrote\"; about typing with \"sending unknown\", start with \"Wrote\" or \"Typed\"."
         case "recipient":return "bullet \(n) says it went to \"\(w)\". Use only the name in the item's to \"...\" or in \"...\" part, the app for an AI app, or \"someone\"; never a name from the typed words."
         case "copy":return "bullet \(n) repeats \(w) of your words in a row; say it in your own words."
         case "they":return "bullet \(n) says \"\(w)\". Use an action-led sentence without a personal subject; never write \"the user\", \"you\" or \"your\". Keep the captured statements and requests."
@@ -1670,7 +1674,7 @@ public enum CanonicalGrounding {
         case .search:return (nil,{"Looked at search results in \($1)."})
         case .screentext:return (nil,{"Text on screen in \($1)."})
         case .unverified:return (nil,{"A message appeared in \($1); sending isn't confirmed."})
-        default:return (nil,{"Typed a draft in \($1)."})
+        default:return (nil,{"Typed in \($1)."})
         }
     }
     static func quoteOf(_ it:ModelItem,_ limit:Int=150)->String? {
@@ -2005,7 +2009,15 @@ public enum CanonicalGrounding {
             drafts=[Draft(text:line,aliases:[main.alias],code:true)]
         }
         let title=(commands.first {!(terminalCommand($0)?.todo ?? "").isEmpty} ?? commands.first).flatMap {terminalCommand($0)?.title} ?? entityLabel(main)
-        return try finish(request,view,title,drafts,codeProvider)
+        return try finish(request,view,codeTitle(title,view),drafts,codeProvider)
+    }
+
+    /// claude/dayeval-1005 (owner 10/05: no per-moment summaries): a moment's note with no model at all: code's note
+    /// where code writes it whole, else the fallback note's own lines from the facts (never a typed word), checked.
+    public static func codeOnlyNote(_ request:CanonicalNoteRequest,view:ModelView) throws -> CanonicalNoteOutput {
+        let note=codeWrites(view) ? try? codeNote(request,view:view) : try? fallbackNote(request,view:view)
+        guard let note,let checked=try? check(note,request:request,view:view) else {throw WriterFailure.invalidOutput}
+        return checked
     }
 
     /// The `sendBy` values that are a key (ModelView.endingName); "button" is a click.
@@ -2077,7 +2089,15 @@ public enum CanonicalGrounding {
         try cover(&drafts,view)
         guard !drafts.isEmpty else {throw reject("fallback","no content")}
         guard drafts.count<=maxBullets else {throw WriterFailure.capacity}
-        return try finish(request,view,entityLabel(main),drafts,fallbackProvider)
+        return try finish(request,view,codeTitle(entityLabel(main),view),drafts,fallbackProvider)
+    }
+
+    /// Code's own title through the one gate finish() applies to every title: a label that carries a send word ("Email
+    /// about Sent Mailbox", a mailbox name) would make finish() refuse the whole note, so the place-based fallback title
+    /// stands in, as it does for a model title (title(_:_:) -> fallbackTitle). PromptChecks "core gate: Sent Mailbox".
+    static func codeTitle(_ label:String,_ view:ModelView)->String {
+        let t=normTitle(label)
+        return coreSend.search(t) ? fallbackTitle(view) : t
     }
 
     /// claude/messages-1003 (owner, 10/3): code's line for a Messages conversation: what was done, who it went to and,
@@ -2645,20 +2665,62 @@ public enum CanonicalGrounding {
         return t
     }
 
+    /// claude/dayeval-1005 (owner 10/05: "draft" labels were usually wrong, most of them were sent): a line code writes
+    /// never says draft, unsent or not sent. "Drafted an email to Sam" is "Wrote an email to Sam", "Typed a draft in
+    /// Notes." is "Typed in Notes.", and a "sending isn't confirmed" hedge goes ("A message appeared in Slack."). Words
+    /// inside quotes (a title, the person's own words) stay as they are.
+    /// claude/dayeval-1005 (owner 10/05: never "draft" anywhere): every note, the model's too, after its checks. MemoryCore
+    /// `DisplayWords.undraft` rewrites stored text the same way when it is shown. Only draft words in the line's own
+    /// grammar change (a lead, an article's noun, a hedge); a title's word stays ("Read Lab Report Draft.").
+    static let undraftRules:[(Pattern,String)]=[
+        (Pattern(#"\s*\((?:not sent|unsent|draft|a draft)\)"#),""),
+        (Pattern(#"^Draft (to|in|on)\b"#),"Typed $1"),
+        (Pattern(#"^Draft$"#),"Typed"),
+        (Pattern(#"\b[Tt]yped (?:a |the )?drafts? (in|on|to|for)\b"#),"Typed $1"),
+        (Pattern(#"^Drafted\b"#),"Wrote"),
+        (Pattern(#"(,|\band|\bthen|\balso) drafted\b"#),"$1 wrote"),
+        (Pattern(#"^Drafting\b"#),"Writing"),
+        (Pattern(#"\b(was|were|is|started|kept|began|while|and|then) drafting\b"#),"$1 writing"),
+        (Pattern(#"(?i)[;,]?\s*(?:sending|delivery) (?:isn't|isn’t|is not|wasn't|wasn’t|was not|not) (?:confirmed|verified)"#),""),
+        (Pattern(#"(?i)[;,]? (?:but |and )?(?:unsent|not sent|never sent|with no send seen|left unsent)\b"#),""),
+        (Pattern(#"\b(?:[Aa]|[Tt]he|[Yy]our|[Mm]y) drafts? of (?=\w)"#),""),
+        (Pattern(#"\b([Aa]) draft (email|answer|update|outline|invite)\b"#),"$1n $2"),
+        (Pattern(#"\b([Aa]n?|[Tt]he|[Yy]our|[Mm]y) draft (email|text|message|reply|post|note|comment|tweet|prompt|response|answer|update|outline|invite|letter|proposal|plan)(s?)\b"#),"$1 $2$3"),
+        (Pattern(#"\b([Tt]he|[Yy]our|[Mm]y) draft\b"#),"$1 text"),
+        (Pattern(#"\b([Aa]) draft\b"#),"$1 message"),
+        (Pattern(#"\b([Tt]he|[Yy]our|[Mm]y|[Tt]wo|[Tt]hree|[Ss]everal|[Ss]ome|[Ff]ew|\d+) drafts\b"#),"$1 messages"),
+    ]
+    public static func undraft(_ text:String)->String {
+        var out="",rest=Substring(text)
+        func plain(_ part:String)->String {
+            var t=part
+            for (rule,with) in undraftRules {t=rule.regex.stringByReplacingMatches(in:t,range:NSRange(t.startIndex...,in:t),withTemplate:with)}
+            return t
+        }
+        while let r=quotedSpan.first(String(rest)) {
+            let head=String(rest)
+            out+=plain(String(head[..<r.lowerBound]))+String(head[r])
+            rest=Substring(head[r.upperBound...])
+        }
+        out+=plain(String(rest))
+        return out.replacingOccurrences(of:"  ",with:" ").replacingOccurrences(of:" .",with:".")
+    }
     static func finish(_ request:CanonicalNoteRequest,_ view:ModelView,_ title:String,_ bullets:[Draft],_ provider:String) throws -> CanonicalNoteOutput {
         let ordered=bullets.filter {leadOf($0.text).map(firstLeads.contains) ?? false}+bullets.filter {!(leadOf($0.text).map(firstLeads.contains) ?? false)}
         let stored=ordered.map {b -> GroundedBullet in
             let acts=b.aliases.flatMap {view.item($0)!.actions}.sorted {($0.at,$0.id)<($1.at,$1.id)}
-            return GroundedBullet(text:named(b.text,b.aliases.compactMap {view.item($0)}),actionIDs:acts.map(\.id),assertion:assertion(of:acts))
+            let text=named(b.text,b.aliases.compactMap {view.item($0)})
+            // claude/dayeval-1005: no note says draft (`undraft`), whoever wrote it.
+            return GroundedBullet(text:undraft(text),actionIDs:acts.map(\.id),assertion:assertion(of:acts))
         }
         // fix/summary-sends QF-14: a note core would refuse is refused here, where the repair turn can still fix it.
         for (n,b) in stored.enumerated() {
             let acts=b.actionIDs.compactMap {id in view.owner(of:id)?.actions.first {$0.id==id}}
             if coreClaimProblem(title,b,acts) != nil {
-                throw reject("send","Bullet \(n+1) says something was sent or posted, but not everything it cites was sent. Say it was drafted or typed, or cite only what was sent.")
+                throw reject("send","Bullet \(n+1) says something was sent or posted, but not everything it cites was sent. Say it was written or typed, or cite only what was sent.")
             }
             if underClaim(b,acts) {
-                throw reject("send","Bullet \(n+1) says drafted, but it cites a message sent with the send key. Say what was sent (\"Asked ...\", \"Texted ...\"), or give the drafts their own bullet.")
+                throw reject("send","Bullet \(n+1) says it was only written, but it cites a message sent with the send key. Say what was sent (\"Asked ...\", \"Texted ...\"), or give the unsent words their own bullet.")
             }
         }
         let output=CanonicalNoteOutput(requestID:request.id,title:title,bullets:stored,generator:provider,generatorVersion:version(provider))
@@ -2797,10 +2859,15 @@ public actor CanonicalLocalWriter {
     private let runtime:any LocalInference
     private let policy:CanonicalPolicyCheck
     private let appNames:[String:String]
+    /// claude/dayeval-1005 (owner 10/05: the day card is the only written summary): false, every moment's note is code's
+    /// (`codeNote`, else `fallbackNote`) and the model is never loaded for a moment.
+    private let momentModel:Bool
     private var busy=false
     public static let provider="local/qwen3.5-4b-q4_k_m"
     /// `appNames` maps bundle IDs to installed apps' names; pass the same map to CoreWriterAdapter.
-    public init(runtime:any LocalInference,policy:@escaping CanonicalPolicyCheck,appNames:[String:String]=[:]) {self.runtime=runtime;self.policy=policy;self.appNames=appNames}
+    public init(runtime:any LocalInference,policy:@escaping CanonicalPolicyCheck,appNames:[String:String]=[:],momentModel:Bool=true) {
+        self.runtime=runtime;self.policy=policy;self.appNames=appNames;self.momentModel=momentModel
+    }
     /// One call for the whole moment or day: first answer, one repair turn with a fixed reason, then salvage.
     public func generate(_ request:CanonicalNoteRequest,completeActions:[NoteAction],now:Date=Date()) async throws -> CanonicalNoteOutput {
         guard !busy else {throw WriterFailure.busy};busy=true;defer{busy=false}
@@ -2854,6 +2921,7 @@ public actor CanonicalLocalWriter {
             guard let checked=try? CanonicalGrounding.check(CanonicalGrounding.codeNote(request,view:view),request:request,view:view) else {throw WriterFailure.invalidOutput}
             return checked
         }
+        if !momentModel,request.targetKind=="activity" {return try CanonicalGrounding.codeOnlyNote(request,view:view)}
         let provider=Self.provider
         do {
             try await runtime.load()
@@ -2930,8 +2998,10 @@ public struct CanonicalCloudWriter: Sendable {
     private let policy:CanonicalPolicyCheck
     private let appNames:[String:String]
     private let consent:@Sendable () async -> CloudConsent
-    public init(consent:@escaping @Sendable () async -> CloudConsent,key:@escaping @Sendable () async throws -> String,policy:@escaping CanonicalPolicyCheck,send:@escaping CloudSender,appNames:[String:String]=[:]) {
-        self.policy=policy;self.appNames=appNames;self.consent=consent;cloud=CloudWriter(consent:consent,key:key,policy:{_ in false},send:send)
+    /// claude/dayeval-1005: false, every moment's note is code's and no moment is sent to the cloud (`CanonicalLocalWriter`).
+    private let momentModel:Bool
+    public init(consent:@escaping @Sendable () async -> CloudConsent,key:@escaping @Sendable () async throws -> String,policy:@escaping CanonicalPolicyCheck,send:@escaping CloudSender,appNames:[String:String]=[:],momentModel:Bool=true) {
+        self.policy=policy;self.appNames=appNames;self.consent=consent;self.momentModel=momentModel;cloud=CloudWriter(consent:consent,key:key,policy:{_ in false},send:send)
     }
     /// One paid call and, when its answer is refused, one repair turn with the fixed reason (notes-quality: a wrong
     /// opening word is fixed, not salvaged); then salvage. A moment with nothing typed, searched, sent or on screen costs no
@@ -2959,6 +3029,10 @@ public struct CanonicalCloudWriter: Sendable {
             guard await consent().enabled,await consent().disclosureVersion == CloudConsent.currentVersion,await policy(request,completeActions) else {throw WriterFailure.denied}
             guard let checked=try? CanonicalGrounding.check(CanonicalGrounding.codeNote(request,view:view),request:request,view:view) else {throw WriterFailure.invalidOutput}
             return checked
+        }
+        if !momentModel,request.targetKind=="activity" {
+            guard await consent().enabled,await consent().disclosureVersion == CloudConsent.currentVersion,await policy(request,completeActions) else {throw WriterFailure.denied}
+            return try CanonicalGrounding.codeOnlyNote(request,view:view)
         }
         try Task.checkCancellation()
         let permitted:@Sendable () async -> Bool={

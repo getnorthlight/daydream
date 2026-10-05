@@ -93,7 +93,7 @@ public struct CanonicalTimeline: View {
     /// Rows in display order (the order ↑/↓ walk).
     private var rows: [MomentSlice] {
         let snap = snapshot(for: dayKey)
-        return FocusListLayout.order(FocusListLayout.sections(snap?.moments ?? [], blocks: snap?.levels?.blocks ?? [], calendar: calendar))
+        return FocusListLayout.order(box.sections(snap?.moments ?? [], blocks: snap?.levels?.blocks ?? [], calendar: calendar))
     }
     private var selectedMoment: MomentSlice? {
         guard let id = browser.selectedMomentID else { return nil }
@@ -205,7 +205,15 @@ public struct CanonicalTimeline: View {
         // Narrow is about the column, not the window: 792 pt leaves a 744 pt column (home-C-narrow).
         let narrow = min(Self.columnWidth, width - 2 * side) < Self.narrowWidth
         return VStack(spacing: 0) {
-            ScrollViewReader { _ in
+            ScrollViewReader { proxy in
+                // perf2-1005: the rows are lazy; a card not built yet (far from view) is scrolled to by its id first.
+                let _ = box.scrollToCard = { [calendar] id in
+                    guard let snap else { return false }
+                    let cards = FocusListLayout.cardIDs(box.sections(snap.moments, blocks: snap.levels?.blocks ?? [], calendar: calendar))
+                    guard let card = cards[id] else { return false }
+                    proxy.scrollTo(card, anchor: .center)
+                    return true
+                }
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 0) {
                         // "DayDream Preview": one small line over the day, the only thing it adds.
@@ -308,7 +316,7 @@ public struct CanonicalTimeline: View {
     @ViewBuilder
     private func sections(_ snap: TodaySnapshot, isToday: Bool, narrow: Bool, compact: Bool) -> some View {
         // summaries/v3 levels: blocks replace the day parts once written (moments no block holds keep their part).
-        let sections = FocusListLayout.sections(snap.moments, blocks: snap.levels?.blocks ?? [], calendar: calendar)
+        let sections = box.sections(snap.moments, blocks: snap.levels?.blocks ?? [], calendar: calendar)
         let paused = isToday ? pausedRow.map { AnyView($0) } : nil
         if sections.isEmpty {
             if let paused { paused.padding(.top, 22) }
@@ -1113,7 +1121,10 @@ private struct RibbonMenuInputs: Equatable {
     private var animating = false
     /// What is being scrolled into view: a row's card (whole, or by its `bottom` edge, where the bar
     /// and a notice are) or the notice above the list. It waits up to 5 s to lay out, then follows for 1 s.
-    private var revealing: (id: String, bottom: Bool, animated: Bool, requested: Date, applied: Date?)?
+    private var revealing: (id: String, bottom: Bool, animated: Bool, requested: Date, applied: Date?, jumped: Bool)?
+    /// perf2-1005: scrolls to a card the lazy rows haven't built (its frame unknown) by its id; false when the shown day
+    /// has no such moment (yet). Set by the list each time it draws.
+    var scrollToCard: ((String) -> Bool)?
 
     deinit {
         for token in observers { NotificationCenter.default.removeObserver(token) }
@@ -1173,6 +1184,17 @@ private struct RibbonMenuInputs: Equatable {
         if let i = momentIndex[id], moments.indices.contains(i), moments[i].id == id { return moments[i] }
         momentIndex = Dictionary(moments.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
         return momentIndex[id].map { moments[$0] }
+    }
+
+    /// perf2-1005: the day's sections, kept while the moments, blocks and time zone are the same (each redraw sorted and
+    /// split the day's moments again: about a tenth of every update of a 276-moment day). An unchanged snapshot hands the
+    /// same arrays back, so the check is usually their storage alone.
+    private var sectionMemo: (moments: [MomentSlice], blocks: [LevelBlockSlice], zone: TimeZone, sections: [FocusListSection])?
+    func sections(_ moments: [MomentSlice], blocks: [LevelBlockSlice], calendar: Calendar) -> [FocusListSection] {
+        if let m = sectionMemo, m.zone == calendar.timeZone, m.moments == moments, m.blocks == blocks { return m.sections }
+        let sections = FocusListLayout.sections(moments, blocks: blocks, calendar: calendar)
+        sectionMemo = (moments, blocks, calendar.timeZone, sections)
+        return sections
     }
 
     /// Called while drawing, before the new day lays out: remembers the old day's offset.
@@ -1239,7 +1261,7 @@ private struct RibbonMenuInputs: Equatable {
     /// Scrolls `id`'s card (or the notice, `FocusRowFrames.noticeKey`) into view once it lays out, and
     /// again as it settles for a second. `bottom`: the card's bottom edge must show.
     func reveal(_ id: String, bottom: Bool = false, animated: Bool) {
-        revealing = (id, bottom, animated, Date(), nil)
+        revealing = (id, bottom, animated, Date(), nil, false)
         if !unsettled && consistent { applyReveal() }
     }
 
@@ -1339,7 +1361,20 @@ private struct RibbonMenuInputs: Equatable {
         let now = Date()
         if let applied = r.applied, now.timeIntervalSince(applied) > 1 { revealing = nil; return }
         if r.applied == nil, now.timeIntervalSince(r.requested) > 5 { revealing = nil; return }
-        guard let frame = rowFrames[r.id] else { return }
+        guard let frame = rowFrames[r.id] else {
+            // perf2-1005: a lazy row far from view has no frame: scroll to its card once, and the frames it lays out
+            // finish the reveal (the next settled layout lands here again with the frame).
+            if !r.jumped, r.id != FocusRowFrames.noticeKey, let jump = scrollToCard {
+                let id = r.id
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self, self.revealing?.id == id, self.revealing?.jumped == false, self.rowFrames[id] == nil else { return }
+                        if jump(id) { self.revealing?.jumped = true }
+                    }
+                }
+            }
+            return
+        }
         let top = scrollView.contentView.bounds.origin.y, height = scrollView.contentView.bounds.height
         var target = top
         if r.bottom {

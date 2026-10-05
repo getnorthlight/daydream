@@ -441,6 +441,7 @@ extension MemoryStore {
         if host.contains("chatgpt") || host.contains("openai") { return "ChatGPT" }
         if host.contains("gemini") { return "Gemini" }
         if host.contains("perplexity") { return "Perplexity" }
+        if let n = ThreadEntities.aiHostName(host) { return n }
         let app = a.app.lowercased()
         if app.contains("claude") || a.bundle.lowercased().contains("anthropic") { return "Claude" }
         if app.contains("chatgpt") || a.bundle.lowercased().contains("openai") { return "ChatGPT" }
@@ -602,7 +603,15 @@ extension MemoryStore {
             guard hit.level == "moment" || hit.level == "line" else { return true }
             moments += 1
             return moments <= limit
-        }
+        }.map(Self.shown)
+    }
+    /// claude/dayeval-1005: a hit as it is shown (Recall, the AI apps' search): matched on the stored words, never "draft".
+    static func shown(_ hit: NoteHit) -> NoteHit {
+        var h = hit
+        h.text = DisplayWords.undraft(h.text); h.inTitle = h.inTitle.map(DisplayWords.undraft); h.noteTitle = DisplayWords.undraft(h.noteTitle)
+        h.lines = h.lines.map(DisplayWords.undraft)
+        h.children = h.children.map { var c = $0; c.title = DisplayWords.undraft(c.title); return c }
+        return h
     }
 }
 

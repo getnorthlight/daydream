@@ -883,8 +883,9 @@ struct OverflowToggle: View {
 }
 
 /// summary-v2's `.sweeping`: one soft violet band, a strip three block-widths wide (35% / 50% / 65%), slid across the WHOLE
-/// quote block by a single phase (4.5 s a pass, ease-in-out, looping) and masked to the block's own glyphs, so every line
-/// lights together. Off (and gone) once the summary arrives or Summarize Now fails.
+/// quote block by a single phase (4.5 s a pass, ease-in-out) and masked to the block's own glyphs, so every line
+/// lights together. Off (and gone) once the summary arrives or Summarize Now fails. perf2-1005: at most
+/// `SummarySweep.passes` passes, each a finite animation (never a forever repeat: fa18262's layout-loop crash rule).
 private struct QuoteSweep: ViewModifier {
     let active: Bool
     func body(content: Content) -> some View {
@@ -908,8 +909,18 @@ private struct SweepBand: View {
                 .frame(width: w * 3, height: g.size.height)
                 .offset(x: w * SummarySweep.offset(phase: phase))
         }
-        .onAppear {
-            withAnimation(.easeInOut(duration: SummarySweep.period).repeatForever(autoreverses: false)) { phase = 1 }
+        // perf2-1005: a bounded run of single passes, never a forever repeat (layout-loop-checks; fa18262: a forever animation
+        // in the main window re-dirtied the toolbar's display cycle until AppKit threw). Each pass jumps back off-block
+        // (the band is outside the block at phase 0 and 1, so the jump never shows), then eases across once. The task
+        // ends with the band (the view goes when the summary arrives or fails) or after the last pass.
+        .task {
+            for _ in 0..<SummarySweep.passes {
+                var reset = Transaction(); reset.disablesAnimations = true
+                withTransaction(reset) { phase = 0 }
+                do { try await Task.sleep(nanoseconds: 50_000_000) } catch { return }
+                withAnimation(.easeInOut(duration: SummarySweep.period)) { phase = 1 }
+                do { try await Task.sleep(nanoseconds: UInt64(SummarySweep.period * 1_000_000_000)) } catch { return }
+            }
         }
     }
 }

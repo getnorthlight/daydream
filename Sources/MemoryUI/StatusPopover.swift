@@ -50,6 +50,9 @@ public struct StatusPopover: View {
                 if let line = state.attentionLine(issue: presentation.issue, now: now, timeZone: zone) {
                     Self.attentionButton(line, actions: actions).transition(StatusMotion.fade)
                 }
+                if MenuBarMenu.chromeFixes(presentation) {
+                    Self.chromeFixButton(actions: actions, askAgain: presentation.chromeAskAgain).transition(StatusMotion.fade)
+                }
                 // One slot: the old and new controls cross-fade over each other instead of stacking.
                 ZStack(alignment: .topLeading) {
                     RecordingControls(state: state, actions: actions, style: .popover, canStart: presentation.canResume,
@@ -109,6 +112,28 @@ public struct StatusPopover: View {
         .accessibilityElement(children: .combine)
         .accessibilityHint(hint)
         .accessibilityIdentifier("popover-attention")
+    }
+
+    /// chromeask-1005: "Chrome pages aren't being saved." as the menu bar draws it: calm, the whole line one click, ending
+    /// in Ask again (refused) or Fix in the accent colour (`CaptureActions.fixChrome`).
+    static func chromeFixButton(actions: CaptureActions, askAgain: Bool = false) -> some View {
+        Button { actions.fixChrome() } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: ChromeAccessNotice.symbol).font(.system(size: 11)).foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+                Text(ChromeAccessNotice.line).font(.system(size: 12)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Text(ChromeAccessNotice.title(askAgain: askAgain)).font(.system(size: 12, weight: .medium)).foregroundStyle(Color.accentColor)
+                    .accessibilityHidden(true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint(ChromeAccessNotice.hint(askAgain: askAgain))
+        .accessibilityIdentifier("popover-chrome")
     }
 
     /// Orange attention line for an operational issue (copy from `RecordingCopy.issue`).

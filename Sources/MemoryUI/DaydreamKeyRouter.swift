@@ -1,4 +1,5 @@
 import AppKit
+import MemoryCore
 import SwiftUI
 
 /// Keys a list surface handles without a focused control (plan §4.8, §7): ↑ ↓ Return Esc and ⌘C.
@@ -69,6 +70,7 @@ final class DaydreamKeyRouterView: NSView {
     /// The key this event means here, or nil when it belongs to someone else. Only in the key window: a key typed in
     /// another app's window never reaches a local monitor, and a DayDream window that isn't key gets none.
     func route(_ event: NSEvent) -> DaydreamKey? {
+        MainQueue.require()   // claude/crashguard-015: the key's characters below go through TSM
         guard enabled, let window, event.window === window, window.isKeyWindow, window.attachedSheet == nil,
               !isHiddenOrHasHiddenAncestor else { return nil }
         if let responder = window.firstResponder {

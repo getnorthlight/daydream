@@ -189,6 +189,8 @@ struct DaydreamMenuBarPanel: View {
         actions.openSettingsSection = { openMain(); model.openSettings($0) }
         // Try Again beside the orange line: the job it is about, now (the history upkeep, a deletion). Nothing opens.
         actions.retryIssue = { model.retryIssue() }
+        // chromeask-1005: Fix beside "Chrome pages aren't being saved." (the Automation pane, or setup's Chrome row).
+        actions.fixChrome = { model.fixChromeAccess(openSetup: { routes.openWindow("onboarding"); routes.activate() }) }
         actions.checkPermissions = { model.checkPermissions() }
         // Allow Permissions: DayDream's drag cards (setup, or Settings › Permissions once setup is finished).
         actions.openSystemSettings = { kind in model.showPermissionCards(kind, openSetup: { routes.openWindow("onboarding"); routes.activate() },

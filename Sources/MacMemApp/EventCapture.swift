@@ -203,6 +203,10 @@ final class EventCapture {
             currentPID = app.processIdentifier
             currentBundle = app.bundleIdentifier ?? ""
             installAXObserver(pid: app.processIdentifier, chrome: currentBundle == ChromePageTarget.bundleID)
+            #if DAYDREAM_OWNER_TYPING
+            // claude/xtyping-1005: Chrome in front as recording starts: wake its accessibility for website typing.
+            if currentBundle == ChromePageTarget.bundleID { WebTypingRoute.shared.chromeInFront(pid: app.processIdentifier, coordinator: coordinator) }
+            #endif
         }
         coordinator.record(kind: .sessionStarted, snapshot: snapshot())
         emitWindowChangeIfNeeded(snapshot())
@@ -210,7 +214,10 @@ final class EventCapture {
         // The heartbeat. In the common run-loop modes, so an open menu or a tracking loop doesn't hold it back past the
         // store's 5 s freshness window (a late heartbeat makes the store refuse the next unit).
         let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
-            self?.coordinator.reconcileResume()
+            self?.coordinator.reconcileResumeOffMain()
+            #if DAYDREAM_OWNER_TYPING
+            if Self.tapOffMain { MainInputFacts.refresh() }   // claude/crashguard-015: kept fresh between events
+            #endif
             if self?.coordinator.recordingSettled != true { self?.stop(reason: "Recording stopped") }
             else if self?.finishingTyping == false { self?.heartbeat(); self?.pages.tick() }
         }
@@ -267,9 +274,14 @@ final class EventCapture {
         guard !finishingTyping else { interruptTypingFinish(); return }
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput { tapDisabled(byTimeout: type == .tapDisabledByTimeout); return }
         guard !stopped, coordinator.isRunning else { discardPending(); return }
+        #if DAYDREAM_OWNER_TYPING
+        // claude/crashguard-015: secure input and the frontmost app as of this event, for website typing's executor
+        // (WebTypingRoute, owner-flag code like the calls above; the owner flag always brings the Chrome flag).
+        if Self.tapOffMain { MainInputFacts.refresh() }
+        #endif
         // gold r3: a key reaching the tap proves Input Monitoring works in this run (`MemoryViewModel.keysArrived`). Key
         // downs only: they reach a listen-only tap only with Input Monitoring.
-        if type == .keyDown { keyWatch.keyArrived(); onKeyInput?() }
+        if type == .keyDown { keyWatch.keyArrived(); onKeyInput?(); lastKeyAt = typingEnvironment.now() }
         // fix/chrome-capture: opt-in counts only (`CaptureDiagnostics`); never a key code or character.
         if type == .keyDown { CaptureDiagnostics.shared.count("tap.key") }
         switch type {
@@ -303,14 +315,55 @@ final class EventCapture {
     /// Website typing's handling of a key down it takes is handed back (`TypingKeyHandoff`) and run here, before this
     /// callback returns and before the next event: the key's characters are read, if at all, inside this callback, only
     /// when that handling asks, and the event is never kept past it.
+    ///
+    /// perf2-1005: the tap thread waits for the main thread at most `TapMainHandoff.deadline` (it waited as long as main
+    /// was busy, and macOS turned the tap off after about a second: seven times in an hour on the owner's laptop). An
+    /// event main hasn't reached by then is never handled; it and the events after it until main catches up are one gap
+    /// (`eventsMissed`), like a tap macOS turned off, except that the tap stays on.
     fileprivate func handleTapOffMain(type: CGEventType, event: CGEvent) {
-        let work: TypingKeyHandoff.Work? = DispatchQueue.main.sync {
-            TypingKeyHandoff.arm()
-            handleTap(type: type, event: event)
-            return TypingKeyHandoff.take()
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            // Reads nothing from the event: main turns the tap back on whenever it gets there.
+            let byTimeout = type == .tapDisabledByTimeout
+            DispatchQueue.main.async { [weak self] in self?.tapDisabled(byTimeout: byTimeout) }
+            return
         }
-        // Never AppKit here: this runs on the tap thread and the route's executor (`keyCharacters`).
-        work? { Self.keyCharacters(event) }
+        let work: TypingKeyHandoff.Work?? = tapHandoff.deliver(key: type == .keyDown, post: { DispatchQueue.main.async(execute: $0) }, handle: {
+            TypingKeyHandoff.arm()
+            self.handleTap(type: type, event: event)
+            return TypingKeyHandoff.take()
+        }, gap: { [weak self] missed in self?.eventsMissed(missed) })
+        // Never AppKit here: this runs on the tap thread (`keyCharacters`, typing-1004: macOS 15 traps in TSM off main).
+        if let work = work ?? nil { work { Self.keyCharacters(event) } }
+    }
+    /// perf2-1005: the last key down at the tap (uptime ns), for keeping the front app's signature pass warm.
+    private var lastKeyAt: UInt64?
+    static let signatureWarmNanoseconds: UInt64 = 60_000_000_000
+    /// The checks turn it off (no real signature checks).
+    static var signatureWarm = true
+    /// perf2-1005: the tap thread's bounded wait for the main thread.
+    let tapHandoff = TapMainHandoff()
+    private var missedLoggedAt: UInt64?
+    /// perf2-1005: events the tap took while the main thread was too busy to handle them in time
+    /// (`TapMainHandoff`). Keys and clicks went by unseen, as when macOS turns the tap off (`tapDisabled`): the unit typed
+    /// before is parked and judged like any other (dropped if it holds late keys) and no late key reads across the gap.
+    /// A key down that reached the tap still proves Input Monitoring works (`KeyArrivalWatch`).
+    func eventsMissed(_ missed: TapMainHandoff.Missed) {
+        if missed.keys > 0 { keyWatch.keyArrived(); onKeyInput?() }
+        guard !finishingTyping else { interruptTypingFinish(); return }
+        guard !stopped, coordinator.isRunning else { discardPending(); return }
+        let now = typingEnvironment.now()
+        focusChangeHeard()
+        if lateReadAt != nil { dropLateKeys(focusMoved: true) } else { sealTyping(.gap, focusMoved: true) }
+        // Website typing's unfinished text is sealed at the missing events too (a key, or a click that may have moved
+        // focus), never joined across them.
+        if missed.events > 0 { TypingKeyGap.lost(at: now) }
+        mouseDown = nil
+        heldModifiers = []; loneModifier = false
+        CaptureDiagnostics.shared.count("tap.missed")
+        if missedLoggedAt.map({ now < $0 || now - $0 >= 60_000_000_000 }) ?? true {
+            missedLoggedAt = now
+            RecordingLog.note("DayDream was busy: \(missed.events) input event(s) went by unseen; the input tap stayed on.")
+        }
     }
 
     /// The characters a key down typed. On the main thread, AppKit's (`NSEvent.characters`, as always). Anywhere else
@@ -324,8 +377,9 @@ final class EventCapture {
     static func keyCharacters(_ event: CGEvent, onMain: Bool = MainQueue.isCurrent) -> String {
         onMain ? appKitCharacters(event) : eventCharacters(event)
     }
-    /// AppKit's reading, main thread only. The checks replace it to prove it is never called anywhere else.
-    static var appKitCharacters: (CGEvent) -> String = { NSEvent(cgEvent: $0)?.characters ?? "" }
+    /// AppKit's reading, main queue only (`MainQueue.require`: debug and check builds trap anywhere else). The checks
+    /// replace it to prove it is never called anywhere else.
+    static var appKitCharacters: (CGEvent) -> String = { MainQueue.require(); return NSEvent(cgEvent: $0)?.characters ?? "" }
     /// The event's own Unicode string (a CoreGraphics read of the event; no input source, no AppKit), any thread.
     static func eventCharacters(_ event: CGEvent) -> String {
         var units = [UniChar](repeating: 0, count: 64)
@@ -857,8 +911,13 @@ final class EventCapture {
         let distance = hypot(event.location.x - down.point.x, event.location.y - down.point.y)
         guard distance <= 6 else { return }
         let kind: HistoryEventKind = down.button == "right" ? .mouseContextMenu : .mouseClick
-        coordinator.record(kind: kind, snapshot: snapshot(at: event.location),
-                           mouse: MouseInfo(button: down.button, clickCount: down.clickCount, modifiers: down.modifiers))
+        let mouse = MouseInfo(button: down.button, clickCount: down.clickCount, modifiers: down.modifiers)
+        // perf2-1005: the click's Accessibility read (up to `snapshotBudgetNanoseconds`) ran on main inside the tap's
+        // wait; it runs off main now and the click is saved when it answers, in order with the other reads.
+        readSnapshot(at: event.location) { [weak self] snap in
+            guard let self, !self.stopped, self.coordinator.isRunning else { return }
+            self.coordinator.record(kind: kind, snapshot: snap, mouse: mouse)
+        }
     }
 
     // MARK: - Typed units
@@ -867,6 +926,7 @@ final class EventCapture {
     /// binding's deadlines.
     private func refreshTypingTimers() {
         let deadlines=coordinator.captureBinding.typingDeadlines(),now=typingEnvironment.now()
+        if deadlines.idle != nil {coordinator.prefetchTypingKey()}
         func delay(_ deadline:UInt64)->TimeInterval {deadline>now ? Double(deadline-now)/1_000_000_000 : 0}
         if deadlines.idle != idleAt {
             idleAt=deadlines.idle;inputEpoch &+= 1
@@ -995,6 +1055,8 @@ final class EventCapture {
     /// owner build) seals it too (`TypingInputSource`).
     func inputSourceChanged() {
         focusChangeHeard()
+        // claude/crashguard-015: the new source, read here on the main queue, for readers off it (`KeyboardInputSource`).
+        KeyboardInputSource.refresh()
         TypingInputSource.changed()
         sealTyping(.inputSource,focusMoved:true)
     }
@@ -1039,6 +1101,7 @@ final class EventCapture {
         terminalFlush?.cancel(); terminalFlush = nil; terminalText = nil; terminalSnapshot = nil
         mouseDown = nil
         axDebounce.values.forEach { $0.cancel() }; axDebounce.removeAll()
+        axReadEpoch &+= 1
         if resetSignatures { lastWindowSignature = nil; lastSelectionSignature = nil }
     }
 
@@ -1097,7 +1160,17 @@ final class EventCapture {
         // Chrome page history: handled in handleAX; Chrome's windows are never
         // read through AX here.
         if pages.pathActive(currentBundle) { return }
-        let snap = snapshot()
+        // perf2-1005: the Accessibility read runs off the main thread (laptop sample: `processAX` → `snapshot` was the
+        // main thread's Accessibility calls to the app in front); what it found is judged here, on main, if nothing
+        // moved meanwhile (no key, no app switch, no reset).
+        let epoch = inputEpoch, pid = currentPID, reads = axReadEpoch
+        readSnapshot { [weak self] snap in
+            guard let self, !self.stopped, !self.finishingTyping, self.coordinator.isRunning,
+                  self.inputEpoch == epoch, self.currentPID == pid, self.axReadEpoch == reads else { return }
+            self.applyAX(notification, snap)
+        }
+    }
+    private func applyAX(_ notification: String, _ snap: AccessibilitySnapshot?) {
         guard coordinator.accepts(snap) else {
             // A readable context the policy rejects (private title, excluded
             // domain) is a privacy boundary. An unreadable one (browser, secure
@@ -1159,11 +1232,16 @@ final class EventCapture {
 
     private func flushTerminal() {
         terminalFlush?.cancel(); terminalFlush = nil
-        defer { terminalText = nil; terminalSnapshot = nil }
-        let current = snapshot()
-        guard let snap = terminalSnapshot, current?.focusID == snap.focusID, coordinator.accepts(current) else { return }
-        coordinator.record(kind: .terminalValueChanged, snapshot: snap, key: KeyInfo(text: terminalText))
+        guard let snap = terminalSnapshot else { terminalText = nil; return }
+        let text = terminalText
         terminalText = nil; terminalSnapshot = nil
+        // perf2-1005: the focus check reads off the main thread too.
+        let reads = axReadEpoch
+        readSnapshot { [weak self] current in
+            guard let self, !self.stopped, self.coordinator.isRunning, self.axReadEpoch == reads,
+                  current?.focusID == snap.focusID, self.coordinator.accepts(current) else { return }
+            self.coordinator.record(kind: .terminalValueChanged, snapshot: snap, key: KeyInfo(text: text))
+        }
     }
 
     // MARK: - Installation
@@ -1175,6 +1253,8 @@ final class EventCapture {
         inputSourceObserver=InputSourceListener(name:Notification.Name(kTISNotifySelectedKeyboardInputSourceChanged as String)) {[weak self] in
             self?.inputSourceChanged()
         }
+        // claude/crashguard-015: the source selected now, for readers off the main queue until the next change.
+        KeyboardInputSource.refresh()
         for name in [NSWorkspace.willSleepNotification,NSWorkspace.sessionDidResignActiveNotification] {
             sleepObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName:name,object:nil,queue:.main) {[weak self] _ in
                 self?.handleSuspension()
@@ -1212,7 +1292,13 @@ final class EventCapture {
         resetObservation()
         currentPID = pid
         currentBundle = bundle
+        if Self.signatureWarm { AccessibilityReader.prewarmSignature(pid: pid, bundle: bundle) }
         observe(pid, bundle == ChromePageTarget.bundleID)
+        #if DAYDREAM_OWNER_TYPING
+        // claude/xtyping-1005: Chrome came to the front (a relaunched Chrome too): wake its accessibility for website
+        // typing, so the first key of a page doesn't find it asleep (`WebTypingRoute.chromeInFront`).
+        if bundle == ChromePageTarget.bundleID { WebTypingRoute.shared.chromeInFront(pid: pid, coordinator: coordinator) }
+        #endif
         if pages.pathActive(bundle) {
             pages.reset()
             pages.trigger(.appSwitch)
@@ -1365,6 +1451,14 @@ final class EventCapture {
         guard !finishingTyping else { return }
         guard !stopped, coordinator.isRunning else { return }
         if !Self.tapIsOn(eventTap) { tapDisabled() }
+        // perf2-1005: for a minute after a key, the native app in front keeps a fresh signature pass, checked off the
+        // main thread (`AccessibilityReader.prewarmSignature`), so a key after a pause doesn't check it on main.
+        if let lastKeyAt, let currentPID, !currentBundle.isEmpty, Self.signatureWarm,
+           typingEnvironment.now() &- lastKeyAt < Self.signatureWarmNanoseconds {
+            AccessibilityReader.prewarmSignature(pid: currentPID, bundle: currentBundle)
+        }
+        // perf2-1005: key downs the tap took while main was busy reached the tap all the same.
+        if tapHandoff.pendingMissedKeys > 0 { keyWatch.keyArrived() }
         watchKeyArrival()
         CaptureDiagnosticsLog.flush(coordinator)
     }
@@ -1386,6 +1480,31 @@ final class EventCapture {
     func tapEventForChecks(_ type: CGEventType, _ event: CGEvent) { handleTap(type: type, event: event) }
 
     // MARK: - Helpers
+
+    /// perf2-1005: one Accessibility read queue (serial: reads answer in the order asked). Set to false, reads run on
+    /// the caller as before (the checks that drive capture synchronously).
+    static var readsOffMain = true
+    private static let axReadQueue = DispatchQueue(label: "daydream.ax-snapshot", qos: .userInitiated)
+    /// Bumped by every reset of what's observed: a read asked before it is dropped when it answers.
+    private var axReadEpoch: UInt64 = 0
+    /// `snapshot(at:)` off the main thread: the same gates on main first, the read on `axReadQueue`, then `apply` on
+    /// main with what it found (and the status line it leaves).
+    private func readSnapshot(at point: CGPoint? = nil, _ apply: @escaping (AccessibilitySnapshot?) -> Void) {
+        guard Self.readsOffMain else { apply(snapshot(at: point)); return }
+        guard !finishingTyping, coordinator.isRunning, let currentPID,
+              let front = NSWorkspace.shared.frontmostApplication, front.processIdentifier == currentPID else { apply(nil); return }
+        guard coordinator.allowsApp(front.bundleIdentifier ?? "") else {
+            AccessibilityReader.status="Excluded app or browser. No foreground content recorded."; apply(nil); return
+        }
+        let captureText = coordinator.captureText
+        Self.axReadQueue.async {
+            let read = AccessibilityReader.read(pid: currentPID, at: point, captureText: captureText)
+            DispatchQueue.main.async {
+                AccessibilityReader.status = read.status
+                apply(read.snapshot)
+            }
+        }
+    }
 
     private func snapshot(at point: CGPoint? = nil) -> AccessibilitySnapshot? {
         guard !finishingTyping, coordinator.isRunning, let currentPID,

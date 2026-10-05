@@ -15,7 +15,7 @@ public enum LevelGrounding {
     public static func instruction(_ level:LevelKind) -> String {
         let common = """
 Rules:
-- Use only what the notes say. Keep their verbs: write Asked, Emailed, Texted, Messaged, Searched or Approved only where a cited note says it. A draft stays a draft. Never say sent, finished, fixed or shipped unless a cited note says so.
+- Use only what the notes say. Keep their verbs: write Asked, Emailed, Texted, Messaged, Searched or Approved only where a cited note says it. Wrote stays Wrote; never write draft or unsent. Never say sent, finished, fixed or shipped unless a cited note says so.
 - Use only names and numbers that are in the notes you cite.
 - Write like a diary with no subject: "Asked Claude to ...", never "the user" or "they".
 - No times, no durations, no ids in the text.
@@ -58,7 +58,7 @@ lines: 2 to 5 lines, one for each thread that ran through the \(unit), most impo
         guard threaded(request) else { return instruction(request.level) }
         let rules = """
 Rules:
-- Use only what the notes say. Keep their verbs: write Asked, Emailed, Texted, Messaged, Searched or Approved only where a note says it. A draft stays a draft. Never say sent, finished, fixed or shipped unless a note says so.
+- Use only what the notes say. Keep their verbs: write Asked, Emailed, Texted, Messaged, Searched or Approved only where a note says it. Wrote stays Wrote; never write draft or unsent. Never say sent, finished, fixed or shipped unless a note says so.
 - Use only names and numbers that are in the notes.
 - No subject: never "the user" or "they". No times, no durations, no ids.
 Answer with JSON only.
@@ -417,7 +417,7 @@ working writing planning fixing building making preparing drafting editing updat
             // Name the replacement: the 4B model repeats a refused verb when told only to keep the notes' verbs.
             let sends:Set<String>=["asked","emailed","texted","messaged","sent","replied","posted","submitted","searched"]
             let says=bad.map { "\"\($0)\"" }.joined(separator:" and ")
-            let fixes=bad.map { w in "\(sends.contains(w) ? "\"wrote to\" or \"drafted\"" : "\"worked on\"") instead of \"\(w)\"" }.joined(separator:", ")
+            let fixes=bad.map { w in "\(sends.contains(w) ? "\"wrote to\"" : "\"worked on\"") instead of \"\(w)\"" }.joined(separator:", ")
             return ("verb","says \(says), but no note it cites says that. Write \(fixes).")
         }
         // Names: a capitalized word that doesn't start a sentence must be in the cited notes.

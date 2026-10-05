@@ -199,7 +199,7 @@ extension MemoryStore {
     /// Destination must be a NEW private empty core store supplied by the native
     /// container worker. Source remains untouched, including WAL and grants.
     public func exportCanonicalSnapshot(to destination:MemoryStore,now:Date=Date()) throws -> CanonicalBackupAudit {
-        guard home.standardizedFileURL.resolvingSymlinksInPath() != destination.home.standardizedFileURL.resolvingSymlinksInPath() else {throw MemError.denied}
+        guard !FilePaths.same(home,destination.home) else {throw MemError.denied}
         return try readSnapshot {
             let snapshot=try canonicalRows(now:now,strict:false),policyJSON=try json(policy())
             try destination.transaction {
@@ -247,7 +247,7 @@ extension MemoryStore {
     }
     private func ownedBackupAsset(_ sha256:String) throws -> Data {
         let url=home.appendingPathComponent("migration-attachments/"+sha256)
-        guard url.standardizedFileURL==url.resolvingSymlinksInPath() else {throw MemError.invalid("Backup asset path must not be linked")}
+        guard FilePaths.unlinked(url) else {throw MemError.invalid("Backup asset path must not be linked")}
         let data=try LegacyMigration.file(url,limit:64*1024*1024)
         guard LegacyMigration.hash(data)==sha256 else {throw MemError.invalid("Backup asset hash mismatch")}
         return data
@@ -274,7 +274,7 @@ extension MemoryStore {
     /// Current authority wins. A backup from another lineage never becomes safe
     /// merely because a destination is empty. Only isolated candidate is changed.
     public func reconcileCanonicalSnapshot(_ candidate:MemoryStore,expected:CoreSnapshotFence,now:Date=Date()) throws -> CanonicalBackupAudit {
-        guard home.standardizedFileURL.resolvingSymlinksInPath() != candidate.home.standardizedFileURL.resolvingSymlinksInPath() else {throw MemError.denied}
+        guard !FilePaths.same(home,candidate.home) else {throw MemError.denied}
         _=try candidate.inspectCanonicalSnapshot(now:now)
         try withSnapshotCoordination { fence in
             guard fence==expected,try candidate.coreSnapshotFence().storeID==fence.storeID else {throw MemError.invalid("Restore authority or lineage changed")}
@@ -309,7 +309,7 @@ extension MemoryStore {
     /// Merge restore: no active originals are overwritten or removed. Preview
     /// binds exact added IDs and every canonical table byte, not just counts.
     public func prepareCanonicalRestore(_ candidate:MemoryStore,now:Date=Date()) throws -> CanonicalRestorePreview {
-        guard home.standardizedFileURL.resolvingSymlinksInPath() != candidate.home.standardizedFileURL.resolvingSymlinksInPath() else {throw MemError.denied}
+        guard !FilePaths.same(home,candidate.home) else {throw MemError.denied}
         _=try candidate.inspectCanonicalSnapshot(now:now)
         let snapshot=try candidate.readSnapshot {try candidate.canonicalRows(now:now,strict:true)}
         return try transaction {
@@ -346,7 +346,7 @@ extension MemoryStore {
     }
     public func cancelCanonicalRestore(_ id:String) throws {try exec("DELETE FROM metadata WHERE id=?",["restore_preview_"+id])}
     public func confirmCanonicalRestore(_ candidate:MemoryStore,previewID:String,confirmed:Bool,now:Date=Date()) throws -> CanonicalRestoreReceipt {
-        guard confirmed,home.standardizedFileURL.resolvingSymlinksInPath() != candidate.home.standardizedFileURL.resolvingSymlinksInPath() else {throw MemError.denied}
+        guard confirmed,!FilePaths.same(home,candidate.home) else {throw MemError.denied}
         // Candidate is read-locked throughout adoption. All writes to the active
         // SQLite store are one transaction, with no rename of an open database.
         return try candidate.readSnapshot {
@@ -366,7 +366,7 @@ extension MemoryStore {
                     let entry=try decode(MigrationEntry.self,row[1])
                     for asset in entry.attachments {
                         let url=home.appendingPathComponent("migration-attachments/"+asset.sha256)
-                        guard url.standardizedFileURL==url.resolvingSymlinksInPath() else {throw MemError.invalid("Restore asset path must not be linked")}
+                        guard FilePaths.unlinked(url) else {throw MemError.invalid("Restore asset path must not be linked")}
                         let data=try LegacyMigration.file(url,limit:64*1024*1024)
                         guard data.count==asset.bytes,LegacyMigration.hash(data)==asset.sha256 else {throw MemError.invalid("Restore requires verified owned assets before adoption")}
                     }

@@ -292,9 +292,9 @@ func coreCopiesAny(_ text: String, _ r: CanonicalNoteRequest) -> Bool {
         check(line(vnm, unnamedSend).contains("name no one") && line(vnm, unnamedSend).contains("Start with: Texted someone") && !line(vnm, unnamedDraft).contains("Sam"),
               "Messages: a send with no conversation read says \"Texted someone\"; the draft names no one")
         let fbnm = fallbackLines(nm, vnm)?.map(\.text) ?? []
-        check(fbnm == ["Texted Sam and asked a question.", "Texted someone about Lumo.", "Drafted a text in Messages."] && noBadWords(fbnm)
-              && CodeFallbackNote.isFallbackLine("Drafted a text in Messages.") && !NoteFiller.isFiller("Texted someone about Lumo.", apps: ["Messages"]),
-              "Messages fallback: Sam's line, \"Texted someone ...\" and a draft line with no name (got \(fbnm))")
+        check(fbnm == ["Texted Sam and asked a question.", "Texted someone about Lumo.", "Wrote a text in Messages."] && noBadWords(fbnm)
+              && CodeFallbackNote.isFallbackLine("Wrote a text in Messages.") && !NoteFiller.isFiller("Texted someone about Lumo.", apps: ["Messages"]),
+              "Messages fallback: Sam's line, \"Texted someone ...\" and a line with no name, never \"draft\" (got \(fbnm))")
         let nmOK = answers([([alias(vnm, "t12")], "Texted Sam asking about lunch on Friday."), ([unnamedSend], "Texted someone that you're on the way to Lumo."),
                             ([unnamedDraft], "Drafted a text to someone about being nearly there.")])
         check(checked(nmOK, nm, vnm) != nil, "Messages validator: \"Texted someone that ...\" passes for a send with no name read")
@@ -352,13 +352,13 @@ func coreCopiesAny(_ text: String, _ r: CanonicalNoteRequest) -> Bool {
         // A post typed on X and left (no send): a draft, never "Posted".
         let xd = try request("x-draft", [post("hot take about compilers", site: "https://x.com", title: "Home / X", surface: "social", sent: false)])
         let vxd = try ModelView(request: xd, actions: xd.actions)
-        check(fallbackLines(xd, vxd)?.map(\.text) == ["Typed a draft in X."] && fallbackLines(xd, vxd)?.first?.assertion == "draft"
-              && validated(answer(["i1"], "Posted on X about compilers."), xd, vxd) == nil, "X draft discarded: code's line stays a draft; \"Posted\" is refused")
-        // A reply typed and left: "Drafted a reply to Ada's post", never "Replied".
+        check(fallbackLines(xd, vxd)?.map(\.text) == ["Typed in X."] && fallbackLines(xd, vxd)?.first?.assertion == "draft"
+              && validated(answer(["i1"], "Posted on X about compilers."), xd, vxd) == nil, "X post not sent: code's line says typed, never posted or draft; \"Posted\" is refused")
+        // A reply typed and left: "Wrote a reply to Ada's post", never "Replied" (or draft).
         let xrd = try request("x-reply-draft", [post("not sure about this one", site: "https://x.com", title: adaTitle, surface: "social", sent: false, extra: adaCtx)])
         let vxrd = try ModelView(request: xrd, actions: xrd.actions)
-        check(line(vxrd, "i1").contains("Start with: Drafted a reply to Ada's post on X") && fallbackLines(xrd, vxrd)?.first?.text.hasPrefix("Drafted a reply to Ada's post on X") == true
-              && validated(answer(["i1"], "Replied to Ada's post about small tools."), xrd, vxrd) == nil, "X reply draft: \"Drafted a reply to Ada's post\"; \"Replied\" is refused")
+        check(line(vxrd, "i1").contains("Start with: Wrote a reply to Ada's post on X") && fallbackLines(xrd, vxrd)?.first?.text.hasPrefix("Wrote a reply to Ada's post on X") == true
+              && validated(answer(["i1"], "Replied to Ada's post about small tools."), xrd, vxrd) == nil, "X reply not sent: code's line \"Wrote a reply to Ada's post\"; \"Replied\" is refused")
         // A Reddit comment: "Commented on r/swift".
         let rd = try request("reddit", [post("strict concurrency caught three races in my app", site: "https://www.reddit.com", title: "Swift 6 concurrency : r/swift", surface: "social", sent: true,
                                              sendBy: "button", extra: ["community": "swift", "sendControl": "comment", "contextAuthor": "jdoe", "contextExcerpt": "Swift 6 concurrency"])])

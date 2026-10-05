@@ -30,9 +30,16 @@ public enum MemError: Error, CustomStringConvertible {
     }
 }
 
+/// Lowercase hex SHA-256. Hex by table, not `String(format:)` per byte: this runs several times for every action a
+/// day assembly reads, and the formatter was about a third of a cold day read.
 public func fingerprint(_ text: String) -> String {
-    SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+    var hex = [UInt8](); hex.reserveCapacity(64)
+    for byte in SHA256.hash(data: Data(text.utf8)) {
+        hex.append(hexDigits[Int(byte >> 4)]); hex.append(hexDigits[Int(byte & 0x0f)])
+    }
+    return String(decoding: hex, as: UTF8.self)
 }
+private let hexDigits = Array("0123456789abcdef".utf8)
 /// Shared formatters and a direct read of DayDream's own two forms (ISOTimestamp.swift): these run for every action on hot paths.
 public func iso(_ date: Date) -> String { ISOTimestamp.string(date) }
 /// Fractional seconds: `iso` has one-second resolution, too coarse for a

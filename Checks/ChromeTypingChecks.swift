@@ -24,6 +24,12 @@ final class FakeAXNode {
     /// fix/chrome-capture: AXEnabled and AXDescription (a control's names are its title and description).
     var enabled: Bool? = true
     var desc: String?
+    /// claude/axjoin-1005 (the Accessibility join): AXDocument, the window server's number, AXDOMClassList (nil: read
+    /// error) and whether AXCustomContent is present (nil: read error).
+    var document: String?
+    var windowNumber: String?
+    var classes: [String]? = []
+    var described: Bool? = false
     init(_ name: String, role: String, subrole: String = "", parent: FakeAXNode? = nil, owner: Int32) {
         self.name = name; self.role = role; self.subrole = subrole; self.parent = parent; self.owner = owner
         parent?.kids.append(self)
@@ -38,7 +44,12 @@ final class FakeChromeWorld {
                                   signatureValid: true, bundleVersion: "153.0.8010.54", frameworkVersions: ["153.0.8010.53", "153.0.8010.54"],
                                   instances: 1)
     var enabled = true, permitted = true, secure = false
-    var frontmost: Int32 = chromePID, systemFocused: Int32 = chromePID
+    var frontmost: Int32 = chromePID, systemFocused: Int32? = chromePID
+    /// claude/xtyping-1005: Chrome's accessibility is asleep (no assistive client asked its application its role yet):
+    /// Accessibility names no focused application, and Chrome no focused window or element. `wake` (logged "ax:wake")
+    /// wakes it; `wakes` false: Chrome doesn't answer.
+    var sleeping = false { didSet { if sleeping { systemFocused = nil } } }
+    var wakes = true
     var axWindow: FakeAXNode?, axFocus: FakeAXNode?
     /// Chrome's AXWindows: the windows on the current Space (other Spaces are not listed).
     var axWindows: [FakeAXNode]?
@@ -120,13 +131,13 @@ final class FakeChromeWorld {
         return reply
     }
     var access: ChromeAXAccess<FakeAXNode> {
-        ChromeAXAccess<FakeAXNode>(
+        var a = ChromeAXAccess<FakeAXNode>(
             frontmostPID: { self.log.append("ax:frontmost"); self.clock += self.focusTick; return self.frontmost },
             systemFocusedPID: { self.log.append("ax:systemFocused"); return self.systemFocused },
             secureInput: { self.log.append("ax:secure"); return self.secure },
-            focusedWindow: { self.log.append("ax:focusedWindow"); return self.axWindow },
+            focusedWindow: { self.log.append("ax:focusedWindow"); return self.sleeping ? nil : self.axWindow },
             windows: { self.log.append("ax:windows"); return self.axWindows },
-            focusedElement: { self.log.append("ax:focusedElement"); return self.axFocus },
+            focusedElement: { self.log.append("ax:focusedElement"); return self.sleeping ? nil : self.axFocus },
             owner: { $0.owner },
             role: { self.clock += self.axTick; self.log.append("ax:role:" + $0.name); return $0.role },
             subrole: { self.log.append("ax:subrole:" + $0.name); return self.subroleUnreadable.contains($0.name) ? nil : $0.subrole },
@@ -142,6 +153,13 @@ final class FakeChromeWorld {
             enabled: { self.log.append("ax:enabled:" + $0.name); return $0.enabled },
             controlNames: { self.log.append("ax:names:" + $0.name); return self.namesUnreadable.contains($0.name) ? nil : [$0.title ?? "", $0.desc ?? ""] },
             children: { self.clock += self.childrenTick; self.log.append("ax:children:" + $0.name); return self.childrenUnreadable ? nil : $0.kids })
+        a.wake = {
+            self.log.append("ax:wake")
+            guard self.wakes else { return false }
+            if self.sleeping { self.sleeping = false; self.systemFocused = self.frontmost }
+            return true
+        }
+        return a
     }
     var environment: ChromeJoinEnvironment {
         ChromeJoinEnvironment(now: { self.clock }, enabled: { self.log.append("env:enabled"); return self.enabled },
@@ -1085,6 +1103,9 @@ func runChromeTypingChecks() throws {
     try checkBursts()
     try checkSubmitControl()
     try checkSubmitTracker()
+    try checkAsleepChrome()
+    try checkXComposers()
+    try checkAccessibilityJoin()
 }
 
 /// Finding 9: the per-key join re-read Chrome's versions on disk and the
@@ -1550,7 +1571,6 @@ private func checkJoin() throws {
         ("focus moves to another field", { $0.axFocus = FakeAXNode("other-field", role: "AXTextField", parent: $0.group, owner: FakeChromeWorld.chromePID) }),
         ("URL changes (same origin)", { $0.windows[0].url = "https://mail.google.com/mail/u/0/?search=x"; $0.web.url = $0.windows[0].url }),
         ("tab switch", { $0.windows[0].tab = "8" }),
-        ("window retitled", { $0.windows[0].name = "Sent - Gmail"; $0.window.title = "Sent - Gmail" }),
         ("incognito window opens", { $0.addWindow("666", mode: "incognito") }),
         ("incognito window opens, not yet listed by Apple Events", { w in
             w.axWindows?.append(w.axOnlyWindow("incognito-unlisted", frame: ChromeBounds(left: 300, top: 200, right: 900, bottom: 800), title: "Private")) }),
@@ -1581,6 +1601,17 @@ private func checkJoin() throws {
             r = w.run(BrowserTypingJoin<FakeAXNode>())
             try check(r.proof == nil, "\(name) \(when): denied (\(String(describing: r.denial)))")
         }
+    }
+    // claude/axjoin-1005 (owner laptop 10/04, X: a title rewritten between the reads refused `changed`): with exactly one
+    // listed window of the focused window's bounds, the title binds nothing (step 9 binds by bounds); window, tab, both
+    // addresses, web area and field are still the same. A retitle between the reads is then allowed, with no place title
+    // (site only). With a same-bounds window elsewhere the title chose the window, and a retitle still refuses
+    // (ChromeAXJoinChecks).
+    for at in [7, 8, 14] {
+        w = FakeChromeWorld()
+        w.onAppleEvent = { _, n in if n == at { w.windows[0].name = "Sent - Gmail"; w.window.title = "Sent - Gmail" } }
+        r = w.run(BrowserTypingJoin<FakeAXNode>())
+        try check(r.proof?.windowID == "101" && r.proof?.pageTitle == "", "window retitled at event \(at), one same-bounds window: allowed, site only (\(r))")
     }
     // Incognito opening mid-read is caught by the list re-check, before any title or URL.
     // fix/chrome-root: the list re-check is the 4th event now (ids, modes, allBounds, ids).
@@ -2368,5 +2399,144 @@ private func checkSubmitTracker() throws {
     try check(TypingPress(x: 0, y: 0, left: true, clicks: 1, modified: false).plain && !TypingPress(x: 0, y: 0, left: true, clicks: 2, modified: false).plain
               && !TypingPress(x: 0, y: 0, left: true, clicks: 1, modified: true).plain && !TypingPress(x: 0, y: 0, left: false, clicks: 1, modified: false).plain,
               "tracker: only a plain single left click can be a Post click (not a double click, a modified click or another button)")
+}
+
+/// claude/xtyping-1005 (owner laptop 10/04, public 0.1.4: a Google search typed in Chrome was saved, an X post or reply
+/// was not; reproduced on a fresh Chrome 154 with a local page shaped like X). Chrome builds its accessibility tree only
+/// once an assistive client asks its application element its role. Until then Accessibility names no focused
+/// application while Chrome is in front, and every full join was refused `notFocused` before any read, with nothing to
+/// say why. Now a join that finds Chrome asleep goes on to the mode gate, wakes Chrome (its role, nothing else) and is
+/// refused as before; the next join reads Chrome awake, with every check unchanged. Website typing also wakes Chrome
+/// when it comes to the front (`BrowserTypingJoin.wake`), behind the same checks and mode gate.
+private func checkAsleepChrome() throws {
+    func asleep(_ setup: (FakeChromeWorld) -> Void = { _ in }) -> FakeChromeWorld {
+        let w = FakeChromeWorld(); w.xPage(); w.sleeping = true; setup(w); return w
+    }
+    // The first key: refused, Chrome woken after the mode gate, nothing about a window or page read.
+    var w = asleep()
+    let join = BrowserTypingJoin<FakeAXNode>()
+    var r = w.run(join)
+    let wakeAt = w.log.firstIndex(of: "ax:wake"), modesAt = w.log.firstIndex(of: "ae:modes")
+    try check(r.denial == .notFocused && wakeAt != nil && modesAt != nil && modesAt! < wakeAt! && w.aeCount == 2,
+              "asleep Chrome: the join reads window IDs and modes, then wakes Chrome, and is refused (\(w.log))")
+    try check(!w.log.contains(where: FakeChromeWorld.isContent) && w.log.last == "ax:wake",
+              "asleep Chrome: no title, bounds, URL, field or AX content read before or after the wake")
+    // The next key: Chrome awake, the full join as always.
+    w.log = []
+    r = w.run(join)
+    try check(r.proof?.role == "AXTextArea" && !w.log.contains("ax:wake"), "asleep Chrome: the next key's join, Chrome awake, is allowed (\(String(describing: r.denial)))")
+    // Every gate before the wake holds: nothing is woken and nothing read.
+    let gates: [(String, (FakeChromeWorld) -> Void, BrowserTypingDenial)] = [
+        ("an Incognito window open", { $0.addWindow("555", mode: "incognito", front: false) }, .notNormal),
+        ("a Guest window", { $0.addWindow("556", mode: "guest") }, .notNormal),
+        ("a window whose mode can't be read", { $0.failing = ["mode"] }, .notNormal),
+        ("window list unreadable", { $0.failing = ["ids"] }, .windowList),
+        ("typing off", { $0.enabled = false }, .disabled),
+        ("Automation not granted", { $0.permitted = false }, .noPermission),
+        ("an unsigned 'Chrome'", { $0.facts.signatureValid = false }, .untrustedTarget),
+        ("secure input on (a password field)", { $0.secure = true }, .notFocused),
+        ("another app in front", { $0.frontmost = 999 }, .notFocused),
+        ("another app focused (Spotlight), Chrome in front", { $0.systemFocused = 999 }, .notFocused),
+    ]
+    for (name, setup, denial) in gates {
+        w = asleep(setup)
+        r = w.run(BrowserTypingJoin<FakeAXNode>())
+        try check(r.denial == denial && !w.log.contains("ax:wake") && !w.log.contains(where: FakeChromeWorld.isContent),
+                  "asleep Chrome, \(name): refused \(denial) with no wake and no content read (\(String(describing: r.denial)))")
+    }
+    // The click join (`anyFocus`) is the same read (refused, waking Chrome only after the gate); the light check reads
+    // focus only and can't vouch for a key, so the full join decides.
+    w = asleep()
+    r = join.join(environment: w.environment, appleEvents: w.ae, accessibility: w.access, blockList: BrowserTypingBlockList(), anyFocus: true)
+    try check(r.denial == .notFocused && !w.log.contains(where: FakeChromeWorld.isContent), "asleep Chrome: a click join is refused before any content read")
+    w = asleep()
+    try check(join.light(environment: w.environment, appleEvents: w.ae, accessibility: w.access, blockList: BrowserTypingBlockList()) == nil
+              && !w.log.contains(where: FakeChromeWorld.isContent), "asleep Chrome: the light check can't vouch for a key")
+    // Chrome that doesn't answer the wake: still refused, and the next join tries again (never allowed asleep).
+    w = asleep { $0.wakes = false }
+    _ = w.run(join); w.log = []
+    try check(w.run(join).denial == .notFocused && w.log.contains("ax:wake"), "asleep Chrome that doesn't wake: refused again, woken again")
+
+    // Website typing's wake when Chrome comes to the front.
+    func wake(_ w: FakeChromeWorld, _ j: BrowserTypingJoin<FakeAXNode> = BrowserTypingJoin<FakeAXNode>()) -> Bool {
+        j.wake(environment: w.environment, appleEvents: w.ae, accessibility: w.access)
+    }
+    w = asleep()
+    try check(wake(w) && !w.sleeping && w.aeCount == 2 && w.log.firstIndex(of: "ae:modes")! < w.log.firstIndex(of: "ax:wake")!
+              && !w.log.contains(where: FakeChromeWorld.isContent), "front wake: asleep, every window normal: window IDs, modes, then the wake; nothing else read")
+    w.log = []; w.aeCount = 0
+    try check(!wake(w) && w.aeCount == 0 && !w.log.contains("ax:wake"), "front wake: Chrome already awake: no Apple Event, no wake (cheap, idempotent)")
+    for (name, setup) in gates.map({ ($0.0, $0.1) }) {
+        w = asleep(setup)
+        try check(!wake(w) && !w.log.contains("ax:wake") && !w.log.contains(where: FakeChromeWorld.isContent), "front wake, \(name): no wake")
+    }
+    w = asleep { $0.enabled = false }
+    _ = wake(w)
+    try check(w.aeCount == 0, "front wake: typing off: not one Apple Event")
+    w = asleep()
+    try check(!wake(w, BrowserTypingJoin<FakeAXNode>(design: .bracketed)) && w.aeCount == 0 && !w.log.contains("ax:wake"),
+              "front wake: the bracketed design never wakes")
+    // Consent withdrawn between the mode gate and the wake.
+    w = asleep()
+    let withdrawn = w
+    w.onAppleEvent = { req, _ in if case .modes = req { withdrawn.enabled = false } }
+    try check(!wake(w) && !w.log.contains("ax:wake"), "front wake: typing turned off during the reads: no wake")
+}
+
+/// claude/xtyping-1005: X's post and reply boxes, shaped as Chrome 154 reports them for a contenteditable
+/// role=textbox (checked against a local page on 127.0.0.1, never x.com): inline on the home page and under a post,
+/// and inside the compose dialog (role=dialog, AXApplicationDialog). Every one is allowed once Chrome is awake, and
+/// the same box in a sensitive or blocked case stays refused.
+private func checkXComposers() throws {
+    let pid = FakeChromeWorld.chromePID
+    let label = BrowserTypingFieldLabels(texts: ["Post text"], identifiers: ["notranslate", "public-DraftEditor-content"])
+    let replyLabel = BrowserTypingFieldLabels(texts: ["Post your reply"], identifiers: ["notranslate", "public-DraftEditor-content"])
+    func page(url: String, title: String, labels: BrowserTypingFieldLabels, role: String, dialog: Bool, asleep: Bool) -> FakeChromeWorld {
+        let w = FakeChromeWorld()
+        w.xPage(url: url, title: title, labels: labels)
+        w.field.role = role
+        let divs = w.deepen(dom: 40)
+        if dialog {
+            // role=dialog aria-modal: an AXGroup with the dialog subrole well above the box, as X's compose layer.
+            divs[10].subrole = "AXApplicationDialog"
+        } else {
+            divs[4].subrole = "AXLandmarkMain"
+            _ = FakeAXNode("article", role: "AXGroup", subrole: "AXDocumentArticle", parent: divs[12], owner: pid)
+        }
+        w.sleeping = asleep
+        return w
+    }
+    let cases: [(String, String, String, BrowserTypingFieldLabels, Bool)] = [
+        ("inline post box (home)", "https://x.com/home", "(2) Home / X", label, false),
+        ("inline reply box (a post's page)", "https://x.com/synthetic_user/status/1000000000000000001", "Synthetic User on X: \"sample post\" / X", replyLabel, false),
+        ("compose dialog (role=dialog)", "https://x.com/compose/post", "(2) Home / X", label, true),
+        ("reply dialog (role=dialog)", "https://x.com/compose/post", "(2) Home / X", replyLabel, true),
+    ]
+    for (name, url, title, labels, dialog) in cases {
+        for role in ["AXTextArea", "AXTextField"] {
+            // Awake: allowed at once.
+            var w = page(url: url, title: title, labels: labels, role: role, dialog: dialog, asleep: false)
+            var r = w.run(BrowserTypingJoin<FakeAXNode>())
+            try check(r.proof?.role == role, "X \(name), contenteditable as \(role), Chrome awake: allowed (\(String(describing: r.denial)))")
+            // Asleep (the owner's laptop): the first key wakes Chrome and is refused, the second is allowed.
+            w = page(url: url, title: title, labels: labels, role: role, dialog: dialog, asleep: true)
+            let j = BrowserTypingJoin<FakeAXNode>()
+            let first = w.run(j)
+            r = w.run(j)
+            try check(first.denial == .notFocused && r.proof?.role == role,
+                      "X \(name), contenteditable as \(role), Chrome asleep: the first key wakes Chrome, the next is allowed (\(String(describing: r.denial)))")
+        }
+    }
+    // Privacy holds for the same boxes: an Incognito window, secure input, and the site switch.
+    var w = page(url: "https://x.com/compose/post", title: "(2) Home / X", labels: label, role: "AXTextArea", dialog: true, asleep: false)
+    w.addWindow("555", mode: "incognito", front: false)
+    try check(w.run(BrowserTypingJoin<FakeAXNode>()).denial == .notNormal, "X compose dialog with an Incognito window open: refused")
+    w = page(url: "https://x.com/compose/post", title: "(2) Home / X", labels: label, role: "AXTextArea", dialog: true, asleep: false); w.secure = true
+    try check(w.run(BrowserTypingJoin<FakeAXNode>()).denial == .notFocused, "X compose dialog under secure input: refused")
+    let messagesOff = BrowserTypingSiteRules(choices: TypedCategoryChoices(messagesAndEmail: false), expanded: true)
+    w = page(url: "https://x.com/compose/post", title: "(2) Home / X", labels: label, role: "AXTextArea", dialog: true, asleep: false)
+    let off = BrowserTypingJoin<FakeAXNode>().join(environment: w.environment, appleEvents: w.ae, accessibility: w.access, blockList: messagesOff.blockList,
+                                                   alwaysBlocked: messagesOff.alwaysBlocked, sites: messagesOff.permits(url:), field: messagesOff.permits(url:field:))
+    try check(off.denial == .blockedSite, "X compose dialog with Messages and email off: refused as a site whose switch is off")
 }
 #endif

@@ -12,7 +12,7 @@ import Foundation
 //          the route). An unrecognised composer still gets draft/sent, with no destination.
 //  Output  one verb line for every surface (`ComposeSend.line`): "Sent to Jamie", "Replied to Ada's post on X",
 //          "Posted on X", "Emailed Sam — Pricing", "Asked ChatGPT", "Commented on r/swift", "Messaged #eng",
-//          "Ran a command", "Draft to Jamie (not sent)". Cards, search and summaries use these verbs.
+//          "Ran a command", "Typed to Jamie". Cards, search and summaries use these verbs.
 //
 // Everything here is pure: no Accessibility, no store. The privacy gates are unchanged and run before any of it.
 
@@ -173,8 +173,9 @@ public enum ComposeSend {
         let on = service.isEmpty ? "" : " on " + service
         switch o.kind {
         case .draft:
-            if let name { return "Draft to \(name) (not sent)" }
-            return service.isEmpty ? "Draft (not sent)" : "Draft in \(service) (not sent)"
+            // claude/dayeval-1005 (owner 10/05): never "draft" or "not sent"; most of them were sent.
+            if let name { return "Typed to \(name)" }
+            return service.isEmpty ? "Typed" : "Typed in \(service)"
         case .sentMessage:
             if let name { return name.hasPrefix("#") ? "Messaged \(name)" : "Sent to \(name)" }
             return "Sent to someone"

@@ -821,9 +821,11 @@ struct Opened { let model: MemoryViewModel; let notices: FakeNotices; let wake: 
         return child
     }
     static func holdChild(_ path: String, _ seconds: Double) -> Never {
+        // wal-1005: another connection's save holds the file (the write lock). The app's history keeps SQLite's
+        // write-ahead log now, where a read (an AI app's) never makes a save busy.
         var db: OpaquePointer?
-        guard sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK,
-              sqlite3_exec(db, "BEGIN", nil, nil, nil) == SQLITE_OK,
+        guard sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK,
+              sqlite3_exec(db, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK,
               sqlite3_exec(db, "SELECT count(*) FROM sqlite_master", nil, nil, nil) == SQLITE_OK else { exit(3) }
         print("held"); fflush(stdout)
         Thread.sleep(forTimeInterval: seconds)
@@ -920,6 +922,6 @@ struct Opened { let model: MemoryViewModel; let notices: FakeNotices; let wake: 
         let onboarding = try String(contentsOfFile: "Sources/MacMemApp/DaydreamOnboarding.swift", encoding: .utf8)
         // fix/setup-status: Start Recording and what's-new's Done both end in `finish()`.
         let finish = onboarding.components(separatedBy: "private func finish() {").dropFirst().first?.components(separatedBy: "\n    }").first ?? ""
-        check(finish.contains("completed = true\n        model.setupFinished()") && finish.contains("model.askChromeAccessAfterSetup()\n        dismiss()"), "G10b", "setup finishing turns Open at login on")
+        check(finish.contains("completed = true\n        model.setupFinished()") && finish.contains("dismiss()") && !finish.contains("Chrome"), "G10b", "setup finishing turns Open at login on (and asks nothing about Chrome)")
     }
 }

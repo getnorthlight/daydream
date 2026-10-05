@@ -136,13 +136,20 @@ public struct DaydreamPermissionSettings: View {
     private let readAccessibility: () -> Bool
     private let readInputMonitoring: () -> Bool
     private let recoveryExpandedInitially: Bool
+    private let known: PermissionSnapshot
+    private let allowedBefore: Bool
     private let onDone: (() -> Void)?
 
+    /// `known`, `allowedBefore`: what the app last showed of the permissions and whether setup was finished
+    /// (`PermissionGrantView`: the cards open on it, and a moment's "not allowed" never draws a button).
     public init(enabled: Bool = true, appURL: URL = Bundle.main.bundleURL,
                 readAccessibility: @escaping () -> Bool = { AXIsProcessTrusted() },
                 readInputMonitoring: @escaping () -> Bool = { CGPreflightListenEventAccess() },
                 recoveryExpandedInitially: Bool = false,
+                known: PermissionSnapshot = PermissionSnapshot(), allowedBefore: Bool = false,
                 onDone: (() -> Void)? = nil) {
+        self.known = known
+        self.allowedBefore = allowedBefore
         self.enabled = enabled
         self.appURL = appURL
         self.readAccessibility = readAccessibility
@@ -156,7 +163,8 @@ public struct DaydreamPermissionSettings: View {
             appURL: appURL, continueTitle: "Done", height: 500, continueAction: close) {
             PermissionGrantView(enabled: enabled, appURL: appURL,
                 readAccessibility: readAccessibility, readInputMonitoring: readInputMonitoring,
-                embedded: true, recoveryExpandedInitially: recoveryExpandedInitially)
+                embedded: true, recoveryExpandedInitially: recoveryExpandedInitially,
+                known: known, allowedBefore: allowedBefore)
         }
         .onExitCommand(perform: close)
     }
@@ -464,8 +472,6 @@ public struct DaydreamChromeStepContent: View {
     public static let cardTitle = "Google Chrome"
     /// The page's main button until it was pressed once; then Continue.
     public static let allowTitle = "Allow Chrome"
-    /// After the press, when macOS gave no answer (Chrome didn't open): finishing setup asks again when Chrome comes forward.
-    public static let laterLine = "macOS will ask when Chrome is next in front."
     private let icon: NSImage?
     private let access: ChromeAccessState
     private let asked: Bool
@@ -477,13 +483,13 @@ public struct DaydreamChromeStepContent: View {
     }
 
     /// The one line under the card: nothing before the press, nothing while macOS asks or once it answered. A press macOS
-    /// couldn't answer says why (the copy the state already uses in Settings), or that it asks later.
+    /// couldn't answer says why (the copy the state already uses in Settings). Nothing asks later (chromeask-1005).
     public static func line(access: ChromeAccessState, asked: Bool) -> String? {
         guard asked else { return nil }
         switch access {
         case .checking, .allowed, .denied, .askFailed: return nil
-        case .unverified, .twoCopies: return access.helper
-        case .unknown, .notAsked, .chromeNotRunning: return laterLine
+        case .unverified, .twoCopies, .chromeNotRunning: return access.helper
+        case .unknown, .notAsked: return nil
         }
     }
 
