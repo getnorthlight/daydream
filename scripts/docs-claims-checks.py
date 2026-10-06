@@ -124,6 +124,24 @@ class OwnedFiles(unittest.TestCase):
                     self.assertIn(frag, anchors(target_rel), f"{rel}: missing anchor {link}")
 
 
+    def test_no_old_nothing_sent_claims(self):
+        # Usage counts are sent: no owned page may still say there are no analytics or that nothing reaches the
+        # developers. Each page that talks about it names PostHog and the switch.
+        for rel in OWNED:
+            low = read(rel).lower()
+            for phrase in ["no analytics", "analytics, telemetry", "no telemetry", "or telemetry", "receive nothing", "receives nothing",
+                           "nothing, unless you send it to us", "never receive your history, your settings or anything about how you use"]:
+                self.assertNotIn(phrase, low, f"{rel}: {phrase!r}")
+            self.assertNotIn("everything stays on your mac", low, rel)
+        for rel in ["README.md", "PRIVACY.md", "SECURITY.md", "docs/faq.md", "docs/privacy-model.md"]:
+            text = read(rel)
+            self.assertIn("PostHog", text, rel)
+            self.assertIn("Settings › Advanced", text, rel)
+        privacy = read("PRIVACY.md")
+        self.assertIn("## Usage counts", privacy)
+        self.assertIn("never include your history", privacy)
+
+
 class PendingPages(unittest.TestCase):
     def test_pending_pages(self):
         missing = [f"{page} ({track})" for page, track in PENDING.items() if not (ROOT / page).exists()]
@@ -182,6 +200,18 @@ class Readme(unittest.TestCase):
         section = self.text.split("## Network connections", 1)[1].split("\n## ", 1)[0]
         self.assertIn("github.com", section)
         self.assertIn("openrouter.ai", section)
+        self.assertIn("us.i.posthog.com", section)
+
+    def test_usage_counts_are_listed_plainly(self):
+        # Anonymous usage counts (Sources/MacMemApp/UsageSender.swift): the README lists every kind, says what is never
+        # sent, and names the switch as Settings › Advanced draws it (UsageSharingText.title).
+        section = self.text.split("### Usage counts", 1)[1].split("\n## ", 1)[0]
+        title = re.search(r'public static let title = "([^"]+)"', read("Sources/MemoryUI/UsageSharingSettings.swift")).group(1)
+        self.assertEqual(title, "Share anonymous usage counts")
+        for needle in ["**Installed**", "**Setup**", "**Once a day**", "**AI apps**", "**Opening and searching**", "PostHog",
+                       "random ID", "Settings › Advanced", title, "See what's sent", "Copy ID", "Test and development builds never send",
+                       "never sends your history, typed words, window or page titles, sites, searches", "Never what you searched"]:
+            self.assertIn(needle, section, needle)
 
 
 class Pictures(unittest.TestCase):

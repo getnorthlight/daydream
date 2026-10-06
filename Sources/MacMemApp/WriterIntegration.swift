@@ -125,6 +125,18 @@ private struct AdmissionGuardedInference:LocalInference {
 }
 
 @MainActor final class WriterIntegration:ObservableObject {
+    /// Usage counts' summaries_result hook (mode, outcome); `UsageReport.start` sets it, so check builds that compile
+    /// the writer without UsageReport count nothing.
+    static var noteSummaryOutcome:((_ mode:String,_ outcome:String)->Void)?
+    static func summaryFailure(_ problem:SummaryProblem?)->String {
+        switch problem {
+        case .cloudKey?: return "failed_key"
+        case .cloudCredits?: return "failed_credits"
+        case .cloudOffline?: return "failed_offline"
+        case .cloudHost?: return "failed_host"
+        default: return "failed_other"
+        }
+    }
     @Published var status="Summaries on this Mac aren't set up."
     @Published var progress:Double?
     @Published private(set) var downloadEstimate=DownloadTimeEstimate()
@@ -1709,6 +1721,13 @@ private struct AdmissionGuardedInference:LocalInference {
             ran+=1;last=outcome;counters.noteRuns+=1;onNoteRun?(item)
             guard epoch==modeGeneration else {break}
             let now=clock()
+            // Usage counts (summaries_result): the outcome only, by mode; never the moment or the note.
+            switch box.kind {
+            case .committed:Self.noteSummaryOutcome?(mode,"ok")
+            case .final:Self.noteSummaryOutcome?(mode,"fallback")
+            case .provider(let problem):Self.noteSummaryOutcome?(mode,Self.summaryFailure(problem))
+            default:break
+            }
             switch box.kind {
             case .committed:
                 failuresInRow=0

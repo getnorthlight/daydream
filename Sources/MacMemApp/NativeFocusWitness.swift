@@ -278,7 +278,8 @@ final class WebContentFocusWitness<Node> {
 /// Turns an Electron or Chromium app's Accessibility tree on with
 /// `AXManualAccessibility`, once per process (the attribute is written only by
 /// `WebContentAXReader`, compiled into the owner build alone). Never `AXEnhancedUserInterface`
-/// (it also changes how the app's windows behave). Event-driven: called only
+/// (it also changes how the app's windows behave), except for an app with no such switch at all (ChatGPT:
+/// `EnhancedUserInterfaceSwitch`). Event-driven: called only
 /// from a typing proof in an allowed web-content app, never on a timer. A
 /// process that already had its tree on (a screen reader, another tool) is
 /// left alone. The key that turns it on is not read: the app builds its tree
@@ -310,6 +311,55 @@ final class ManualAccessibilitySwitch {
         states[identity] = write() ? .ours : .failed
         return false
     }
+}
+
+/// chatgpt-capture: turns on `AXEnhancedUserInterface` for an app that has no `AXManualAccessibility` (ChatGPT,
+/// `TypingCategories.enhancedUserInterfaceApps`), once per process, and turns it back off where this switch turned it
+/// on. Pure: the attribute is read and written only by `AccessibilityReader.prepareAppTree` (owner build), which asks
+/// only while recording, typing for that app and its signature all hold. Event-driven (a key in that app), never a timer.
+/// - `ours`: this switch turned it on (it is turned off again by `restore`).
+/// - `theirs`: it was already on (VoiceOver, Voice Control, another tool): never written, never turned off.
+/// - `failed`: the app refused the write: never asked again for that process; the proof then finds no field.
+final class EnhancedUserInterfaceSwitch {
+    enum State: Equatable { case ours, theirs, failed }
+    static var limit: Int { 32 }
+    private(set) var states: [String: State] = [:]
+    /// Attribute writes so far, both ways (checks read it).
+    private(set) var writes = 0
+    /// - identity: the signed process (`pid:launch:bundle`), so a reused PID starts over.
+    /// - read: the attribute now (nil when it can't be read).
+    /// - write: sets it to true; false when the app refused.
+    /// Returns whether the app's tree was already on before this call (the key that turns it on is not read: the app
+    /// builds its tree after the call, so that proof fails closed).
+    func ensure(identity: String, read: () -> Bool?, write: () -> Bool) -> Bool {
+        if let state = states[identity] { return state != .failed }
+        if states.count >= Self.limit { states = states.filter { $0.value == .ours } }
+        if states.count >= Self.limit { return false }
+        if read() == true { states[identity] = .theirs; return true }
+        writes += 1
+        states[identity] = write() ? .ours : .failed
+        return false
+    }
+    /// Turns it off again in every process this switch turned it on in, except the ones `keep` names. A process that
+    /// has quit is forgotten. While an assistive app is on (VoiceOver), it is left on and handed over (`theirs`): the
+    /// person's screen reader needs it. A value someone else already turned off is not written. A forgotten process
+    /// is asked again at its next allowed key. Returns the identities turned off.
+    @discardableResult
+    func restore(keep: (String) -> Bool = { _ in false }, running: (String) -> Bool, assistiveOn: Bool,
+                 read: (String) -> Bool?, write: (String) -> Bool) -> [String] {
+        var off: [String] = []
+        for (identity, state) in states where state == .ours && !keep(identity) {
+            guard running(identity) else { states[identity] = nil; continue }
+            if assistiveOn { states[identity] = .theirs; continue }
+            if read(identity) == true { writes += 1; if write(identity) { off.append(identity) } }
+            states[identity] = nil
+        }
+        // A refusal is remembered only while that process runs.
+        for (identity, state) in states where state == .failed && !running(identity) { states[identity] = nil }
+        return off.sorted()
+    }
+    /// Whether any process holds the attribute because of this switch (`restore` has something to do).
+    var holdsAny: Bool { states.values.contains(.ours) }
 }
 
 /// Which process a key goes to: the frontmost app, or a launcher panel

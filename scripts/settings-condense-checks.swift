@@ -4,7 +4,7 @@ import SwiftUI
 @testable import MemoryCore
 @testable import MemoryUI
 
-/// Owner 10/3: setup's and Connections' "Let AI apps read what you typed" switch, and Settings › Apps to remember.
+/// Owner 10/3: setup's and Connections' "Let AI apps see your typed words" switch, and Settings › Apps to remember.
 /// Owner decision 2026-10-03 (correcting faec835, which folded the whole page into two one-line rows): the scrolling app list
 /// stays in sight; under it "Web pages in Chrome" and "Remember what you type" are each a title row with its switch, and a
 /// click on the row (not the switch) opens that row's own settings with a smooth height-and-fade disclosure (none with
@@ -37,7 +37,7 @@ import SwiftUI
         require(!AIReadsTypedSetting.isOn(defaults), "turned off: off")
         AIReadsTypedSetting.set(true, defaults)
         require(AIReadsTypedSetting.isOn(defaults), "turned on again: on")
-        require(AIReadsTypedSetting.title == "Let AI apps read what you typed", "title")
+        require(AIReadsTypedSetting.title == "Let AI apps see your typed words", "title")
         require(AIReadsTypedSetting.line == "AI apps you connect can see what you type, minus passwords and codes.",
                 "one short line")
         let cards = source("Sources/MemoryUI/PermissionSetup.swift")
@@ -47,8 +47,9 @@ import SwiftUI
                 "the toggle is directly under the Google Chrome row")
         require(cards.contains("@AppStorage(AIReadsTypedSetting.key) private var aiReadsTyped = AIReadsTypedSetting.defaultValue")
                 && cards.contains("Toggle(\"\", isOn: $aiReadsTyped)"), "setup's toggle is bound to the setting")
-        require(source("Sources/MacMemApp/DaydreamOnboarding.swift").contains("chromeRow: chromeRow, showsAIReadsToggle: true,"),
-                "setup's Permissions card shows it")
+        // Owner 10/5: setup doesn't show it (connecting an AI app is the choice); Settings › Connections does.
+        require(!source("Sources/MacMemApp/DaydreamOnboarding.swift").contains("showsAIReadsToggle"),
+                "setup's Permissions card doesn't show it")
         let connections = source("Sources/MacMemApp/ConnectionSettings.swift")
         require(connections.contains("@AppStorage(AIReadsTypedSetting.key) private var aiReadsTyped = AIReadsTypedSetting.defaultValue")
                 && connections.contains("Toggle(\"\", isOn: $aiReadsTyped)") && connections.contains("Text(AIReadsTypedSetting.line)"),

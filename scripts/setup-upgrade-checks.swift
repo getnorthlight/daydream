@@ -3,7 +3,7 @@
 // one-time what's-new. Drives the REAL setup window (`DaydreamOnboarding(model:)`) for a production-mode MemoryViewModel
 // on scratch histories (MAC_MEM_HOME) with HOME and CFFIXED_USER_HOME in scratch, offscreen:
 //   fresh     : setup opens; Summaries on this Mac ON by default; one Continue starts it and moves to Apps; typing and
-//               Web pages in Chrome ON; the review says the download live; You're all set never with Summaries Off
+//               Web pages in Chrome ON; the last page (Connect your AI) says the download live, and Summaries Off with its button
 //   upgrade   : setup finished in an older build (completedV1, no setup version) and a store as test 4/5 left it (typing
 //               saved Off, no Chrome switch): what's-new opens once at launch, while recording; its Apps page shows both
 //               ON; Done writes version 2 and SetupChoices on/on, leaves captureText and browserPages on, asks Chrome
@@ -240,11 +240,11 @@ final class KeyWindow: NSWindow {
         setup.shoot(shots, "04-apps-both-on")
         setPhase(model, downloading)
         setup.pressReturn()
-        _ = wait(10) { setup.shows("You're all set") || setup.shows("Almost ready") }
-        check(setup.shows("Summaries = Downloading 1.2 of 2.7 GB"), "fresh: the review says the download live", setup.all.joined(separator: " | "))
-        check(setup.shows("You're all set") && setup.shows("Start Recording"), "fresh: You're all set while downloading; Start Recording (never waits for summaries)")
-        check(setup.shows("Typed text = On") && (!ReleaseFeatures.chromePageHistory || setup.shows("Web pages in Chrome = On")),
-              "fresh: review rows Typed text On and Web pages in Chrome On", setup.all.joined(separator: " | "))
+        _ = wait(10) { setup.shows(DaydreamOnboarding.connectTitle) }
+        check(setup.shows("Summaries = Downloading 1.2 of 2.7 GB"), "fresh: the last page says the download live", setup.all.joined(separator: " | "))
+        check(setup.shows(DaydreamOnboarding.connectTitle) && setup.shows("Start Recording"), "fresh: Connect your AI while downloading; Start Recording (never waits for summaries)")
+        check(!setup.shows("Typed text = On") && !setup.shows("You're all set"),
+              "fresh: the last page has no Typed text row (chosen on the page before)", setup.all.joined(separator: " | "))
         check(model.captureText && model.typing.setUp, "fresh: Continue turned typing on (captureText, key ready)")
         check(!ReleaseFeatures.chromePageHistory || model.browserPagesSaved, "fresh: Web pages in Chrome saved on")
         let choices = model.setupChoicesRead()
@@ -252,17 +252,17 @@ final class KeyWindow: NSWindow {
         setup.shoot(shots, "05-review-downloading")
         setPhase(model, .on(.local))
         setup.settle(0.4)
-        check(setup.shows("Summaries = On this Mac") && setup.shows("You're all set"), "fresh: review once on: On this Mac")
+        check(!setup.all.contains { $0.hasPrefix("Summaries =") } && setup.shows(DaydreamOnboarding.connectTitle), "fresh: once on, no summaries row", setup.all.joined(separator: " | "))
         setup.shoot(shots, "06-review-on")
-        // Summaries off (or failed): never "You're all set", and the row carries its one button.
+        // Summaries off (or failed): the row says so and carries its one button.
         setPhase(model, .off)
         setup.settle(0.4)
-        check(!setup.shows("You're all set") && setup.shows("Almost ready") && setup.shows("Summaries = Off") && setup.shows("Turn On"),
-              "fresh: Summaries Off: 'Almost ready' and one Turn On button, never You're all set", setup.all.joined(separator: " | "))
+        check(setup.shows("Summaries = Off") && setup.shows("Turn On"),
+              "fresh: Summaries Off: its row and one Turn On button", setup.all.joined(separator: " | "))
         setPhase(model, .failed(.downloadStopped))
         setup.settle(0.4)
-        check(!setup.shows("You're all set") && setup.shows("Summaries = The download stopped.") && setup.shows("Try Again"),
-              "fresh: a stopped download: its line and Try Again, never You're all set", setup.all.joined(separator: " | "))
+        check(setup.shows("Summaries = The download stopped.") && setup.shows("Try Again"),
+              "fresh: a stopped download: its line and Try Again", setup.all.joined(separator: " | "))
         setup.close()
     }
 
@@ -292,7 +292,7 @@ final class KeyWindow: NSWindow {
         setup.pressReturn()
         _ = wait(10) { setup.shows(DaydreamOnboarding.doneTitle) }
         check(setup.shows(DaydreamOnboarding.doneTitle) && !setup.shows("Start Recording"), "upgrade: the review's button is Done (no Start Recording while recording)")
-        check(setup.shows("You're all set") && setup.shows("Typed text = On"), "upgrade: review: all set, Typed text On")
+        check(setup.shows(DaydreamOnboarding.connectTitle) && !setup.all.contains { $0.hasPrefix("Summaries =") }, "upgrade: last page: Connect your AI, summaries on (no row)")
         setup.shoot(shots, "whatsnew-3-done")
         chromeAsks = 0
         // fix/sx-all: the Apps save set recording down and started it again, as every save while recording does (the
@@ -481,16 +481,16 @@ final class KeyWindow: NSWindow {
         check(!SummaryControls.calls.contains("local"), "cloud: summaries are not turned on")
         again.shoot(shots, "03-cloud-key-error")
         again.close()
-        // The review with no key (the OpenRouter switch turned off): Off, Almost ready, Add Key.
+        // The last page with no key (the OpenRouter switch turned off): Off with Add Key.
         let review = Setup(model)
         review.switches[1].performClick(nil)
         review.settle(0.5)
         review.pressReturn()
         _ = wait(20) { review.onApps }
         review.pressReturn()
-        _ = wait(10) { review.shows("Almost ready") || review.shows("You're all set") }
-        check(review.shows("Summaries = Off") && review.shows(DaydreamOnboarding.addKeyTitle) && review.shows("Almost ready") && !review.shows("You're all set"),
-              "cloud: no key: the review says Summaries Off with one Add Key button, titled Almost ready", review.all.joined(separator: " | "))
+        _ = wait(10) { review.shows(DaydreamOnboarding.connectTitle) }
+        check(review.shows("Summaries = Off") && review.shows(DaydreamOnboarding.addKeyTitle),
+              "cloud: no key: the last page says Summaries Off with one Add Key button", review.all.joined(separator: " | "))
         review.shoot(shots, "07-review-off-add-key")
         review.close()
         // fix/sx-all round 2: OpenRouter chosen with a saved key (after an update, or while the key is checked at launch):

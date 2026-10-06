@@ -7,7 +7,7 @@ import Foundation
 ///
 /// Privacy: built only from the JSON reply the same call returns in detailed form, so concise never says more than
 /// detailed: no field is read from the store here. Typed words appear only where the reply carries them (`typed_text`,
-/// a typed search hit's excerpt), which happens only through the gated path ("Let AI apps read what you typed", in the
+/// a typed search hit's excerpt), which happens only through the gated path ("Let AI apps see your typed words", in the
 /// running app). Nothing here adds a web address, a field value or a secret.
 public enum AssistantMarkdown {
     public enum Format: String { case concise, detailed }

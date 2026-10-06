@@ -556,12 +556,10 @@ class BrowserBoundary(unittest.TestCase):
                        'Browser text is never saved','Recording stops while the change is saved, "\n            + "and AI apps you connected are disconnected until you reconnect them. You can undo',
                        '"Search, email and chat pages']:
             self.assertNotIn(banned,ui)
-        # legal.md §11.4 in the app's setup, not only the docs. ux/declutter: setup says it once, on the review
-        # page before Start Recording (the apps step and Settings' old Recording requirements page repeated it).
+        # legal.md §11.4: README and PRIVACY.md say it (below). Owner 10/5: setup's last page is Connect your AI and no
+        # longer shows the line; the sentence stays defined in the app's words (honesty-ui-checks pins it).
         screens=(ROOT/'Sources/MemoryUI/OnboardingScreens.swift').read_text()
-        # ux/v1 words it as README and PRIVACY.md do (below); honesty-ui-checks pins the same sentence.
         self.assertIn('public static let ownMac = "Use DayDream only to record yourself, on your own Mac account."',screens)
-        self.assertIn('notice("person", DaydreamSetupText.ownMac)',screens)
         for doc in [privacy,(ROOT/'README.md').read_text()]:
             self.assertIn("Use DayDream only to record yourself, on your own Mac user account.",doc)
             self.assertIn("isn't a monitoring tool",doc)
@@ -677,13 +675,17 @@ class BrowserBoundary(unittest.TestCase):
         # web track's one browser status hook (test_owner_hooks_are_small).
         snapshot=(ROOT/'Sources/MacMemApp/AccessibilitySnapshot.swift').read_text()
         blocks=re.findall(r'#if '+OWNER_FLAG+r'\n(.*?)#endif',snapshot,re.S)
-        self.assertEqual((len(blocks),snapshot.count(OWNER_FLAG)),(4,4))
+        # chatgpt-capture: plus two one-call blocks in `AppTrees` (ChatGPT's accessibility setting, owner build only).
+        self.assertEqual((len(blocks),snapshot.count(OWNER_FLAG)),(6,6))
         reader=[b for b in blocks if 'WebContentAXReader' in b]
         self.assertEqual(len(reader),3)
         for b in reader:
             for word in [FLAG,'WebTypingRoute','ChromeTypingWitness','BrowserTypingJoin','BrowserTypingBurst','WebTypingText','#else']:
                 self.assertNotIn(word,b)
-        (status,)=[b for b in blocks if 'WebContentAXReader' not in b]
+        trees=[b for b in blocks if 'WebContentAXReader' not in b and 'AccessibilityReader.' in b]
+        self.assertEqual([[l.strip() for l in b.splitlines() if l.strip()] for b in trees],
+                         [['AccessibilityReader.prepareAppTree(frontmost:pid,allowed:allowed)'],['AccessibilityReader.restoreAppTrees()']])
+        (status,)=[b for b in blocks if 'WebContentAXReader' not in b and b not in trees]
         self.assertIn('WebTypingText.browserStatus',status)
         # The Typing settings name the flag once, around the "Other websites"
         # strings only; the public build gets nil and no strings.
@@ -710,7 +712,8 @@ class BrowserBoundary(unittest.TestCase):
                 # The apps track's WebContentAXReader blocks are pinned by
                 # test_owner_switch_is_named_only_where_expected; this test
                 # governs the website typing hook only.
-                blocks=[b for b in blocks if 'WebContentAXReader' not in b[0]]
+                blocks=[b for b in blocks if 'WebContentAXReader' not in b[0]
+                        and b[0].strip() not in ('AccessibilityReader.prepareAppTree(frontmost:pid,allowed:allowed)','AccessibilityReader.restoreAppTrees()')]
             self.assertTrue(1<=len(blocks)<=most,(f,len(blocks)))
             for body,end in blocks:
                 code=[l for l in body.splitlines() if l.strip() and not l.strip().startswith('//')]
@@ -753,11 +756,10 @@ class BrowserBoundary(unittest.TestCase):
         # typingfix review: the setup Review step's typed-text line must not name fewer places than the build
         # records. Since int/v1 (ux/v1) each Review row shows one value: the typed-text row says only On or Off,
         # so it names no places at all, and no website words live in the Review step.
+        # Owner 10/5: the last page is Connect your AI and has no typed-text row at all (it was chosen on Apps).
         onboarding=(ROOT/'Sources/MacMemApp/DaydreamOnboarding.swift').read_text()
-        self.assertIn('DaydreamReviewRow(id: "typing", title: "Typed text", value: typedText ? "On" : "Off",',onboarding)
+        self.assertNotIn('DaydreamReviewRow(id: "typing"',onboarding)
         self.assertNotIn('"Included in ',onboarding)
-        review=onboarding.split('DaydreamReviewRow(id: "typing"',1)[1].split('\n',2)
-        self.assertNotIn('website',''.join(review[:2]).lower())
     def test_website_rows_reach_the_store_through_one_owner_line(self):
         # typingfix review: the store's website typing rules (ingest check and the one-time launch settle) are one
         # owner-only value; the public build has nil, so it neither checks nor deletes any website row itself.

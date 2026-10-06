@@ -34,7 +34,7 @@ func runAssistantChecks(home: URL) throws {
     try check(!AssistantView.privacy.contains("Chrome"), "the base privacy line is unchanged")
     try check(!catalogText.contains("not established") && !catalogText.contains("Observations"),"catalog text carries no internal wording")
     // Typing-all decision 4 superseded by owner decision 2026-10-03: AI apps read typed words only through moment_details
-    // (and search's typed hits), from the running app, while "Let AI apps read what you typed" is on. Every other tool
+    // (and search's typed hits), from the running app, while "Let AI apps see your typed words" is on. Every other tool
     // still never returns them, and the text says the words depend on the person's choice.
     let desc = Dictionary(uniqueKeysWithValues: tools.compactMap { t in (t["name"] as? String).map { ($0, t["description"] as? String ?? "") } })
     try check(!catalogText.contains("allowed this app") && AssistantCatalog.instructions.contains("(the words only if allowed)")

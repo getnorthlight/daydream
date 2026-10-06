@@ -149,18 +149,14 @@ enum DocsPictures {
                                 loaded: true, enabled: true, allowTyping: true, toggle: { _ in })
         })
 
-        // 4. Setup, last page: the review, with summaries left for later and typed text off.
-        // As the app shows it with nothing standing in the way: one value per row (each row is one click back to its
-        // page), no message, one Start Recording. FileVault is on in the picture, so its line isn't drawn.
+        // 4. Setup, last page: Connect your AI (owner 10/5). The picture can't show this Mac's AI apps, so it draws the
+        // page as a Mac without one shows it, with summaries on (no status row) and nothing standing in the way.
+        // FileVault is on in the picture, so its line isn't drawn.
         try await render("setup-review", DaydreamOnboardingShell(
-            title: "You're all set",
-            appURL: appURL, back: {}, continueTitle: "Start Recording", continueAction: {}) {
-                DaydreamReviewContent(rows: [
-                    DaydreamReviewRow(id: "permissions", title: "Permissions", value: "Allowed", systemImage: "checkmark.shield", edit: {}),
-                    DaydreamReviewRow(id: "summaries", title: "Summaries", value: "Set up later", systemImage: "text.alignleft", edit: {}),
-                    DaydreamReviewRow(id: "apps", title: "Apps to remember", value: "5 apps", systemImage: "square.grid.2x2", edit: {}),
-                    DaydreamReviewRow(id: "typing", title: "Typed text", value: "Off", systemImage: "keyboard", edit: {}),
-                ])
+            title: "Connect your AI", subtitle: "DayDream works inside the AI apps you already use.",
+            appURL: appURL, back: {}, continueTitle: "Start Recording", showsIcon: false, continueAction: {}) {
+                DaydreamNoAIApps(getApp: {}, otherApp: {})
+                DaydreamReviewContent(rows: [], comeBack: true, aiReads: true)
             })
 
         // 5. The menu bar panel while recording, with a made-up morning in Apple's own apps (rendered last, below).

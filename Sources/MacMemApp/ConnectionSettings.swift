@@ -7,10 +7,10 @@ import MemoryUI
 /// file it changes. Nothing on the page needs scrolling to reach.
 struct ConnectionSettings: View {
     @ObservedObject var model: ConnectionSettingsModel
-    /// Owner 10/3: the same "Let AI apps read what you typed" switch as setup's Permissions card.
+    /// Owner 10/3: the same "Let AI apps see your typed words" switch as setup's Permissions card.
     @AppStorage(AIReadsTypedSetting.key) private var aiReadsTyped = AIReadsTypedSetting.defaultValue
 
-    static let intro = "Connected AI apps can read your history and may send it to their own online service."
+    static let intro = DaydreamSetupText.aiReads
     static let noApps = "None of the AI apps DayDream connects to are on this Mac."
 
     var body: some View {
@@ -48,27 +48,42 @@ struct ConnectionSettings: View {
         .connectionFrame("viewport")
         .onAppear { model.pageAppeared() }
         .onDisappear { model.pageDisappeared() }
-        .alert(model.pendingReplace.map(model.replaceTitle) ?? "",
-               isPresented: Binding(get: { model.pendingReplace != nil }, set: { if !$0 { model.cancelReplace() } }),
-               presenting: model.pendingReplace) { pending in
-            Button("Cancel", role: .cancel) { model.cancelReplace() }
-            Button(model.replaceButton(pending)) { Task { await model.replace(pending) } }
-        } message: { pending in
-            Text(model.replaceMessage(pending))
-        }
-        // Cancel is the default: the app was asking something, and what's unsaved in it would be lost.
-        .alert(model.pendingForceQuit.map(model.forceQuitTitle) ?? "",
-               isPresented: Binding(get: { model.pendingForceQuit != nil }, set: { if !$0 { model.cancelForceQuit() } }),
-               presenting: model.pendingForceQuit) { app in
-            Button("Cancel", role: .cancel) { model.cancelForceQuit() }.keyboardShortcut(.defaultAction)
-            Button("Force Quit", role: .destructive) { Task { await model.confirmForceQuit(app) } }
-        } message: { app in
-            Text(model.forceQuitMessage(app))
-        }
+        .connectionAlerts(model)
     }
 }
 
-private struct AIAppRow: View {
+/// Connect's two questions (replace another copy's entry; force quit), for Settings › Connections and setup's Connect page.
+struct ConnectionAlerts: ViewModifier {
+    @ObservedObject var model: ConnectionSettingsModel
+
+    func body(content: Content) -> some View {
+        content
+            .alert(model.pendingReplace.map(model.replaceTitle) ?? "",
+                   isPresented: Binding(get: { model.pendingReplace != nil }, set: { if !$0 { model.cancelReplace() } }),
+                   presenting: model.pendingReplace) { pending in
+                Button("Cancel", role: .cancel) { model.cancelReplace() }
+                Button(model.replaceButton(pending)) { Task { await model.replace(pending) } }
+            } message: { pending in
+                Text(model.replaceMessage(pending))
+            }
+            // Cancel is the default: the app was asking something, and what's unsaved in it would be lost.
+            .alert(model.pendingForceQuit.map(model.forceQuitTitle) ?? "",
+                   isPresented: Binding(get: { model.pendingForceQuit != nil }, set: { if !$0 { model.cancelForceQuit() } }),
+                   presenting: model.pendingForceQuit) { app in
+                Button("Cancel", role: .cancel) { model.cancelForceQuit() }.keyboardShortcut(.defaultAction)
+                Button("Force Quit", role: .destructive) { Task { await model.confirmForceQuit(app) } }
+            } message: { app in
+                Text(model.forceQuitMessage(app))
+            }
+    }
+}
+
+extension View {
+    func connectionAlerts(_ model: ConnectionSettingsModel) -> some View { modifier(ConnectionAlerts(model: model)) }
+}
+
+/// One AI app: its icon, status and one button (Settings › Connections and setup's Connect page).
+struct AIAppRow: View {
     let row: ConnectionSettingsModel.Row
     @ObservedObject var model: ConnectionSettingsModel
 

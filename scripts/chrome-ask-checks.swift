@@ -149,7 +149,7 @@ final class Elements { var frames: [String: CGRect] = [:] }
         // Accessory (no Dock icon, no menu bar), as the checks that click SwiftUI buttons run: a prohibited app's
         // windows get no clicks.
         NSApp.setActivationPolicy(.accessory)
-        // The drawings show DayDream's own icon, as the app does.
+        // The page shows DayDream's own icon, as the app does.
         if let icon = NSImage(contentsOfFile: "packaging/Daydream.icns") { NSApp.applicationIconImage = icon }
         shots = URL(fileURLWithPath: env["DD_CHROME_SHOTS"] ?? (out + "/chrome-ask-shots"), isDirectory: true)
         try FileManager.default.createDirectory(at: shots, withIntermediateDirectories: true)
@@ -193,21 +193,21 @@ final class Elements { var frames: [String: CGRect] = [:] }
         check(ChromeAccessNotice.guideLine == "Turn this on." && ChromeAccessNotice.guideDone == "Chrome pages are on.", "A3 the guide's two lines")
         check(BrowserHistoryLine.needsAccess.text == ChromeAccessNotice.line, "A3 the menu bar's access-off line is the calm line")
         for access in [ChromeAccessState.notAsked, .unknown, .chromeNotRunning, .checking] {
-            check(Row.subtitle(access: access, typing: true, opensChrome: false) == Row.primer && Row.illustration(access: access) == .ask,
-                  "A4 \(access): the primer, over the drawing of macOS's question")
+            check(Row.subtitle(access: access, typing: true, opensChrome: false) == Row.primer,
+                  "A4 \(access): the primer (owner 10/6: beside Chrome's icon, no drawing of macOS's question)")
             check(Row.subtitle(access: access, typing: false, opensChrome: false) == Row.primerTypingOff, "A4 \(access), typing off: the other primer")
         }
         check(Row.subtitle(access: .notAsked, typing: true, opensChrome: true) == Row.primer + " " + Row.opensChromeLine
               && Row.subtitle(access: .checking, typing: true, opensChrome: true) == Row.primer,
               "A5 Chrome closed: the primer says Allow opens it in the background (not while macOS asks)")
         for access in [ChromeAccessState.denied, .askFailed] {
-            check(Row.subtitle(access: access, typing: true, opensChrome: false) == Row.offLine && Row.illustration(access: access) == nil
+            check(Row.subtitle(access: access, typing: true, opensChrome: false) == Row.offLine
                   && Row.trailing(access: access) == .refused && Row.line(access: access, asked: true) == nil
                   && Row.line(access: access, asked: true, pagesOn: true, settings: true) == nil,
-                  "A6 \(access): \"Chrome pages are off.\" with Ask again, no Settings path, no drawing")
+                  "A6 \(access): \"Chrome pages are off.\" with Ask again, no Settings path")
         }
-        check(Row.subtitle(access: .allowed, typing: true, opensChrome: false) == Row.reason && Row.illustration(access: .allowed) == nil
-              && Row.trailing(access: .allowed) == .allowed, "A7 allowed: what Chrome pages save, no drawing")
+        check(Row.subtitle(access: .allowed, typing: true, opensChrome: false) == Row.reason
+              && Row.trailing(access: .allowed) == .allowed, "A7 allowed: what Chrome pages save")
         check(Row.line(access: .chromeNotRunning, asked: true) == ChromeAccessState.chromeNotRunning.helper
               && Row.line(access: .notAsked, asked: false) == nil && Row.line(access: .chromeNotRunning, asked: false) == nil
               && !(Row.line(access: .chromeNotRunning, asked: true) ?? "").contains("will ask"),
@@ -254,6 +254,11 @@ final class Elements { var frames: [String: CGRect] = [:] }
         check(!app.contains("func askChromeAccessAfterSetup") && !onboarding.contains("askChromeAccessAfterSetup") && !finish.contains("Chrome"),
               "D1 finishing setup asks nothing about Chrome, now or later")
         check(!app.contains("chromeAccessAskWaiting"), "D1 nothing waits for Chrome to come forward to ask")
+        // Owner 10/6: setup's and Settings' Chrome row (one card, `chromeCard`) draws Chrome's icon, never macOS's question.
+        let permissions = source("Sources/MemoryUI/PermissionSetup.swift")
+        check(!permissions.contains("ChromeAskDrawing") && !permissions.contains("Illustration")
+              && body(of: "private func chromeCard(", in: permissions).contains(".frame(width: 44, height: 44)"),
+              "D1b the Chrome row's icon slot is the other rows' 44 pt icon, with no drawing of macOS's question")
         // The one question: allowChromeAccess, reached only from askChromeAccessInSetup and Settings' presses.
         check(app.components(separatedBy: "ChromeEventSender.askForChromeAccess(").count == 2
               && body(of: "func allowChromeAccess(", in: app).contains("ChromeEventSender.askForChromeAccess(pid:pid)"),
@@ -346,15 +351,24 @@ final class Elements { var frames: [String: CGRect] = [:] }
             if settleFirst > 0 { settle(settleFirst) }
             save(retina(host), name, dark: dark)
         }
-        /// Everything the Permissions page drew fits above the window's bottom edge (nothing clipped by the new drawing).
+        /// Everything the Permissions page drew fits above the window's bottom edge (nothing clipped).
         func fits(_ name: String) {
             let bottom = elements.frames.values.map(\.maxY).max() ?? 0
             check(bottom <= 600 - 60, "\(name): the Permissions page fits above setup's buttons", "\(bottom)")
         }
+        /// Owner 10/6: the Chrome row is the Accessibility and Input Monitoring rows' card: Chrome's icon in the same
+        /// 44 pt slot, never the drawing of macOS's question, and the same height.
+        func sameAsOtherRows(_ name: String) {
+            let chrome = elements.frames["card.chrome"], other = elements.frames["card.accessibility"], icon = elements.frames["chrome.icon"]
+            check(chrome != nil && other != nil && abs((chrome?.height ?? 0) - (other?.height ?? -9)) <= 1
+                  && icon.map { abs($0.width - 44) < 1 && abs($0.height - 44) < 1 } == true && !has("chrome.drawing.ask"),
+                  "\(name): the Chrome row has Chrome's icon in the 44 pt slot and the other rows' height",
+                  "chrome=\(chrome.map { "\($0.height)" } ?? "nil") other=\(other.map { "\($0.height)" } ?? "nil") icon=\(icon.map { "\($0.size)" } ?? "nil")")
+        }
         func close() { window.contentView = nil; window.close(); pump(0.3) }
     }
 
-    /// The view drawn at 2x (a window off every screen draws at 1x): the drawings are vector, so they stay sharp.
+    /// The view drawn at 2x (a window off every screen draws at 1x), so the shots stay sharp.
     @MainActor static func retina(_ view: NSView) -> NSBitmapImageRep {
         let b = view.bounds
         guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(b.width * 2), pixelsHigh: Int(b.height * 2), bitsPerSample: 8,
@@ -370,17 +384,18 @@ final class Elements { var frames: [String: CGRect] = [:] }
         rendered.append(file)
     }
 
-    /// 1. Allow: Chrome running, not asked. The primer and the drawing; Allow asks once; macOS's question on screen
-    /// (the row waits, the drawing stays); Allowed; then the page moves on by itself.
+    /// 1. Allow: Chrome running, not asked. The primer beside Chrome's icon; Allow asks once; macOS's question on screen
+    /// (the row waits); Allowed; then the page moves on by itself.
     @MainActor static func allowPath(dark: Bool) throws {
         let model = try makeModel("allow-\(dark)")
         fake.set(pid: 4242, status: -1744, answer: 0)
         let page = Page(model, dark: dark)
-        check(page.page == .permissions && page.has("card.chrome") && page.has("allow.chrome") && page.has("chrome.drawing.ask") && !page.has("chrome.below"),
-              "B1 Allow (\(dark ? "dark" : "light")): the row primes the question: Allow, the drawing, nothing under it",
+        check(page.page == .permissions && page.has("card.chrome") && page.has("allow.chrome") && page.has("chrome.icon") && !page.has("chrome.below"),
+              "B1 Allow (\(dark ? "dark" : "light")): the row primes the question: Chrome's icon, Allow, nothing under it",
               page.elements.frames.keys.sorted().joined(separator: ","))
         check(model.chromeRowAccess == .notAsked && fake.count("ask") == 0, "B1 nothing asked before the press")
         page.fits("B1 primer")
+        page.sameAsOtherRows("B1 primer")
         page.shoot("1-allow-before")
         page.settle(2.3)
         check(page.page == .permissions, "B1 with both permissions allowed, the page waits for the Chrome row (Continue still moves on)")
@@ -388,13 +403,14 @@ final class Elements { var frames: [String: CGRect] = [:] }
         check(page.click("allow.chrome"), "B1 the row's Allow is pressed (a real click)")
         check(wait(3) { fake.count("ask") == 1 }, "B1 the press asks macOS once", "\(fake.count("ask"))")
         page.settle(0.3)
-        check(model.chromeAccess == .checking && page.has("chrome.drawing.ask") && !page.has("allow.chrome"),
-              "B1 while macOS asks: a spinner, and the drawing still shows which button to press")
+        check(model.chromeAccess == .checking && page.has("chrome.icon") && !page.has("allow.chrome"),
+              "B1 while macOS asks: a spinner beside Chrome's icon")
         page.shoot("2-allow-asking", settleFirst: 0)
         fake.release()
         check(wait(3) { model.chromeAccess == .allowed }, "B1 Allow in macOS's question: Allowed", "\(model.chromeAccess)")
         page.settle(0.2)
-        check(page.page == .permissions && !page.has("chrome.drawing.ask"), "B1 the row shows Allowed (no drawing) before the page moves on")
+        check(page.page == .permissions && page.has("chrome.icon"), "B1 the row shows Allowed (Chrome's icon) before the page moves on")
+        page.sameAsOtherRows("B1 allowed")
         page.shoot("3-allow-allowed", settleFirst: 0)
         check(wait(4) { page.page == .summaries }, "B1 allowed: the page moves on by itself")
         check(fake.count("ask") == 1 && fake.count("openChrome") == 0 && fake.count("openPane") == 0 && fake.waitingActivations == 0,
@@ -414,7 +430,7 @@ final class Elements { var frames: [String: CGRect] = [:] }
         check(page.click("allow.chrome"), "B2 the row's Allow is pressed")
         check(wait(3) { model.chromeAccess == .denied }, "B2 Don't Allow: refused", "\(model.chromeAccess)")
         page.settle(0.4)
-        check(page.has("askagain.chrome") && !page.has("chrome.drawing.ask") && !page.has("open.chrome") && !page.has("allow.chrome")
+        check(page.has("askagain.chrome") && page.has("chrome.icon") && !page.has("open.chrome") && !page.has("allow.chrome")
               && !page.has("chrome.below"),
               "B2 refused (\(dark ? "dark" : "light")): \"Chrome pages are off.\" with Ask again, nothing else",
               page.elements.frames.keys.sorted().joined(separator: ","))
@@ -437,8 +453,8 @@ final class Elements { var frames: [String: CGRect] = [:] }
         check(fake.order.firstIndex(of: "reset").map { r in fake.order.firstIndex(of: "ask").map { r < $0 } ?? false } ?? false,
               "B2 the reset comes first, then the question", "\(fake.order)")
         page.settle(0.3)
-        check(model.chromeRowAccess == .checking && page.has("chrome.drawing.ask") && !page.has("askagain.chrome"),
-              "B2 while macOS asks again: a spinner, and the drawing shows which button to press")
+        check(model.chromeRowAccess == .checking && page.has("chrome.icon") && !page.has("askagain.chrome"),
+              "B2 while macOS asks again: a spinner beside Chrome's icon")
         page.shoot("5-askagain-asking", settleFirst: 0)
         fake.release()
         check(wait(3) { model.chromeAccess == .allowed }, "B2 Allow: allowed, with no restart", "\(model.chromeAccess)")
@@ -611,11 +627,12 @@ final class Elements { var frames: [String: CGRect] = [:] }
         let model = try makeModel("closed-\(dark)")
         fake.set(pid: nil, status: -1744, answer: 0, installed: true, opensAs: 4343)
         let page = Page(model, dark: dark)
-        check(page.has("allow.chrome") && page.has("chrome.drawing.ask") && model.chromeAccess == .chromeNotRunning,
+        check(page.has("allow.chrome") && page.has("chrome.icon") && model.chromeAccess == .chromeNotRunning,
               "B3 Chrome closed (\(dark ? "dark" : "light")): the row is there with Allow", "\(model.chromeAccess)")
         check(PermissionChromeRow.subtitle(access: model.chromeRowAccess, typing: true, opensChrome: !model.chromeRunning).hasSuffix(PermissionChromeRow.opensChromeLine),
               "B3 its line says Allow opens Chrome in the background to ask")
         page.fits("B3 Chrome closed")
+        page.sameAsOtherRows("B3 Chrome closed")
         page.shoot("6-chrome-closed-before")
         page.settle(1.0)
         check(fake.count("openChrome") == 0 && fake.count("ask") == 0 && fake.waitingActivations == 0,

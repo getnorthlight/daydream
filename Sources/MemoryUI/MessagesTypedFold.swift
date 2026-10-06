@@ -18,12 +18,16 @@ public struct ComposeLine: Equatable, Sendable {
     /// claude/messages2-1003: Return sealed the unit (`ComposeOutcome.sealedBy`), whether or not the send was confirmed:
     /// a whole message, never a piece of the next one.
     public let sealedByReturn: Bool
-    public init(title: String, context: String? = nil, sent: Bool, kind: String, name: String? = nil, sealedByReturn: Bool = false) {
+    /// The surface's display name ("X", "ChatGPT", `ComposeView.service`), when known.
+    public let service: String?
+    public init(title: String, context: String? = nil, sent: Bool, kind: String, name: String? = nil, sealedByReturn: Bool = false,
+                service: String? = nil) {
         self.title = title; self.context = context; self.sent = sent; self.kind = kind; self.name = name; self.sealedByReturn = sealedByReturn
+        self.service = service
     }
     public init(_ o: ComposeOutcome) {
         self.init(title: ComposeSend.line(o), context: ComposeSend.contextLine(o.context), sent: o.kind != .draft, kind: o.kind.rawValue,
-                  name: o.destination.name, sealedByReturn: o.sealedBy == .returnKey)
+                  name: o.destination.name, sealedByReturn: o.sealedBy == .returnKey, service: o.destination.service)
     }
     /// The line of a typed row (`ComposeView.outcome`), nil for any other row or one without send facts.
     public init?(evidence e: Evidence) {
@@ -113,9 +117,17 @@ public enum MessagesTypedFold {
     public static func join(_ a: String, _ b: String) -> String {
         guard let x = a.last, let y = b.first else { return a + b }
         if x.isWhitespace || y.isWhitespace { return a + b }
-        if (x.isLetter || x.isNumber) && (y.isLetter || y.isNumber) { return a + b }
+        if midWord(x, y) { return a + b }
         if ".,!?;:\u{2026}".contains(y) { return a + b }
         return a + " " + b
+    }
+
+    /// A cut mid-word: a letter or digit on both sides, except a lower-case letter then a capital. Owner 10/6: "I think
+    /// that" + "We should…" (a new line or sentence whose separator wasn't kept) read "thatWe"; a word never turns
+    /// capital mid-way in prose, so that boundary gets its space.
+    static func midWord(_ x: Character, _ y: Character) -> Bool {
+        guard (x.isLetter || x.isNumber) && (y.isLetter || y.isNumber) else { return false }
+        return !(x.isLowercase && y.isUppercase)
     }
 
     static func normalized(_ s: String) -> String {

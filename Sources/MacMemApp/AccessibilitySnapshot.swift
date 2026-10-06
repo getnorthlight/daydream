@@ -490,13 +490,29 @@ enum AccessibilityReader {
     }
 }
 
+/// chatgpt-capture: the capture side's two calls for ChatGPT's accessibility setting (`AppTreeSwitch`), from
+/// EventCapture (a key; a pause or stop) and the app (quitting). They do nothing outside the owner build, which is the
+/// only build that reads app web content.
+enum AppTrees {
+    static func prepare(frontmost pid:pid_t,allowed:(String)->Bool) {
+        #if DAYDREAM_OWNER_TYPING
+        AccessibilityReader.prepareAppTree(frontmost:pid,allowed:allowed)
+        #endif
+    }
+    static func release() {
+        #if DAYDREAM_OWNER_TYPING
+        AccessibilityReader.restoreAppTrees()
+        #endif
+    }
+}
+
 #if DAYDREAM_OWNER_TYPING
 /// The "vendor app with web content" proof's live Accessibility reads
 /// (`WebContentFocusWitness`). Compiled only into the owner build: the public
 /// build reads no web content in any app and never turns on an app's
 /// Accessibility tree (`typing-release-gate-checks.py` scans both binaries).
 /// Reads, all metadata: `AXManualAccessibility` on the app (set once per
-/// process, never `AXEnhancedUserInterface`), whether the node is editable
+/// process; `AXEnhancedUserInterface` only for ChatGPT, `AppTreeSwitch`), whether the node is editable
 /// (`AXEditableAncestor`), the web area's own `AXURL` (compared with the
 /// vendor's page, never saved), and deny-only field labels (placeholder,
 /// description, DOM id and classes), which only ever refuse. Never a value,
@@ -558,6 +574,89 @@ enum WebContentAXReader {
                 return result == .success ? value as? String : nil
             }
         }))
+    }
+}
+
+/// chatgpt-capture: ChatGPT (`com.openai.codex`) is an Electron fork with no `AXManualAccessibility`, so without an
+/// assistive app its Chromium builds no web tree and no key there could ever be proved (owner's laptop, 26.930.51102:
+/// no focused element). For the rows in `TypingCategories.enhancedUserInterfaceApps` only (exactly ChatGPT), and only
+/// where that app has no manual switch, DayDream turns on `AXEnhancedUserInterface` once per process, at a key in
+/// that app, and only while recording, typing, that app's category and the person's app list all allow it and the
+/// process passes its row's signature (`trustedNativeProcess`). It is turned off again (`restoreAppTrees`) when any of
+/// those stops holding: typing off, the app excluded, recording paused or stopped, DayDream quitting. A value that was
+/// already on (VoiceOver) is never written and never turned off.
+///
+/// Trade-off (documented in docs/privacy-model.md): while it is on, Chromium keeps a full Accessibility tree for that
+/// app (some CPU and memory) and animates its window frame changes, so window managers that move windows through
+/// Accessibility (Rectangle, Magnet) are slower on ChatGPT's windows. Rectangle already turns it off around each
+/// move and back on after. The first key after it is turned on is not read (the app builds its tree after the call).
+enum AppTreeSwitch {
+    static let enhancedUserInterface="AXEnhancedUserInterface"
+    static let switcher=EnhancedUserInterfaceSwitch()
+    /// identity -> pid, for the processes the switch has an answer for (main thread only).
+    static var pids:[String:pid_t]=[:]
+    static func identity(pid:pid_t,bundle:String)->String? {
+        guard let process=NSRunningApplication(processIdentifier:pid),process.bundleIdentifier==bundle,
+              let launched=ProcessStart.seconds(launchDate:process.launchDate,pid:pid) else {return nil}
+        return "\(pid):\(launched):\(bundle)"
+    }
+    static func running(_ identity:String)->Bool {
+        guard let pid=pids[identity],let bundle=identity.split(separator:":").last.map(String.init) else {return false}
+        return Self.identity(pid:pid,bundle:bundle)==identity
+    }
+    static func value(_ app:AXUIElement)->Bool? {
+        var value:CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app,enhancedUserInterface as CFString,&value) == .success else {return nil}
+        return (value as? Bool) ?? false
+    }
+    static func set(_ app:AXUIElement,_ on:Bool)->Bool {
+        AXUIElementSetAttributeValue(app,enhancedUserInterface as CFString,on ? kCFBooleanTrue : kCFBooleanFalse) == .success
+    }
+    /// The app has no manual switch at all (read and set both unsupported), as `WebContentAXReader` decides.
+    static func noManualSwitch(_ app:AXUIElement)->Bool {
+        var value:CFTypeRef?,settable:DarwinBoolean=false
+        return AXUIElementCopyAttributeValue(app,WebContentAXReader.manualAccessibility as CFString,&value) == .attributeUnsupported
+            && AXUIElementIsAttributeSettable(app,WebContentAXReader.manualAccessibility as CFString,&settable) == .attributeUnsupported && !settable.boolValue
+    }
+    static func assistiveOn()->Bool {
+        let w=NSWorkspace.shared
+        return w.isVoiceOverEnabled || w.isSwitchControlEnabled
+    }
+}
+
+extension AccessibilityReader {
+    /// chatgpt-capture: called on the main thread for a key while recording with typing on (`EventCapture`), before
+    /// the key's proof. `allowed` answers the person's choices for an app now: typing on (`CapturePolicy.typedText`),
+    /// not excluded (its category on, not on the block list). Does nothing for any app outside
+    /// `TypingCategories.enhancedUserInterfaceApps`.
+    static func prepareAppTree(frontmost pid:pid_t,allowed:(String)->Bool) {
+        guard Thread.isMainThread,pid>0,AXIsProcessTrusted(),let running=NSRunningApplication(processIdentifier:pid),
+              let bundle=running.bundleIdentifier,TypingCategories.enhancedUserInterfaceApps.contains(bundle),
+              CaptureGate.webContentApps.contains(bundle),let identity=AppTreeSwitch.identity(pid:pid,bundle:bundle) else {return}
+        guard allowed(bundle),trustedNativeProcess(pid:pid,bundle:bundle) else {restoreAppTrees(keep:{$0 != identity});return}
+        let app=AXUIElementCreateApplication(pid)
+        guard AXUIElementSetMessagingTimeout(app,0.025) == .success else {return}
+        // Only an app that has no side-effect-free switch: one that gains AXManualAccessibility gets that instead.
+        if AppTreeSwitch.switcher.states[identity] == nil,!AppTreeSwitch.noManualSwitch(app) {return}
+        AppTreeSwitch.pids[identity]=pid
+        _=AppTreeSwitch.switcher.ensure(identity:identity,read:{AppTreeSwitch.value(app)},write:{AppTreeSwitch.set(app,true)})
+    }
+    /// chatgpt-capture: turns `AXEnhancedUserInterface` off again wherever DayDream turned it on, except where `keep`
+    /// says (an identity still allowed). Called when recording pauses or stops, when typing is off at a key, for an
+    /// app no longer allowed, and when DayDream quits. Main thread only; nothing to do (no Accessibility call) when
+    /// DayDream holds it nowhere.
+    static func restoreAppTrees(keep:(String)->Bool={_ in false}) {
+        guard Thread.isMainThread,AppTreeSwitch.switcher.holdsAny || !AppTreeSwitch.pids.isEmpty else {return}
+        // perm-1004: no Accessibility call without trust (it would show macOS's prompt); untrusted, nothing can be
+        // written anyway, so the switch only forgets (a read of nil writes nothing).
+        func app(_ identity:String)->AXUIElement? {
+            guard AXIsProcessTrusted(),let pid=AppTreeSwitch.pids[identity] else {return nil}
+            let app=AXUIElementCreateApplication(pid)
+            return AXUIElementSetMessagingTimeout(app,0.25) == .success ? app : nil
+        }
+        AppTreeSwitch.switcher.restore(keep:keep,running:AppTreeSwitch.running,assistiveOn:AppTreeSwitch.assistiveOn(),
+            read:{app($0).flatMap(AppTreeSwitch.value)},write:{id in app(id).map {AppTreeSwitch.set($0,false)} == true})
+        AppTreeSwitch.pids=AppTreeSwitch.pids.filter {AppTreeSwitch.switcher.states[$0.key] != nil}
     }
 }
 #endif

@@ -13,7 +13,9 @@ import Foundation
 public struct AgentToolOutput: Equatable, Sendable {
     public var text: String
     public var isError: Bool
-    public init(text: String, isError: Bool) { self.text = text; self.isError = isError }
+    /// How many items a search or timeline answer holds (usage counts' `result_count`); nil for other tools and errors.
+    public var resultCount: Int?
+    public init(text: String, isError: Bool, resultCount: Int? = nil) { self.text = text; self.isError = isError; self.resultCount = resultCount }
 }
 
 extension AgentTools {
@@ -41,7 +43,13 @@ extension AgentTools {
                 return AgentToolOutput(text: "Unknown tool \"\(name.prefix(60))\". DayDream's tools: timeline, search, details, status.", isError: true)
             }
             let answer = try self.answer(call, context: context, access: access)
-            return AgentToolOutput(text: AgentRender.render(answer, format: format, budget: budget(call)).text, isError: false)
+            let count: Int?
+            switch answer.reply.body {
+            case .search(let reply): count = reply.items.count
+            case .timeline(let reply): count = reply.days.reduce(0) { $0 + $1.items.count }
+            default: count = nil
+            }
+            return AgentToolOutput(text: AgentRender.render(answer, format: format, budget: budget(call)).text, isError: false, resultCount: count)
         } catch {
             return AgentToolOutput(text: errorText(error, tool: name), isError: true)
         }

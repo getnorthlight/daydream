@@ -187,8 +187,8 @@ final class EventCapture {
         self.typingEnvironment=typingEnvironment
         self.pages=ChromePageRecorder(coordinator:coordinator,environment:pageEnvironment)
         coordinator.onPause = { [weak self] in
-            if Thread.isMainThread {self?.discardPending()}
-            else {DispatchQueue.main.async {[weak self] in self?.discardPending()}}
+            if Thread.isMainThread {self?.discardPending();Self.releaseAppTrees()}
+            else {DispatchQueue.main.async {[weak self] in self?.discardPending();Self.releaseAppTrees()}}
         }
     }
 
@@ -711,7 +711,8 @@ final class EventCapture {
         guard !stopped,coordinator.isRunning else {discardPending();return}
         // Typing off: nothing pending to drop, and the window signatures stay,
         // so the next AX notification does not write a second identical row.
-        guard coordinator.captureText else {discardPending(resetSignatures:false);return}
+        guard coordinator.captureText else {discardPending(resetSignatures:false);Self.releaseAppTrees();return}
+        prepareAppTree()
         let now=typingEnvironment.now()
         lastKeyHandledAt=now
         loneModifier=false
@@ -841,6 +842,21 @@ final class EventCapture {
         if step.decision.outcome == .allowed {keyApplied(proof,eventAt:eventAt,late:late,readAt:readAt)}
         afterTypingStep(step)
     }
+    /// chatgpt-capture: ChatGPT's web tree (`AppTrees.prepare`): turned on at a key in that app only while recording,
+    /// typing, its category and the person's app list allow it (the policy this key is judged by), before the key's
+    /// proof. Nothing for any other app; nothing at all outside the owner build (`CaptureGate.webContentApps` is empty).
+    private func prepareAppTree() {
+        // The app this capture tracks as frontmost (as the key's target below), not a fresh workspace read.
+        guard let pid=currentPID,TypingCategories.enhancedUserInterfaceApps.contains(currentBundle),
+              CaptureGate.webContentApps.contains(currentBundle) else {return}
+        AppTrees.prepare(frontmost:pid) {[coordinator] bundle in
+            guard let policy=(try? coordinator.captureBinding.context())?.policy else {return false}
+            return coordinator.isRunning && coordinator.captureText && policy.typedText && !policy.excludedApps.contains(bundle) && coordinator.allowsApp(bundle)
+        }
+    }
+    /// chatgpt-capture: turns ChatGPT's accessibility setting back off where DayDream turned it on (recording paused or
+    /// stopped, typing off). No Accessibility call when DayDream turned it on nowhere.
+    static func releaseAppTrees() { AppTrees.release() }
     private static func identity(_ proof:FocusProof)->[String] {
         var identity=[proof.bundle,proof.windowID,proof.focusID,proof.role,proof.subrole,proof.url]
         // Match the session's Messages recipient boundary at the final proof

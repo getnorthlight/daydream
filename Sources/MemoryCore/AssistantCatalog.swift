@@ -42,7 +42,7 @@ Privacy: what you read here goes to your AI provider as part of this chat. Read 
     /// What the instructions say about typing. Public builds type only in Notes and TextEdit
     /// (`TypingRelease.open` is false); the owner build (the owner switch, `OwnerTyping`) opens more apps and sites.
     /// claude/summary-1003 (owner decision 2026-10-03): the words reach an AI app only through moment_details and
-    /// search, from the running app, while "Let AI apps read what you typed" is on; otherwise where and how much.
+    /// search, from the running app, while "Let AI apps see your typed words" is on; otherwise where and how much.
     static let recordedTyping = TypingRelease.open
         ? "what they typed (the words only if allowed) in the apps and websites they turned typing on for"
         : "what they typed (the words only if allowed) in Notes or TextEdit if turned on"

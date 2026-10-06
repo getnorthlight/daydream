@@ -15,7 +15,7 @@ import PrivacyPolicy
 //    handed to a writer, an AI app or the cloud: the app's timeline (MemoryUI) is its only caller.
 
 /// One moment the timeline asks about: its member actions, and its main app and first site (a prompt is shown only
-/// for a moment in the AI app it was typed in).
+/// for a moment in the AI app it was typed in, or, owner 10/6, an X moment's newest confirmed post or reply).
 public struct MomentPromptRequest: Equatable, Sendable {
     public let momentID: String
     public let actionIDs: [String]
@@ -50,6 +50,39 @@ public enum MomentPromptText {
     public static let surfaces: Set<String> = ["ai", "aiTool"]
     /// At most this many rows per moment are tried, in order, when the first doesn't open (hidden, expired, forgotten).
     static let candidatesPerMoment = 4
+
+    // Owner 10/6: an X moment's row leads with its newest post or reply code CONFIRMED sent (`ComposeSend`: a gesture
+    // and a confirmation), as the expanded card says it: "Posted “…” on X." / "Replied “…” on X.". A draft never leads.
+    /// X's own hosts (a moment is on X when its first site is one).
+    public static let xHosts: Set<String> = ["x.com", "twitter.com", "mobile.twitter.com"]
+    /// "Posted" for a confirmed post or quote on X, "Replied" for a confirmed reply; nil for anything else (a draft, an
+    /// unconfirmed gesture, another site).
+    public static func xLead(_ o: ComposeOutcome) -> String? {
+        guard o.destination.service == "X" else { return nil }
+        switch o.kind {
+        case .posted, .quoted: return "Posted"
+        case .replied: return "Replied"
+        default: return nil
+        }
+    }
+    /// The words after "Posted “" / "Replied “" ("” on X." closes them).
+    public static let xTail = " on X."
+    /// A confirmed X send as the row's prompt: its lead, when it was typed (so a card of several X moments leads with
+    /// the most recent send) and its cleaned words, carried in one value (`TodaySnapshot.withPrompts` splits them again
+    /// with `split`). The mark never appears in typed words (`clean` turns control characters into spaces).
+    static let sentMark = "\u{1E}"
+    public static func sent(lead: String, at: String, words: String) -> String { sentMark + lead + sentMark + at + sentMark + words }
+    /// A row's prompt value: its words, and for an X send its lead ("Posted", "Replied") and time.
+    public struct Value: Equatable, Sendable {
+        public let words: String
+        public let lead: String?
+        public let at: String?
+    }
+    public static func split(_ value: String) -> Value {
+        let parts = value.components(separatedBy: sentMark)
+        guard value.hasPrefix(sentMark), parts.count == 4 else { return Value(words: value, lead: nil, at: nil) }
+        return Value(words: parts[3], lead: parts[1], at: parts[2])
+    }
 }
 
 extension MemoryStore {
@@ -73,17 +106,30 @@ extension MemoryStore {
             WHERE json_extract(r.body,'$.kind')='keyboard.text_input' AND coalesce(json_extract(r.body,'$.secure'),0) IN (0,'false')
             """, [json(ids)])
         struct Row { let id, at, bundle, host, surface, send, run: String; let part: Int }
-        var byID = [String: Row]()
+        var byID = [String: Row](), onX = [String: Row]()
         for f in found {
             let host = Self.promptHost(f[3])
             let surface = f[5].isEmpty ? SendRules.surface(bundle: f[2], host: host.isEmpty ? nil : host, title: f[4]) : f[5]
-            guard MomentPromptText.surfaces.contains(surface) else { continue }
-            byID[f[0]] = Row(id: f[0], at: f[1], bundle: f[2], host: host, surface: surface, send: f[6], run: f[7].isEmpty ? f[0] : f[7], part: Int(f[8]) ?? 1)
+            let row = Row(id: f[0], at: f[1], bundle: f[2], host: host, surface: surface, send: f[6], run: f[7].isEmpty ? f[0] : f[7], part: Int(f[8]) ?? 1)
+            if MomentPromptText.surfaces.contains(surface) { byID[f[0]] = row }
+            else if MomentPromptText.xHosts.contains(host) { onX[f[0]] = row }
         }
-        guard !byID.isEmpty else { return [:] }
+        // Owner 10/6: on X, only rows code confirmed sent as a post or reply (metadata: `composeOutcomes`, never words).
+        let xSent = onX.isEmpty ? [:] : try composeOutcomes(Array(onX.keys)).filter { MomentPromptText.xLead($0.value) != nil }
+        guard !byID.isEmpty || !xSent.isEmpty else { return [:] }
         var out = [String: [String]]()
         for request in wanted {
             let site = Self.promptHost(request.site ?? "")
+            if MomentPromptText.xHosts.contains(site) {
+                // The newest confirmed send first, one row per typing run (its last part: the words that were sent).
+                let sends = request.actionIDs.compactMap { xSent[$0] == nil ? nil : onX[$0] }
+                    .filter { $0.bundle == request.primaryBundle }
+                    .sorted { ($0.at, $0.part, $0.id) > ($1.at, $1.part, $1.id) }
+                var seen = Set<String>(), ids = [String]()
+                for row in sends where seen.insert(row.run).inserted { ids.append(row.id) }
+                if !ids.isEmpty { out[request.momentID] = Array(ids.prefix(MomentPromptText.candidatesPerMoment)) }
+                continue
+            }
             let asks = request.actionIDs.compactMap { byID[$0] }.filter { row in
                 guard let main = request.primaryBundle, main == row.bundle else { return false }
                 // A website ask belongs to the moment only when the moment is on that site.
@@ -111,12 +157,17 @@ extension MemoryStore {
     /// is off. Read only: it writes nothing.
     public func ownerMomentPrompts(_ candidates: [String: [String]], now: Date = Date()) throws -> [String: String] {
         guard !candidates.isEmpty, typedVaultState == .ready, try policy().captureText else { return [:] }
+        // Owner 10/6: a confirmed X post or reply carries its lead ("Posted", "Replied": `MomentPromptText.sent`).
+        let outcomes = try composeOutcomes(Array(Set(candidates.values.flatMap { $0 })), now: now)
         var out = [String: String]()
         for (moment, ids) in candidates {
             for id in ids {
                 guard let words = try hydrateTypedText(id, disclosure: .owner, now: now) else { continue }
                 let line = MomentPromptText.clean(words)
-                if !line.isEmpty { out[moment] = line; break }
+                guard !line.isEmpty else { continue }
+                let at = try rows("SELECT coalesce(json_extract(body,'$.at'),'') FROM records WHERE id=?", [id]).first?.first ?? ""
+                out[moment] = outcomes[id].flatMap(MomentPromptText.xLead).map { MomentPromptText.sent(lead: $0, at: at, words: line) } ?? line
+                break
             }
         }
         return out

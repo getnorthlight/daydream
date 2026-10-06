@@ -444,7 +444,7 @@ public struct PermissionGrantView: View {
     private let showsRelaunchRow: Bool
     /// Setup's Google Chrome row (owner, 10/2): drawn under the two permission cards, in their style, when setup passes one.
     private let chromeRow: PermissionChromeRow?
-    /// Setup's "Let AI apps read what you typed" toggle (owner 10/3), directly under the Google Chrome row.
+    /// Setup's "Let AI apps see your typed words" toggle (owner 10/3), directly under the Google Chrome row.
     private let showsAIReadsToggle: Bool
     @AppStorage(AIReadsTypedSetting.key) private var aiReadsTyped = AIReadsTypedSetting.defaultValue
     /// perm-1004: comings back from a pane opened here with both still off (`PermissionReturns`).
@@ -668,7 +668,7 @@ public struct PermissionGrantView: View {
         .help(PermissionRowHelp.cardHelp(appName: appName, permission: permission.title))
     }
 
-    /// "Let AI apps read what you typed": a toggle card in the permission cards' style, under the Google Chrome row.
+    /// "Let AI apps see your typed words": a toggle card in the permission cards' style, under the Google Chrome row.
     private var aiReadsCard: some View {
         HStack(spacing: 14) {
             Image(systemName: "text.bubble").font(.system(size: 24)).foregroundStyle(.secondary)
@@ -694,29 +694,21 @@ public struct PermissionGrantView: View {
     /// Setup's Google Chrome row: the same card as Accessibility and Input Monitoring (icon, name, one line, one button).
     /// Its Allow asks macOS (the caller's `allow`, the app's one ask path) only on the person's press; an answered or
     /// allowed access shows its state like the other rows. It never gates Continue.
-    /// chromeask-1005 (owner 10/5): before the press its line says what macOS will ask and why, beside a small drawing of
-    /// that question with Allow ringed; refused, "Chrome pages are off." with Ask again (the caller's `askAgain`: macOS
-    /// asks again). Nothing here asks macOS or opens Chrome.
+    /// chromeask-1005 (owner 10/5): before the press its line says what macOS will ask and why; refused, "Chrome pages
+    /// are off." with Ask again (the caller's `askAgain`: macOS asks again). Nothing here asks macOS or opens Chrome.
+    /// Owner 10/6: Chrome's own icon in the icon slot in every state (no drawing of macOS's question), so the row is the
+    /// other rows' height. Settings' Permissions draws this same card.
     private func chromeCard(_ row: PermissionChromeRow) -> some View {
         let trailing = PermissionChromeRow.trailing(access: row.access, pagesOn: row.pagesOn, canTurnOn: row.turnOn != nil)
         let subtitle = PermissionChromeRow.subtitle(access: row.access, typing: row.typing, opensChrome: row.opensChrome)
-        let art = PermissionChromeRow.illustration(access: row.access)
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 14) {
-                // The drawing takes the icon's place (it names Chrome itself), so the card grows little and the page
-                // still fits: macOS's question, before the press and while it asks.
                 Group {
-                    switch art {
-                    case .ask?:
-                        ChromeAskDrawing(chromeIcon: row.icon).permissionElement("chrome.drawing.ask")
-                    case nil:
-                        Group {
-                            if let icon = row.icon { Image(nsImage: icon).resizable().interpolation(.high) }
-                            else { Image(systemName: "globe").font(.system(size: 28)).foregroundStyle(.secondary) }
-                        }
-                        .frame(width: 44, height: 44).accessibilityHidden(true)
-                    }
+                    if let icon = row.icon { Image(nsImage: icon).resizable().interpolation(.high) }
+                    else { Image(systemName: "globe").font(.system(size: 28)).foregroundStyle(.secondary) }
                 }
+                .frame(width: 44, height: 44).accessibilityHidden(true)
+                .permissionElement("chrome.icon")
                 VStack(alignment: .leading, spacing: 3) {
                     Text(PermissionChromeRow.title).font(.system(size: 15, weight: .semibold))
                     Text(subtitle).font(.system(size: 12)).foregroundStyle(.secondary)
@@ -760,7 +752,8 @@ public struct PermissionGrantView: View {
                 }
                 .fixedSize()
             }
-            .padding(.leading, art == nil ? 26 : 14).padding(.trailing, 16).padding(.vertical, art == nil ? 12 : 10).frame(minHeight: 74)
+            // 11, not the other cards' 12: the primer is two lines where their detail is one, and the row keeps their 74 pt.
+            .padding(.leading, 26).padding(.trailing, 16).padding(.vertical, 11).frame(minHeight: 74)
             .background(Self.cardColor, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.primary.opacity(0.07), lineWidth: 1))
             .shadow(color: Color.black.opacity(0.08), radius: 6, x: 0, y: 3)
@@ -1051,7 +1044,7 @@ private struct PermissionTile: View {
 /// Setup's Google Chrome row on the Permissions card (owner, 10/2): shown while Chrome is installed and its access isn't
 /// decided (the app decides: `DaydreamOnboardingChromeRow`). `allow` is the app's one ask path, called only on a press.
 /// chromeask-1005 (owner 10/5): macOS asks once and never again after Don't Allow, so the row primes the question before
-/// the press (`primer`, with `ChromeAskDrawing`) and, once refused, says so (`offLine`) beside Ask again (`askAgain`:
+/// the press (`primer`) and, once refused, says so (`offLine`) beside Ask again (`askAgain`:
 /// the app clears its own Automation answer and macOS asks again, in context).
 public struct PermissionChromeRow {
     public let icon: NSImage?
@@ -1095,8 +1088,6 @@ public struct PermissionChromeRow {
     public static let askAgainTitle = ChromeAccessNotice.askAgainTitle
 
     public enum Trailing: Equatable, Sendable { case progress, allowed, refused, allow, turnOn }
-    /// The drawing in the icon's place: macOS's question with Allow ringed (before and while it asks).
-    public enum Illustration: Equatable, Sendable { case ask }
     public static let turnOnTitle = "Turn On"
     public static let pagesOffLine = "Chrome access is allowed, but saving web pages in Chrome is off."
 
@@ -1109,12 +1100,6 @@ public struct PermissionChromeRow {
             return opensChrome && access != .checking ? primer + " " + opensChromeLine : primer
         case .denied, .askFailed: return offLine
         case .allowed, .unverified, .twoCopies: return reason
-        }
-    }
-    public static func illustration(access: ChromeAccessState) -> Illustration? {
-        switch access {
-        case .unknown, .notAsked, .chromeNotRunning, .checking: return .ask
-        case .denied, .askFailed, .allowed, .unverified, .twoCopies: return nil
         }
     }
     /// Settings' row: Allowed with recording Chrome off offers Turn On (one click); everything else as setup's row.
@@ -1147,63 +1132,6 @@ public struct PermissionChromeRow {
         case .chromeNotRunning, .unverified, .twoCopies: return access.helper
         case .unknown, .notAsked, .checking, .allowed, .denied, .askFailed: return nil
         }
-    }
-}
-
-// MARK: - Chrome drawings (chromeask-1005)
-
-/// The two small drawings on the Chrome row, drawn rather than pictured so they stay sharp at every scale and follow
-/// light and dark. Nothing in them is a control: they only show what macOS shows.
-private enum ChromeDrawingStyle {
-    /// macOS's alert and Settings panels.
-    static let panel = Color(nsColor: NSColor(name: nil) {
-        $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(white: 0.17, alpha: 1) : NSColor(white: 1, alpha: 1)
-    })
-    static let quietButton = Color.primary.opacity(0.09)
-    static let textBar = Color.primary.opacity(0.13)
-    static let ring = Color.accentColor.opacity(0.45)
-
-    static func icon(_ image: NSImage?, fallback: String, size: CGFloat) -> some View {
-        Group {
-            if let image { Image(nsImage: image).resizable().interpolation(.high) }
-            else { Image(systemName: fallback).resizable().scaledToFit().foregroundStyle(.secondary) }
-        }
-        .frame(width: size, height: size)
-    }
-    static var appIcon: NSImage? { NSApp?.applicationIconImage }
-}
-
-/// macOS's Automation question as it will appear, small: DayDream's icon (Chrome's on it), the question, and Don't
-/// Allow beside Allow, with Allow ringed (the button to press).
-struct ChromeAskDrawing: View {
-    let chromeIcon: NSImage?
-    static let width: CGFloat = 140
-
-    var body: some View {
-        VStack(spacing: 4) {
-            ZStack(alignment: .bottomTrailing) {
-                ChromeDrawingStyle.icon(ChromeDrawingStyle.appIcon, fallback: "app.fill", size: 16)
-                ChromeDrawingStyle.icon(chromeIcon, fallback: "globe", size: 8).offset(x: 3, y: 2)
-            }
-            Text("\u{201C}DayDream\u{201D} wants access to control \u{201C}Google Chrome\u{201D}.")
-                .font(.system(size: 6.8, weight: .semibold)).multilineTextAlignment(.center).lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 5) {
-                Text("Don\u{2019}t Allow").font(.system(size: 6.5)).frame(maxWidth: .infinity).frame(height: 13)
-                    .background(ChromeDrawingStyle.quietButton, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
-                Text("Allow").font(.system(size: 6.5, weight: .semibold)).foregroundStyle(.white).frame(maxWidth: .infinity).frame(height: 13)
-                    .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(ChromeDrawingStyle.ring, lineWidth: 2).padding(-3))
-            }
-            .padding(.top, 1)
-        }
-        .padding(.horizontal, 9).padding(.top, 7).padding(.bottom, 8)
-        .frame(width: Self.width)
-        .background(ChromeDrawingStyle.panel, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(Color.primary.opacity(0.1), lineWidth: 0.5))
-        .shadow(color: Color.black.opacity(0.12), radius: 3, x: 0, y: 1.5)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("macOS will show: DayDream wants access to control Google Chrome. Click Allow.")
     }
 }
 

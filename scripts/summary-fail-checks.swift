@@ -220,12 +220,14 @@ import PrivacyPolicy
               && card.contains("for _ in 0..<SummarySweep.passes") && !card.contains("repeatForever"),
               "sweep: one band masked to the block's glyphs, one phase, ease-in-out, a bounded run of passes (never forever)")
         check(SummarySweep.passes > 0 && SummarySweep.passes <= 10, "sweep: a bounded number of passes", "\(SummarySweep.passes)")
-        check(card.contains("QuoteSweep(active: state.sweeps && !reduceMotion)") && card.contains("state.sweeps && reduceMotion ? AnyShapeStyle(.tertiary)"),
+        // Owner 10/6: the quotes are drawn by `CapturedQuoteText`, muted through its `dimmed` (an ask line too).
+        check(card.contains("QuoteSweep(active: state.sweeps && !reduceMotion)") && card.contains("dimmed: state.sweeps && reduceMotion")
+              && card.components(separatedBy: "dimmed ? AnyShapeStyle(.tertiary)").count == 3,
               "Reduce Motion: no sweep, muted quotes")
         check(card.contains(".disabled(!state.summarizeEnabled)") && card.contains("working: summarizing"), "footer: Summarize Now and Copy Summary grey out while working")
         check(card.contains(".transition(reduceMotion ? .identity : .opacity.combined(with: .offset(y: 3)))") && card.contains(".animation(reduceMotion ? nil : .easeOut(duration: 0.35), value: state)"),
               "done: the bullets fade in")
-        check(card.contains("let header = state.label(column.header)") && card.contains("CardSummaryState.violet(header)"), "the label follows the state")
+        check(card.contains("let header = state.label(column.header, codeLines: column.codeLines)") && card.contains("CardSummaryState.violet(header)"), "the label follows the state")
         let timeline = source("Sources/MemoryUI/CanonicalTimeline.swift")
         check(!timeline.contains("Check Summaries in Settings") && timeline.contains("SummarizeNowNotice.banner(for: error, summaries: browser.summaries)"),
               "timeline: no blanket Settings banner; only SummarizeNowNotice.banner")

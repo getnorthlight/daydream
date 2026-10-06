@@ -1,7 +1,7 @@
 import Foundation
 @testable import MemoryCore
 
-/// claude/summary-1003 (owner decision 2026-10-03): "Let AI apps read what you typed". Synthetic store, made-up words,
+/// claude/summary-1003 (owner decision 2026-10-03): "Let AI apps see your typed words". Synthetic store, made-up words,
 /// in-memory typing keys only (never the Keychain); the bridge socket lives in a scratch folder. Covers: the setting on
 /// and off, a grant that doesn't verify, a secret never returned, expired words never returned, an excluded app and a
 /// private window never returned, moment_details pagination and its byte bound, and (with DAYDREAM_TEST_CLI) the real

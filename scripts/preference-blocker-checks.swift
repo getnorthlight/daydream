@@ -464,17 +464,17 @@ func makePrivateDirectory(_ url: URL) throws {
             check(coordinator.lowerBound < settle.lowerBound, "S: choices are settled only after this app holds the recorder lock")
         } else { check(false, "S: MacMemApp settles legacy choices at launch") }
         // Each row on setup's last page is one click back to the page that changes it, with no "Edit" text.
-        // fix/setup-status: the rows are Summaries (its page, or its one fixing button), Typed text and Web pages in Chrome.
+        // fix/setup-status: Summaries goes to its page, or carries its one fixing button. Owner 10/5: it is the last page's
+        // only row (Connect your AI); Typed text and Web pages in Chrome were chosen on the page before.
         check(onboarding.contains("edit: button == nil ? { show(.summaries) } : nil, button: button")
-              && onboarding.contains("edit: { show(.apps) }") && !onboarding.contains("\"Edit\""),
+              && !onboarding.contains("\"Edit\""),
               "S: setup's last page rows are one click to the page that changes them")
         // Setup can't be skipped past Permissions: no Set up later there (closing the window is later).
         check(!onboarding.contains("secondaryTitle") && !onboarding.contains("\"Set up later\" }"), "S: setup's Permissions page has no Set up later")
         check(!onboarding.contains("Recording is off. Your choices are saved."), "S: setup's last page has no standing message")
-        // The title is true: "You're all set" only when nothing stands in the way and summaries aren't off or failed
-        // (fix/setup-status); otherwise "Almost ready" and the button or row names what's left.
-        check(onboarding.contains("case .review: return allSet ? Self.allSetTitle : Self.almostReadyTitle")
-              && onboarding.contains("guard startBlocker == nil else { return false }"),
-              "S: setup's last page says You're all set only when recording can start")
+        // Owner 10/5: the last page is Connect your AI, a title that claims nothing about what's left; the button or the
+        // status row names what's left (fix/setup-status: never "You're all set" while something is).
+        check(onboarding.contains("case .review: return Self.connectTitle") && !onboarding.contains("allSetTitle"),
+              "S: setup's last page is Connect your AI and never says You're all set")
     }
 }

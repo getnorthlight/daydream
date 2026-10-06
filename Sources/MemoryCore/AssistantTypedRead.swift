@@ -2,7 +2,7 @@ import Foundation
 
 // claude/summary-1003 (owner decision 2026-10-03), agent-tools v2 WP-A (owner decisions 10/04): AI apps connected through
 // DayDream's MCP connector (`mac-mem mcp`) read the words the person typed, by default, with secrets removed; the
-// setting "Let AI apps read what you typed" (Settings › Connections) turns that off.
+// setting "Let AI apps see your typed words" (Settings › Connections) turns that off.
 //
 // Typed words stay sealed (TypedTextVault): only the DayDream app process holds the key, and `mac-mem mcp` still never
 // attaches a vault. The words travel from the app to the MCP process over a private local socket

@@ -159,7 +159,7 @@ public struct FocusListExpanded: View {
         let bullets = column.bullets, messages = column.quotes
         // Owner-approved summary-v2 (10/3): Summary pending → Summarizing… (one sweep over the quotes) → Summary.
         let state = cardState(column)
-        let header = state.label(column.header)
+        let header = state.label(column.header, codeLines: column.codeLines)
         return VStack(alignment: .leading, spacing: 8) {
             if let header {
                 Text(header).font(.system(size: 11, weight: .semibold))
@@ -182,11 +182,12 @@ public struct FocusListExpanded: View {
                 .accessibilityIdentifier("card-summary-bullets")
             } else if !messages.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(FocusAppCard.visibleMessages(messages, expanded: quotesOpen).enumerated()), id: \.offset) { _, message in
+                    ForEach(Array(FocusAppCard.visibleMessages(messages, expanded: quotesOpen).enumerated()), id: \.offset) { index, message in
                         HStack(alignment: .firstTextBaseline, spacing: 7) {
                             Text("\u{2022}").foregroundStyle(.tertiary).accessibilityHidden(true)
-                            Text(FocusAppCard.quote(message, limit: quotesOpen ? FocusAppCard.openQuoteLimit : FocusAppCard.quoteLimit))
-                                .italic().foregroundStyle(state.sweeps && reduceMotion ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.secondary))
+                            // Owner 10/6: a confirmed AI ask or X post reads as a search does, "Asked ChatGPT “…”." (`CapturedQuoteText`).
+                            CapturedQuoteText(quote: FocusAppCard.quote(message, limit: quotesOpen ? FocusAppCard.openQuoteLimit : FocusAppCard.quoteLimit),
+                                              action: column.action(index), dimmed: state.sweeps && reduceMotion)
                                 .lineLimit(quotesOpen ? 4 : 2)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -809,6 +810,24 @@ struct FocusSourceEntry<Label: View>: View {
             .help(help ?? "")
             .accessibilityElement(children: .combine)
             .accessibilityHint(help ?? "")
+    }
+}
+
+/// Owner 10/6: one quoted message as the card and its details page draw it. A quote with its action is one plain line,
+/// as a search is ("Searched “red boots”."): "Asked ChatGPT “why does the export crash…”.", "Posted “…” on X." in the
+/// bullet text's ink, regular, not italic (`FocusAppCard.askLine`). Anything else (an AI draft, a text) is the italic
+/// grey quote, as before.
+struct CapturedQuoteText: View {
+    let quote: String
+    let action: FocusAppCard.QuoteAction?
+    var dimmed = false
+    var body: some View {
+        if let line = FocusAppCard.askLine(action, quote: quote) {
+            // Muted as the quotes are while Summarize Now runs under Reduce Motion (no sweep).
+            Text(line).foregroundStyle(dimmed ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary)).accessibilityIdentifier("card-ask-line")
+        } else {
+            Text(quote).italic().foregroundStyle(dimmed ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.secondary))
+        }
     }
 }
 

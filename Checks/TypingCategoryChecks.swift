@@ -79,6 +79,14 @@ func runTypingCategoryChecks(home: URL) throws {
     try check(TypingCategories.apps.filter(\.promptLatch).allSatisfy { $0.category == .code }, "table: only Code apps carry the prompt latch")
     try check(TypingCategories.app("com.anthropic.claudefordesktop")?.signer == .team("Q6L2SF6YDW") && TypingCategories.app("com.openai.codex")?.signer == .team("2DC432GLL2") && TypingCategories.app("com.openai.chat")?.signer == .team("2DC432GLL2") && TypingCategories.app("com.openai.chat")?.support == .nativeNeedsProbe && TypingCategories.app("com.mitchellh.ghostty")?.signer == .team("24VZTF6M5V"), "table: the three team IDs read on this Mac")
     try check(["com.microsoft.Word", "com.tinyspeck.slackmacgap", "com.microsoft.VSCode", "com.googlecode.iterm2"].allSatisfy { TypingCategories.app($0)?.signer == .unconfirmed }, "table: teams not read yet stay unconfirmed")
+    // chatgpt-capture: AXEnhancedUserInterface (it slows window moves in Chromium apps) is for ChatGPT alone, whose
+    // framework has no AXManualAccessibility; every other web-content row keeps the side-effect-free switch.
+    try check(TypingCategories.enhancedUserInterfaceApps == ["com.openai.codex"]
+              && TypingCategories.app("com.openai.codex")?.web == .electronWithoutManualSwitch
+              && TypingCategories.app("com.openai.codex")?.web?.admits(url: "app://-/index.html?initialRoute=%2F") == true
+              && TypingCategories.app("com.openai.codex")?.web?.admits(url: "https://chatgpt.com/") == false
+              && TypingCategories.app("com.anthropic.claudefordesktop")?.web?.enhancedUserInterface == false,
+              "table: only ChatGPT may get AXEnhancedUserInterface; its own page still only (bundled files, never chatgpt.com)")
     try check(["dev.zed.Zed", "dev.warp.Warp-Stable"].allSatisfy { TypingCategories.app($0)?.support == .notSupportable }, "table: Zed and Warp are marked not supportable")
     try check(TypingCategories.app("com.example.Unknown") == nil && TypingCategories.app("") == nil, "table: apps outside the table are unknown")
     try check(TypingCategories.apps.allSatisfy { !CaptureGate.isBrowser($0.bundle) } && TypingCategories.alwaysBlocked.allSatisfy { !CaptureGate.isBrowser($0) },

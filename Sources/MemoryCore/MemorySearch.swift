@@ -492,22 +492,24 @@ extension MemoryStore {
         // claude/catchup-1003: a window row's shape (its body without its id and time). Rows of the same shape read and
         // match alike, so once one is turned down the scan skips the rest without reading them (a window's repeated
         // title changes). Only window/focus/app rows, never one with a user correction.
-        let shape="CASE WHEN json_extract(body,'$.kind') IN ("+MemoryStore.shapeKinds.map { "'"+$0+"'" }.joined(separator:",")+")"
-            + (corrections ? " AND id NOT IN (SELECT target FROM user_corrections WHERE kind='action')" : "")
-            + " THEN json_remove(body,'$.id','$.at') ELSE '' END"
+        // Built in steps: Swift 6.2's type checker times out on the one long expression.
+        let kinds:String=MemoryStore.shapeKinds.map { "'"+$0+"'" }.joined(separator:",")
+        var shape:String="CASE WHEN json_extract(body,'$.kind') IN ("+kinds+")"
+        if corrections { shape += " AND id NOT IN (SELECT target FROM user_corrections WHERE kind='action')" }
+        shape += " THEN json_remove(body,'$.id','$.at') ELSE '' END"
         // The shape is read only for the rows the filter keeps (outer select), so each window's statement costs no more.
         var sql="SELECT id,at,"+shape+" FROM (SELECT id,body,json_extract(body,'$.at') AS at,julianday(json_extract(body,'$.at')) AS jd"
         if !runs.isEmpty {
             let aliases=SearchDocument.appAliases.map { "WHEN json_extract(body,'$.bundle')='"+$0.key+"' THEN char(10)||'"+$0.value.lowercased()+"'" }.joined(separator:" ")
             sql += ",lower(coalesce(json_extract(body,'$.title'),'')||char(10)||coalesce(json_extract(body,'$.app'),'')||char(10)||coalesce(json_extract(body,'$.url'),''))"
-                + "||CASE "+aliases+" WHEN json_extract(body,'$.app')='Messages' THEN char(10)||'texts' ELSE '' END AS t"
-                + ",json_extract(body,'$.kind') AS k,coalesce(json_extract(body,'$.title'),'') AS ti,coalesce(json_extract(body,'$.app'),'') AS ap"
-                + ",lower(coalesce(json_extract(body,'$.url'),'')) AS u"
+            sql += "||CASE "+aliases+" WHEN json_extract(body,'$.app')='Messages' THEN char(10)||'texts' ELSE '' END AS t"
+            sql += ",json_extract(body,'$.kind') AS k,coalesce(json_extract(body,'$.title'),'') AS ti,coalesce(json_extract(body,'$.app'),'') AS ap"
+            sql += ",lower(coalesce(json_extract(body,'$.url'),'')) AS u"
         }
         // After the position (older, or as old with a smaller id), written so the time index bounds it on both sides.
         sql += " FROM records WHERE rowid<=? AND julianday(json_extract(body,'$.at'))<=julianday(?) AND (julianday(json_extract(body,'$.at'))<julianday(?) OR id<?)"
-            + " AND julianday(json_extract(body,'$.at'))>=julianday(?) AND julianday(json_extract(body,'$.at'))<julianday(?)"
-            + " AND (?='' OR json_extract(body,'$.app')=? OR json_extract(body,'$.bundle')=?))"
+        sql += " AND julianday(json_extract(body,'$.at'))>=julianday(?) AND julianday(json_extract(body,'$.at'))<julianday(?)"
+        sql += " AND (?='' OR json_extract(body,'$.app')=? OR json_extract(body,'$.bundle')=?))"
         var values=[String(position.fence),position.at,position.at,position.id,down,end,
                     query.app ?? "",query.app ?? "",query.app ?? ""]
         if !runs.isEmpty {

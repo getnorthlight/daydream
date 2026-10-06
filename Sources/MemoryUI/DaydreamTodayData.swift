@@ -172,6 +172,11 @@ public struct MomentSlice: Identifiable, Equatable {
     /// (`MomentPromptText.clean`), opened on this Mac for this window only (`MomentPromptCache`); nil while typing is off,
     /// for a moment with no ask, and on every slice not drawn by the timeline. Never stored, sent or logged.
     public var prompt: String? = nil
+    /// Owner 10/6: on X, the prompt is the newest post or reply code confirmed sent, and this is its lead ("Posted",
+    /// "Replied"): the row reads "Replied “…” on X." (`MomentSubtitle.promptText`). nil for an AI ask.
+    public var promptLead: String? = nil
+    /// When that send was typed (ISO 8601), so a card of several X moments leads with the most recent one.
+    public var promptAt: String? = nil
     /// fix/summary-fallback: the note shown was written by code, not a model (the moment writer by code, or code's
     /// fallback note when every model answer failed): it never carries the model's mark (`FocusListExpanded.showsModelMark`).
     public var byCode: Bool = false
@@ -402,8 +407,12 @@ public struct TodaySnapshot: Equatable {
     /// fix/prompt-row: the same snapshot with each moment's prompt from `prompts` (moment ID → one line). No rebuild:
     /// only the moments are copied, and a snapshot whose prompts already match comes back as it is.
     public func withPrompts(_ prompts: [String: String]) -> TodaySnapshot {
-        guard moments.contains(where: { $0.prompt != prompts[$0.id] }) || (latest.map { $0.prompt != prompts[$0.id] } ?? false) else { return self }
-        func apply(_ m: MomentSlice) -> MomentSlice { var copy = m; copy.prompt = prompts[m.id]; return copy }
+        // Owner 10/6: a confirmed X send's value carries its lead (`MomentPromptText.sent`); split here.
+        let split = prompts.mapValues(MomentPromptText.split)
+        func differs(_ m: MomentSlice) -> Bool { m.prompt != split[m.id]?.words || m.promptLead != split[m.id]?.lead || m.promptAt != split[m.id]?.at }
+        guard moments.contains(where: differs) || (latest.map(differs) ?? false) else { return self }
+        func apply(_ m: MomentSlice) -> MomentSlice { var copy = m; copy.prompt = split[m.id]?.words; copy.promptLead = split[m.id]?.lead
+            copy.promptAt = split[m.id]?.at; return copy }
         var next = TodaySnapshot(dayKey: dayKey, loadedAt: loadedAt, momentCount: momentCount, actionCount: actionCount,
                                  countComplete: countComplete, partial: partial, moments: moments.map(apply), headline: headline,
                                  headlineBullets: headlineBullets, headlineGeneratedAt: headlineGeneratedAt, headlineLocal: headlineLocal,

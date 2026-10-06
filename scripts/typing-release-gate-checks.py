@@ -25,8 +25,11 @@ honest one:
   proof and a signer read on a Mac): larger than Notes and TextEdit, with
   Claude, ChatGPT and Mail read through the web-content proof, Spotlight as
   the one launcher panel, and Messages and Mail off under the default choices.
-- the app proofs (typing-all apps track): no shipping code uses
-  AXEnhancedUserInterface; AXManualAccessibility is written in one place; the
+- the app proofs (typing-all apps track): AXEnhancedUserInterface is named
+  once, in the owner build's AppTreeSwitch, written only there and only for
+  the table's enhancedUserInterfaceApps after the signature check
+  (chatgpt-capture: ChatGPT has no AXManualAccessibility); AXManualAccessibility
+  is written in one place; the
   witness and route files hold no timer or polling loop; each app's signer
   comes from the table, never a fixed string.
 The rules test themselves against bad fixtures first.
@@ -243,18 +246,29 @@ def app_proof_problems(files):
     compiles: the QA harness's own bootstraps (e01b406, aaeab02) focus a fresh test field and never ship."""
     found = []
     code = {rel: strip_comments(without_qa(text)) for rel, text in files}
-    for rel, text in code.items():
-        if 'AXEnhancedUserInterface' in text:
-            found.append(('enhanced-user-interface', rel))
-    writers = [rel for rel, text in code.items() if 'AXUIElementSetAttributeValue(' in text]
     snapshot = code.get('Sources/MacMemApp/AccessibilitySnapshot.swift', '')
-    if writers != ['Sources/MacMemApp/AccessibilitySnapshot.swift'] or snapshot.count('AXUIElementSetAttributeValue(') != 1 \
+    # chatgpt-capture: AXEnhancedUserInterface only as AppTreeSwitch's one constant (ChatGPT, which has no
+    # AXManualAccessibility), never anywhere else.
+    for rel, text in code.items():
+        if 'AXEnhancedUserInterface' in text and (rel != 'Sources/MacMemApp/AccessibilitySnapshot.swift' or text.count('AXEnhancedUserInterface') != 1
+                or not re.search(r'enum AppTreeSwitch \{\n\s*static let enhancedUserInterface\s*=\s*"AXEnhancedUserInterface"', text)):
+            found.append(('enhanced-user-interface', rel))
+    if 'enhancedUserInterface as CFString' in snapshot:
+        prepare = snapshot.split('static func prepareAppTree(', 1)[-1].split('static func restoreAppTrees(', 1)[0]
+        if 'TypingCategories.enhancedUserInterfaceApps.contains(bundle)' not in prepare or 'trustedNativeProcess(pid:pid,bundle:bundle)' not in prepare \
+                or 'allowed(bundle)' not in prepare:
+            found.append(('enhanced-user-interface-not-scoped', 'AccessibilitySnapshot.swift'))
+    writers = [rel for rel, text in code.items() if 'AXUIElementSetAttributeValue(' in text]
+    enhanced_writes = len(re.findall(r'AXUIElementSetAttributeValue\(app,enhancedUserInterface as CFString,', snapshot))
+    if writers != ['Sources/MacMemApp/AccessibilitySnapshot.swift'] or snapshot.count('AXUIElementSetAttributeValue(') != 1 + enhanced_writes \
+            or enhanced_writes > 1 \
             or not re.search(r'AXUIElementSetAttributeValue\(app,manualAccessibility as CFString,kCFBooleanTrue\)', snapshot) \
             or len(re.findall(r'static let manualAccessibility\s*=\s*"AXManualAccessibility"', snapshot)) != 1:
         found.append(('attribute-write-not-only-the-manual-switch', writers))
-    # The web-content proof's live reads and the switch write: owner build only.
+    # The web-content proof's live reads and the switch writes: owner build only.
     gated = re.findall(r'#if DAYDREAM_OWNER_TYPING\n(.*?)#endif', snapshot, re.S)
-    for needle in ['AXUIElementSetAttributeValue(', 'enum WebContentAXReader', '"AXEditableAncestor"', '"AXPlaceholderValue"', '"AXManualAccessibility"']:
+    for needle in ['AXUIElementSetAttributeValue(', 'enum WebContentAXReader', '"AXEditableAncestor"', '"AXPlaceholderValue"', '"AXManualAccessibility"',
+                   '"AXEnhancedUserInterface"', 'enum AppTreeSwitch']:
         if needle in snapshot and not any(needle in block for block in gated):
             found.append(('web-content-reads-outside-the-owner-build', needle))
     # The web-content reads are metadata: never the field's value, selection or a title.
@@ -285,6 +299,22 @@ class GateChecks(unittest.TestCase):
         def bad(rel, text):
             return app_proof_problems([(r, text if r == rel else t) for r, t in good])
         self.assertIn('enhanced-user-interface', [k for k, _ in app_proof_problems(good + [('Sources/X.swift', 'let a="AXEnhancedUserInterface"')])])
+        # chatgpt-capture: the one allowed form, gated, scoped to the table's list and the signature check.
+        enhanced = ('#if DAYDREAM_OWNER_TYPING\nenum AppTreeSwitch {\n    static let enhancedUserInterface="AXEnhancedUserInterface"\n'
+                    'static func set() { AXUIElementSetAttributeValue(app,enhancedUserInterface as CFString,v) }\n}\n'
+                    'static func prepareAppTree(frontmost pid:pid_t) { TypingCategories.enhancedUserInterfaceApps.contains(bundle) allowed(bundle) '
+                    'trustedNativeProcess(pid:pid,bundle:bundle) }\nstatic func restoreAppTrees() {}\n#endif\n')
+        with_enhanced = [(r, t + enhanced if r == 'Sources/MacMemApp/AccessibilitySnapshot.swift' else t) for r, t in good]
+        self.assertEqual(app_proof_problems(with_enhanced), [])
+        def enhanced_bad(text):
+            return [k for k, _ in app_proof_problems([(r, t + text if r == 'Sources/MacMemApp/AccessibilitySnapshot.swift' else t) for r, t in good])]
+        self.assertIn('enhanced-user-interface-not-scoped', enhanced_bad(enhanced.replace('TypingCategories.enhancedUserInterfaceApps.contains(bundle)', 'true')))
+        self.assertIn('enhanced-user-interface-not-scoped', enhanced_bad(enhanced.replace('trustedNativeProcess(pid:pid,bundle:bundle)', '')))
+        self.assertIn('enhanced-user-interface', enhanced_bad(enhanced.replace('enum AppTreeSwitch {', 'enum Other {')))
+        self.assertIn('enhanced-user-interface', enhanced_bad(enhanced + 'let again="AXEnhancedUserInterface"\n'))
+        self.assertIn('web-content-reads-outside-the-owner-build', enhanced_bad(enhanced.replace('#if DAYDREAM_OWNER_TYPING\n', '').replace('#endif\n', '')))
+        self.assertIn('attribute-write-not-only-the-manual-switch',
+                      enhanced_bad(enhanced.replace('}\n}\n', '}\nstatic func x() { AXUIElementSetAttributeValue(app,enhancedUserInterface as CFString,w) }\n}\n', 1)))
         self.assertIn('attribute-write-not-only-the-manual-switch', [k for k, _ in app_proof_problems(good + [('Sources/X.swift', 'AXUIElementSetAttributeValue(x,y,z)')])])
         # A write inside a QA-harness-only branch is not compiled into a shipping build; one outside it still is.
         qa = '#if DAYDREAM_QA_HARNESS && DAYDREAM_OWNER_TYPING && DAYDREAM_CHROME_TYPING\nAXUIElementSetAttributeValue(f,k,v)\n#endif\n'

@@ -77,7 +77,7 @@ extension AgentEntities {
         ("aistudio.google.com", "Gemini"), ("copilot.microsoft.com", "Copilot"), ("copilot.cloud.microsoft", "Copilot"),
         ("perplexity.ai", "Perplexity"), ("poe.com", "Poe"), ("chat.mistral.ai", "Mistral"), ("meta.ai", "Meta AI"), ("grok.com", "Grok"),
         ("chat.deepseek.com", "DeepSeek"), ("chat.qwen.ai", "Qwen"), ("pi.ai", "Pi"), ("character.ai", "Character.AI"), ("you.com", "You.com")]
-    static let aiBundles: [String: String] = ["com.anthropic.claudefordesktop": "Claude", "com.openai.chat": "ChatGPT", "com.openai.codex": "Codex",
+    static let aiBundles: [String: String] = ["com.anthropic.claudefordesktop": "Claude", "com.openai.chat": "ChatGPT", "com.openai.codex": "ChatGPT",
                                               "ai.perplexity.mac": "Perplexity"]
     static let aiAppNames: [String: String] = ["claude": "Claude", "chatgpt": "ChatGPT", "codex": "Codex", "perplexity": "Perplexity"]
     static let docSuffixes: [(suffix: String, kind: AgentEntity.DocumentKind)] = [

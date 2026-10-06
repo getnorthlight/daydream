@@ -395,7 +395,7 @@ extension MemoryStore {
                         let tool = ask.tool ?? Self.aiName(assembled.actions[ask.id]!, host: ThreadEntities.host(ask.site))
                         // claude/today-copy-1004 (owner 10/04): an AI app's own thread is named after the app ("Claude"), so
                         // its ask read "Asked Claude about Claude". No "about …" when it only names the tool, the app or
-                        // the site again: "Asked Claude: “…”".
+                        // the site again: "Asked Claude “…”." (owner 10/6: as a search reads).
                         let host = ThreadEntities.host(ask.site)
                         // claude/dayeval-1005: "Claudecode" (a terminal title's tool, run together) names the tool too.
                         let topic = DayReview.topic(about, echoing: [tool, tool.replacingOccurrences(of: " ", with: ""), ask.app, ThreadEntities.friendlyHosts[host] ?? host] + DayReview.askPlaces)

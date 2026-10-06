@@ -106,7 +106,8 @@ public struct DayReviewList: View {
     }
 
     /// The bullet's styled text, all in regular weight (owner 10/04: no bold): the lead in the full ink color, the link
-    /// in the link color, the rest a little lighter, the quote italic in curly quotes (one line of it unless `expanded`).
+    /// in the link color, the rest a little lighter, the quote italic in curly quotes (one line of it unless `expanded`); an AI
+    /// ask's words plain, as a search's are ("Asked Claude “…”.", owner 10/6).
     /// The colors are the system's own (`.primary`, `.accentColor`), so the light and dark themes keep the same order.
     public static func attributed(_ b: DayReviewBullet, size: CGFloat = 13, expanded: Bool = false) -> AttributedString {
         var out = AttributedString()
@@ -126,11 +127,16 @@ public struct DayReviewList: View {
         }
         if let rest = b.rest { out += plain(" " + rest) }
         if let quote = expanded ? b.quote : b.shortQuote {
-            out += plain(b.link == nil && b.rest == nil ? " " : ": ")
-            var q = AttributedString("\u{201C}" + quote + "\u{201D}")
-            q.font = .system(size: size).italic()
-            q.foregroundColor = Color.primary.opacity(0.88)
-            out += q
+            out += plain(b.quoteSeparator)
+            if b.asksQuote {
+                // Owner 10/6: an AI ask reads as a search does, "Asked Claude “…”.": the words plain, then a period.
+                out += plain("\u{201C}" + quote + "\u{201D}.")
+            } else {
+                var q = AttributedString("\u{201C}" + quote + "\u{201D}")
+                q.font = .system(size: size).italic()
+                q.foregroundColor = Color.primary.opacity(0.88)
+                out += q
+            }
         } else {
             out += plain(b.closing)
         }

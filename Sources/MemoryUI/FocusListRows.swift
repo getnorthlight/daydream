@@ -472,8 +472,9 @@ struct FocusAppCardHeader: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(FocusAppCard.title(members)).font(.system(size: 13, weight: .semibold)).lineLimit(1)
                     // claude/livefix-1004: the newest member's ask draws as `PromptLine` (cut before its closing quote).
-                    if let ask = expanded ? nil : MomentSubtitle.shownPrompt(anchor) {
-                        PromptLine(prompt: ask)
+                    // Owner 10/6: on X, the newest confirmed post or reply ("Replied “…” on X.", `promptMember`).
+                    if let lead = expanded ? nil : FocusAppCard.promptMember(members), let ask = MomentSubtitle.shownPrompt(lead) {
+                        PromptLine(prompt: ask, lead: lead.promptLead)
                     } else if !line.isEmpty {
                         Text(line).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
                     }

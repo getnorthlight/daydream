@@ -299,7 +299,7 @@ import CoreIntegration
         let size: CGFloat = 13
         let heavy: [Font] = [.system(size: size, weight: .semibold), .system(size: size, weight: .bold), .system(size: size, weight: .medium),
                              .system(size: size, weight: .heavy), .system(size: size).bold()]
-        let bullets = [DayReviewBullet(id: "a", thread: "t", lead: "Asked Claude:", link: nil, rest: nil, quote: "fixture words", moments: []),
+        let bullets = [DayReviewBullet(id: "a", thread: "t", lead: "Asked Claude", link: nil, rest: nil, quote: "fixture words", moments: []),
                        DayReviewBullet(id: "b", thread: "t", lead: "Texted Avery Fixture:", link: nil, rest: nil, quote: "fixture text", moments: []),
                        DayReviewBullet(id: "c", thread: "t", lead: "Read", link: nil, rest: "posts on X", quote: nil, moments: []),
                        DayReviewBullet(id: "d", thread: "t", lead: "Replied to", link: DayReviewLink(title: "Ada's post", url: "https://x.com/t/status/1"),
@@ -331,12 +331,13 @@ import CoreIntegration
                   DayReview.topic(raw, echoing: echo) ?? "nil")
         }
         check(DayReview.topic(nil, echoing: ask) == nil, "about: no topic, no about")
-        // An ask with no topic: "Asked Claude: “…”", or "Asked Claude." with no words opened; never "about Claude".
+        // An ask with no topic: "Asked Claude “…”." (owner 10/6: as a search reads), or "Asked Claude." with no words opened;
+        // never "about Claude".
         let t = thread("app:claude", "ai", 10, [item("ask", "Asked Claude", clause: "app:claude", quote: "q1")])
         let quoted = DayReview.assemble(DayReviewFacts(day: "d", threads: [t], clauses: [:], activeSeconds: 0, personSends: 0), quotes: words).flatMap(\.bullets)
         let bare = DayReview.assemble(DayReviewFacts(day: "d", threads: [t], clauses: [:], activeSeconds: 0, personSends: 0), quotes: [:]).flatMap(\.bullets)
-        check(quoted.map(\.text) == ["Asked Claude: \u{201C}fixture words one\u{201D}"] && bare.map(\.text) == ["Asked Claude."],
-              "about: an ask with no topic reads \"Asked Claude: “…”\"", "\(quoted.map(\.text)) \(bare.map(\.text))")
+        check(quoted.map(\.text) == ["Asked Claude \u{201C}fixture words one\u{201D}."] && bare.map(\.text) == ["Asked Claude."],
+              "about: an ask with no topic reads \"Asked Claude “…”.\"", "\(quoted.map(\.text)) \(bare.map(\.text))")
         // The clause writer can't put it back: "about Claude" after "Asked Claude" is refused as the start again.
         let r = DayReviewClauseRequest(day: "2026-10-04", timezone: zone, key: "app:claude", lead: "Asked Claude", name: "Claude", colon: false,
                                        notes: ["Asked Claude how to run the fixture over ssh."], signature: "s0|p0|m1", actionIDs: ["a"], start: "", end: "")
@@ -571,8 +572,8 @@ import CoreIntegration
               "mixed day: clauses only for shown lines (\(due.map(\.key)))")
     }
 
-    /// claude/today-copy-1004 (owner 10/04): asks typed in the Claude and ChatGPT apps' own threads read "Asked Claude: “…”"
-    /// and "Asked ChatGPT: “…”", never "Asked Claude about Claude";
+    /// claude/today-copy-1004 (owner 10/04): asks typed in the Claude and ChatGPT apps' own threads read "Asked Claude “…”."
+    /// and "Asked ChatGPT “…”." (owner 10/6: as a search reads), never "Asked Claude about Claude";
     /// an ask in a project keeps its "about DayDream".
     static func asks(now: Date) async throws {
         let claude = ("Claude", "com.anthropic.claudefordesktop"), chatgpt = ("ChatGPT", "com.openai.chat")
@@ -604,7 +605,7 @@ import CoreIntegration
         let words = try f.store.ownerReviewQuotes(facts.quoteIDs, now: now)
         let lines = DayReview.assemble(facts, quotes: words).flatMap(\.bullets)
         let shaped = lines.map(shape)
-        check(want.allSatisfy { shaped.contains($0 + ": \u{201C}«q»\u{201D}") }, "asks: \(want.map { "\"" + $0 + ": “…”\"" }.joined(separator: " and ")) (\(shaped))")
+        check(want.allSatisfy { shaped.contains($0 + " \u{201C}«q»\u{201D}.") }, "asks: \(want.map { "\"" + $0 + " “…”.\"" }.joined(separator: " and ")) (\(shaped))")
         check(!lines.contains { b in ["about claude", "about chatgpt", "about codex"].contains { b.fullText.lowercased().contains($0) } },
               "asks: never \"about Claude\", \"about ChatGPT\" or \"about Codex\"")
         // Without the words (every MCP and CLI process), the line is "Asked Claude.", still with no about.

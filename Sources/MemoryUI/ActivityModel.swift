@@ -81,6 +81,9 @@ public enum ActivityPhase { case loading, ready, failed(String), held(String) }
     /// step between them (`FocusDay.step`). nil: every calendar day is a step.
     public var loadRecordedDays: ((String) async throws -> [String])?
     public var searchCanonical: ((String,String?) async throws -> MemorySearchResult)?
+    /// A search in the window finished (page one), with how many results it found. The app counts it (usage counts:
+    /// the number only, never the words searched).
+    public var searched: ((Int) -> Void)?
     public var reopenCanonical: ((String) async throws -> Void)?
     public var generateCanonicalNote: ((String,String,String,Date) async throws -> Void)?
     /// fix/resummarize: moments whose Summarize Now is running (their row says "Updating…"; no other row changes).

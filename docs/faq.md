@@ -11,28 +11,28 @@ Only while typed text is on. It uses the same macOS permissions a keylogger woul
 - Websites need two switches: typed text and Web pages in Chrome. Nothing is saved from Chrome while any Incognito or Guest window is open, or on blocked sites such as banking, sign-in and payment pages.
 - It never reads password fields, and it drops typed text that looks like a key, a card number or a one-time code.
 - What you type is encrypted on your Mac. DayDream deletes the exact words after 7 days, unless you choose another time, and keeps a short note of where you typed.
-- AI apps you connect read the words you typed and sent while **Let AI apps read what you typed** is on (Settings › Connections, on by default); with it off they see where and about how much you typed, never the words DayDream saves. Cloud summaries, if you choose them, get the words you type to write your notes. Window titles can include words you typed, like an email subject or a shell command. Those are saved, read by AI apps and sent to cloud summaries like any other window title.
+- AI apps you connect read the words you typed and sent while **Let AI apps see your typed words** is on (Settings › Connections, on by default); with it off they see where and about how much you typed, never the words DayDream saves. Cloud summaries, if you choose them, get the words you type to write your notes. Window titles can include words you typed, like an email subject or a shell command. Those are saved, read by AI apps and sent to cloud summaries like any other window title.
 - DayDream can't tell when Claude or ChatGPT is in an incognito or temporary chat. Turn off Search boxes and AI prompts, or turn typed text off, before you use one.
 - It never records what you type in any other app or browser.
 - Anyone typing on your Mac account while it's on is recorded as you.
 - It only listens. It can't change or block what you type.
-- Everything stays on your Mac unless you choose to send it somewhere (see below).
+- Your activity is stored on your Mac. It leaves only when you choose to send it somewhere (see below). DayDream does send anonymous usage counts, never your history, unless you turn them off.
 - The code is open, so you can check all of this yourself.
 
 ## What leaves my Mac?
 
-Only what you choose, plus a check for updates (below):
+Only what you choose, plus a check for updates and anonymous usage counts (below):
 
 - **Cloud summaries** (off until you turn on their switch and add your own OpenRouter key) send the activity being summarized, including words you type, to OpenRouter.
 - **An AI app you connect** can read your history, and can send what it reads to its own AI provider.
 - **A backup** you save to iCloud Drive or another synced folder is uploaded by that service.
 - **"Open Original"** on a web link sends one request to that website to check the page still exists.
 
-DayDream also checks its website for updates and downloads them from GitHub, unless you turn that off. Those requests carry no history. Summaries on this Mac send no history either: choosing them downloads the model from Hugging Face, and pressing Download or Turn on may check DayDream's signing certificate with Apple. The full list is in the README's [Network connections](../README.md#network-connections).
+DayDream also checks its website for updates and downloads them from GitHub, unless you turn that off, and sends anonymous usage counts to PostHog about once an hour, unless you turn them off in Settings › Advanced. Those requests carry no history. Summaries on this Mac send no history either: choosing them downloads the model from Hugging Face, and pressing Download or Turn on may check DayDream's signing certificate with Apple. The full list is in the README's [Network connections](../README.md#network-connections).
 
 ## Do you (the developers) see my data?
 
-No. DayDream has no account, analytics, telemetry or crash reporting. We never receive your history, your settings or anything about how you use the app. If you open a GitHub issue, what you write there is public, so never paste your history into one.
+No. Your activity is stored on your Mac, and we never receive your history, typed words, titles, sites or searches. DayDream has no account and no crash reporting. It does send anonymous usage counts to PostHog, like how often DayDream is opened or used by AI apps and which settings are on, with a random ID made for your copy of DayDream. Turn them off in Settings › Advanced › **Share anonymous usage counts**; **See what's sent** there shows exactly what goes. The full list is in the README's [Usage counts](../README.md#usage-counts). If you open a GitHub issue, what you write there is public, so never paste your history into one.
 
 ## Does it take screenshots or record my screen?
 
@@ -65,7 +65,7 @@ Yes. Any app or tool that runs as you on your Mac can read the file, just as it 
 
 ## What can an AI app I connect see and do?
 
-It can read your history: moments, apps, window titles, Chrome pages if that's on, and DayDream's notes. Typed text is on by default, and it can read the words you typed and sent while **Let AI apps read what you typed** is on (also on by default; Settings › Connections). With that switch off, it sees only where and about how much you typed, and your summaries. It can't start or stop recording, change settings or delete anything. What it reads may go to its AI provider, under that provider's policy. Disconnect it any time in Settings › Connections.
+It can read your history: moments, apps, window titles, Chrome pages if that's on, and DayDream's notes. Typed text is on by default, and it can read the words you typed and sent while **Let AI apps see your typed words** is on (also on by default; Settings › Connections). With that switch off, it sees only where and about how much you typed, and your summaries. It can't start or stop recording, change settings or delete anything. What it reads may go to its AI provider, under that provider's policy. Disconnect it any time in Settings › Connections.
 
 Text in your history, such as a page title, could try to steer the AI. DayDream labels what it returns as data, not instructions, but it can't control what the AI app does.
 

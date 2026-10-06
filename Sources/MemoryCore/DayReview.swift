@@ -252,11 +252,18 @@ public struct DayReviewBullet: Equatable, Sendable, Identifiable {
     public var text: String { line(quote: shortQuote) }
     /// The same with the whole quote (VoiceOver, the expanded bullet).
     public var fullText: String { line(quote: quote) }
+    /// Owner 10/6: an AI ask with its words reads as a search does ("Searched “red boots”."): "Asked Claude “…”.", no
+    /// colon, the words plain (not italic), a period after the quote. Only code's own ask lines lead with "Asked "
+    /// (`DayReviewStore`: a send detected into an AI app or tool).
+    public var asksQuote: Bool { quote != nil && link == nil && lead.hasPrefix("Asked ") }
+    /// What goes between the lead (and its link and rest) and the quote: a space after a lead that ends with its colon or
+    /// before an ask's words, else ": ".
+    public var quoteSeparator: String { asksQuote || (link == nil && rest == nil) ? " " : ": " }
     private func line(quote: String?) -> String {
         var s = lead
         if let link { s += " " + link.title }
         if let rest { s += " " + rest }
-        if let quote { s += (link == nil && rest == nil ? " " : ": ") + "\u{201C}" + quote + "\u{201D}" }
+        if let quote { s += quoteSeparator + "\u{201C}" + quote + "\u{201D}" + (asksQuote ? "." : "") }
         else if let last = s.last, !".?!…\u{201D}".contains(last) { s += "." }
         return s
     }
@@ -533,7 +540,7 @@ extension DayReview {
     /// The topic of a code line's "about …" ("Asked Claude about DayDream", "Emailed Sam about Q3 numbers"), trimmed; nil
     /// when it would only say again who or where (`echoing`: the tool, the app, the person, compared by their words, case
     /// and spacing aside: "Asked Claude about Claude", "Asked ChatGPT about ChatGPT") or says nothing (empty, punctuation,
-    /// "New chat", "(no subject)"). The line then goes on without its "about …": "Asked Claude: “…”".
+    /// "New chat", "(no subject)"). The line then goes on without its "about …": "Asked Claude “…”.".
     public static func topic(_ raw: String?, echoing names: [String]) -> String? {
         guard var t = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
         // claude/dayeval-1005: "Chat with Claude about login issues" is "login issues" ("Asked Claude about Chat with Claude…").
@@ -699,7 +706,8 @@ extension DayReview {
         if let k = item.quoteWithClause, let alt = item.clauseQuote, facts.clauses[k].map({ !$0.isEmpty }) == true { quoteID = alt }
         if quote == nil, clause == nil || item.quoteAlways, let id = quoteID, let w = words[id], !w.isEmpty { quote = w }
         // A name-ended lead takes a colon before what follows it: "Worked on DayDream: …", "Texted Jamie Lin: “…”".
-        var colon = item.link == nil && ((item.colon && rest != nil) || (rest == nil && quote != nil))
+        // Owner 10/6: never an AI ask's ("Asked Claude “…”.", as "Searched “…”." reads: `DayReviewBullet.asksQuote`).
+        var colon = item.link == nil && ((item.colon && rest != nil) || (rest == nil && quote != nil && !lead.hasPrefix("Asked ")))
         // claude/dayeval-1005: "Worked on DayDream in Ghostty", the colon only before a clause.
         if options.contains(.projects), clause == nil, quote == nil, item.tail?.hasPrefix("in ") == true { colon = false }
         return DayReviewBullet(id: item.id, thread: thread.key, lead: lead + (colon ? ":" : ""), link: item.link, rest: rest, quote: quote, moments: item.moments)

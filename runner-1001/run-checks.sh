@@ -141,7 +141,7 @@ done
 step compile-typed-store swiftc -parse-as-library -module-cache-path "$I/modcache" -I "$B/Modules" -I Sources/CSQLite \
   scripts/typed-store-checks.swift $(objs MemoryCore HistoryCore PrivacyPolicy) -o "$OUT/typed-store"
 step typed-store "$OUT/typed-store"
-# claude/summary-1003 (owner decision 2026-10-03): "Let AI apps read what you typed" (bridge, moment_details, typed search).
+# claude/summary-1003 (owner decision 2026-10-03): "Let AI apps see your typed words" (bridge, moment_details, typed search).
 if [ -f scripts/ai-read-typed-checks.swift ]; then
   step compile-ai-read-typed swiftc -parse-as-library -module-cache-path "$I/modcache" -I "$B/Modules" -I Sources/CSQLite \
     scripts/ai-read-typed-checks.swift $(objs MemoryCore HistoryCore PrivacyPolicy) -lsqlite3 -o "$OUT/ai-read-typed"
@@ -415,6 +415,8 @@ step native-receipt-0053 "$OUT/native-receipt-0053"
 step browser-boundary-py python3 scripts/check_browser_boundary.py -v
 # Safe typing H (access slice): claim wording in app strings and docs stays literally true.
 step typed-claim-checks python3 scripts/typed-claim-checks.py -v
+# Anonymous usage counts: approved keys only, no networking in mac-mem, no sending from check or development builds.
+[ -f scripts/usage-counts-checks.py ] && step usage-counts-py python3 scripts/usage-counts-checks.py -v
 step native-coverage-mjs "${NODE_BIN:-node}" --test BrowserBridge/fixtures/native-coverage-checks.mjs
 step harness-source-py python3 tools/chrome-device-test/check_harness_source.py -v
 step qa-harness-boundary-py python3 scripts/check-qa-harness-boundary.py -v

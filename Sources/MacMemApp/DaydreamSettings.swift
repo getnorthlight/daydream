@@ -101,6 +101,8 @@ struct MemorySettings: View {
                         .accessibilityIdentifier("settings-open-at-login")
                     }
                 }
+                // Anonymous usage counts: on by default, with Copy ID and See what's sent (UsageReport, UsageSender).
+                UsageSharingSettingsHost()
                 // Forget a time range (the privacy control that was asked for here): its own sheet over Settings.
                 if model.activity.canForgetRange {
                     SettingsListCard {

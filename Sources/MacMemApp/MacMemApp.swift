@@ -22,7 +22,7 @@ import WriterBackend
     /// Typed words past the kept period are deleted at launch and hourly.
     private var typedExpiry:TypedTextExpiryTimer?
     /// claude/summary-1003 (owner decision 2026-10-03): carries typed words to connected AI apps while "Let AI apps
-    /// read what you typed" is on (`AssistantTypedBridge`); the setting and the AI app's key are checked per request.
+    /// see your typed words" is on (`AssistantTypedBridge`); the setting and the AI app's key are checked per request.
     private var aiReadBridge:AssistantTypedBridgeServer?
     @Published var writerControlsBusy=false
     @Published var settingsPresented=false
@@ -681,7 +681,9 @@ import WriterBackend
                                             unlocked:{ [weak self] in MainActor.assumeIsolated { self?.unsuspend(.screenLock) } })
             // Quitting (a restart and a logout too) keeps what the person had on: it starts again at the next launch.
             observers.append(NotificationCenter.default.addObserver(forName:NSApplication.willTerminateNotification,object:nil,queue:.main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.productionSearch?.stop();self?.leaving=true;self?.withStopIntent(.person) { self?.pauseCapture("App closed.",commitTyping:true) } }
+                MainActor.assumeIsolated { self?.productionSearch?.stop();self?.leaving=true;self?.withStopIntent(.person) { self?.pauseCapture("App closed.",commitTyping:true) }
+                    // chatgpt-capture: ChatGPT's AXEnhancedUserInterface goes back off when DayDream quits (if it turned it on).
+                    AppTrees.release() }
             })
             observers.append(NotificationCenter.default.addObserver(forName:NSApplication.didBecomeActiveNotification,object:nil,queue:.main) { [weak self] _ in
                 MainActor.assumeIsolated {
@@ -710,6 +712,9 @@ import WriterBackend
                     }
                 }
                 if development == nil,!recordingTrial,backups.prepared == nil {noteWriter.configure(store:store)}
+                // Anonymous usage counts (UsageReport): the released app's own history only, never a preview or a trial.
+                if development == nil,!recordingTrial,!functionalTrial {UsageReport.start(model:self,home:memoryHome)}
+                activity.searched = { results in UsageReport.searched(results:results) }
                 backups.onResolved = { [weak self] in if self?.development == nil,self?.recordingTrial == false {self?.noteWriter.configure(store:store)};self?.dayData.invalidateAll();self?.refresh() }
                 backups.closeHere = { id in try store.cancelCanonicalRestore(id) }
                 if let development {backups.allowedPath=development.allowsBackup;backups.requiresKnownBackup=true;backups.trialBackupDirectory=development.root.appendingPathComponent("backups")}
@@ -3556,6 +3561,8 @@ struct DaydreamAppMenuBarPanel: View {
 }
 #if !DEVELOPMENT_SOURCE_CHECKS
 struct MacMemApplication: App {
+    /// Counts opens only (UsageReport): the Dock's reopen and how the app launched.
+    @NSApplicationDelegateAdaptor(DaydreamAppDelegate.self) private var appDelegate
     @StateObject private var session = DaydreamLaunchSession(deferModel:ProcessInfo.processInfo.environment["DAYDREAM_LAUNCH_SYNC_MODEL"] != "1")
     #if DAYDREAM_QA_HARNESS && DAYDREAM_OWNER_TYPING
     @MainActor static func main() {

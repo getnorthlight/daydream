@@ -380,7 +380,7 @@ final class FakeChrome:@unchecked Sendable {
         let cards=(try? String(contentsOfFile:"Sources/MemoryUI/PermissionSetup.swift",encoding:.utf8)) ?? ""
         expect(onboarding.components(separatedBy:"model.askChromeAccessInSetup()").count == 2
                && onboarding.contains("allow: { chromeRowLatched = true; chromeAsked = true; model.askChromeAccessInSetup() }")
-               && onboarding.contains("chromeRow: chromeRow, showsAIReadsToggle: true, onStatusChange: permissionChanged")
+               && onboarding.contains("chromeRow: chromeRow, onStatusChange: permissionChanged")
                // Never stuck: the Chrome row never holds Continue on Permissions.
                && onboarding.contains("case .permissions: return permitted || chromeCard")
                && !onboarding.contains("case .chrome")

@@ -122,6 +122,9 @@ struct BundledConnectionCommand: ConnectionCommandRunning {
     /// Force Quit & Reopen was pressed: the page asks first (anything unsaved in the app is lost).
     @Published var pendingForceQuit: AIApp?
     @Published private(set) var loaded = false
+    /// Each Connect that wrote an app's entry (setup counts it: `UsageReport`, setup_step ai_connected), and its app.
+    @Published private(set) var connects = 0
+    private(set) var lastConnected: AIApp?
     /// A saved change to Apps to remember turned the keys off this run (the app model sets it), so a key that stopped
     /// working can say why.
     @Published var disconnectedByAppsChange = false
@@ -451,6 +454,7 @@ struct BundledConnectionCommand: ConnectionCommandRunning {
         }
         phases[app.id] = .working("Connecting…")
         let failure = await write(.connect, app)
+        if failure == nil { lastConnected = app; connects += 1 }
         if let failure {
             if quit, let running { await reopen(app, running) }
             fail(app, failure)

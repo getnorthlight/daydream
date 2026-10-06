@@ -153,7 +153,7 @@ struct DaydreamAppMenuCommands: Commands {
     /// command would run once per window); other windows (onboarding) open by id.
     static func menuBarRoutes(_ openWindow: OpenWindowAction) -> DaydreamMenuBarRoutes {
         DaydreamMenuBarRoutes(openWindow: { target in
-            if target == id { show(openWindow) } else { openWindow(id: target) }
+            if target == id { UsageReport.opened("menu_bar"); show(openWindow) } else { openWindow(id: target) }
         })
     }
 }

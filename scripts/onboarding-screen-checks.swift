@@ -189,12 +189,14 @@ final class Box<T> { var value: T; init(_ value: T) { self.value = value } }
         setPhase(model, downloading)
         flow.pressReturn()
         _ = wait(10) { flow.drawn?.page == .review }
-        check(flow.drawn?.title == DaydreamOnboarding.allSetTitle, "the last page: You're all set while summaries download",
+        check(flow.drawn?.title == DaydreamOnboarding.connectTitle && flow.drawn?.rows.first?.title == "Summaries",
+              "the last page: Connect your AI, with the summaries download as its status row",
               "\(flow.drawn.map { "\($0.page) | \($0.title) | \($0.error ?? "no line")" } ?? "-")")
         flow.shoot("review", dark: dark)
         setPhase(model, .off)
         flow.settle(0.4)
-        check(flow.drawn?.title == DaydreamOnboarding.almostReadyTitle, "the last page: Almost ready while summaries are off")
+        check(flow.drawn?.title == DaydreamOnboarding.connectTitle && flow.drawn?.rows.first?.value == "Off",
+              "the last page: Connect your AI, with Summaries Off as its status row")
         flow.shoot("review-summaries-off", dark: dark)
         setPhase(model, .failed(.downloadStopped))
         flow.settle(0.4)
@@ -324,7 +326,9 @@ final class Box<T> { var value: T; init(_ value: T) { self.value = value } }
         page.shoot("apps-keychain-error", dark: false)
         page.pressReturn()
         check(wait(10) { page.drawn?.page == .review }, "keychain: Continue again moves on")
-        check(page.drawn?.rows.first { $0.title == "Typed text" }?.value == "Off" && !model.captureText, "keychain: the last page says Typed text Off")
+        // Owner 10/5: the last page has no Typed text row; the switch it carries forward is off, and so is typing.
+        check(page.drawn?.typedText == false && !page.drawn!.rows.contains { $0.title == "Typed text" } && !model.captureText,
+              "keychain: typing reaches the last page off")
         page.close()
     }
 
@@ -343,7 +347,7 @@ final class Box<T> { var value: T; init(_ value: T) { self.value = value } }
         check(wait(3) { page.drawn?.page == .review }, "first Continue: one Continue on Apps with typing on moves to the last page",
               "\(page.drawn.map { "\($0.page) | \($0.error ?? "no line")" } ?? "-")")
         check(model.captureText && model.typing.setUp && !model.preferencesUnresolved, "first Continue: typing is on and saved")
-        check(page.drawn?.rows.first { $0.title == "Typed text" }?.value == "On", "first Continue: the last page says Typed text On")
+        check(page.drawn?.typedText == true && model.captureText, "first Continue: typing reaches the last page on")
         page.close()
     }
 
@@ -356,7 +360,7 @@ final class Box<T> { var value: T; init(_ value: T) { self.value = value } }
         window.isReleasedWhenClosed = false
         defer { window.contentView = nil; window.close() }
         // The Apps page, alone and with a problem line above it (its list is then shorter): both switches stay above the buttons.
-        // Drawn as setup draws it: no icon over the title (`showsIcon: page == .permissions || page == .review`).
+        // Drawn as setup draws it: no icon over the title (`showsIcon: page == .permissions`).
         let apps = (0..<12).map { LocalApp(id: "com.example.app\($0)", name: "Example app \($0)") }
         for problem in [false, true] {
             let bottom = Box<CGFloat>(0)
@@ -394,11 +398,11 @@ final class Box<T> { var value: T; init(_ value: T) { self.value = value } }
         for message in [nil, "Finish the current history, backup, or replacement operation first."] {
             let bottom = Box<CGFloat>(0)
             let content = DaydreamReviewContent(rows: [
-                DaydreamReviewRow(id: "summaries", title: "Summaries", value: "Off", systemImage: "text.alignleft", button: ("Add Key", {})),
-                DaydreamReviewRow(id: "typing", title: "Typed text", value: "On", systemImage: "keyboard", edit: {}),
-                DaydreamReviewRow(id: "chrome-pages", title: "Web pages in Chrome", value: "On", systemImage: "globe", edit: {})
-            ], message: message, fileVaultOff: true)
-            let host = NSHostingView(rootView: DaydreamOnboardingShell(title: "Almost ready", back: {}, continueAction: {}) {
+                DaydreamReviewRow(id: "summaries", title: "Summaries", value: "Off", systemImage: "text.alignleft", button: ("Add Key", {}))
+            ], message: message, fileVaultOff: true, comeBack: true, aiReads: true)
+            let host = NSHostingView(rootView: DaydreamOnboardingShell(title: DaydreamOnboarding.connectTitle, subtitle: DaydreamOnboarding.connectSubtitle,
+                                                                       back: {}, showsIcon: false, continueAction: {}) {
+                DaydreamNoAIApps(getApp: {}, otherApp: {})
                 content
                 Color.clear.frame(height: 1).background(GeometryReader { proxy in
                     Color.clear.preference(key: ContentBottom.self, value: proxy.frame(in: .global).maxY)

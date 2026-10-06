@@ -74,13 +74,15 @@ Every app is remembered unless you uncheck it. Uncheck any app you never want re
 
 **Typed text** and **Web pages in Chrome** start on; each switch has one line that says what it saves. Turn either off with one click, then or any time in Settings. Nothing is recorded before you press Start Recording. Typed text saves what you type in apps on a fixed list, such as Notes, Spotlight and Terminal, and on websites in Google Chrome while **Web pages in Chrome** is on too. Messages and email are on too; turn them off in Settings › Apps to remember. The README's [Typed text](../README.md#typed-text) section lists every app and what is always skipped.
 
-What you type is encrypted on your Mac, and DayDream deletes the exact words after 7 days unless you choose another time. AI apps you connect can read the words you typed and sent while **Let AI apps read what you typed** is on (on by default; Settings › Connections). With it off, they see only where and about how much you typed, and your summaries. Cloud summaries, if you choose them, get the words to write your notes. Window titles can include words you typed, like an email subject or a shell command. Those are saved, read by AI apps and sent to cloud summaries like any other window title. Anyone typing on this Mac account while it's on is recorded as you. Leave it off if you type passwords or other secrets into normal text boxes.
+What you type is encrypted on your Mac, and DayDream deletes the exact words after 7 days unless you choose another time. AI apps you connect can read the words you typed and sent while **Let AI apps see your typed words** is on (on by default; Settings › Connections). With it off, they see only where and about how much you typed, and your summaries. Cloud summaries, if you choose them, get the words to write your notes. Window titles can include words you typed, like an email subject or a shell command. Those are saved, read by AI apps and sent to cloud summaries like any other window title. Anyone typing on this Mac account while it's on is recorded as you. Leave it off if you type passwords or other secrets into normal text boxes.
 
-## 7. Review and start
+## 7. Connect your AI and start
 
-![Setup's last page, "You're all set": Permissions Allowed, Summaries Set up later, Apps to remember, Typed text Off, and a Start Recording button.](images/setup-review.png)
+![Setup's last page, "Connect your AI", on a Mac without an AI app yet: what DayDream works with, Get Claude, Use another MCP app, and a Start Recording button.](images/setup-review.png)
 
-Check your choices. To change one, click it. When you're ready, press **Start Recording**. If something still needs doing, such as a permission, the button says so (for example **Allow Permissions**) and takes you to that page.
+The last page lists the AI apps on your Mac that DayDream can connect, each with one **Connect** button, the same as Settings › Connections (see [Connect an AI app](../README.md#connect-an-ai-app) in the README). Apps that aren't on your Mac aren't listed. With none, the page says which apps DayDream works with, and links to [Connect an AI app by hand](#connect-an-ai-app-by-hand) for any other MCP app. Connecting is optional: you can connect later in Settings. A connected AI app can read your history and may send it to its own online service.
+
+While summaries are downloading, off or stuck, the page says so with one button. When you're ready, press **Start Recording**. If something still needs doing, such as a permission, the button says so (for example **Allow Permissions**) and takes you to that page. Give it an hour or so of work, then ask your AI what you got done.
 
 The first time you start recording, macOS asks whether DayDream may show notifications. DayDream uses them only to tell you when recording stopped, or didn't start again, without you asking. You can say no; the menu bar panel says why too.
 

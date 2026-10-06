@@ -97,6 +97,33 @@ func runMomentPromptChecks(home: URL) throws {
     try check(try store.ownerMomentPrompts(["m-x": ["missing-row", "p-ask-1"]], now: now)["m-x"]?.hasPrefix("how do I fix") == true, "owner: a candidate that doesn't open gives way to the next")
     try check(try store.ownerMomentPrompts(["m-note": ["p-note"]], now: now)["m-note"] == noteWords, "control: the owner disclosure opens any kept row it is handed (the pick decides what is an ask)")
 
+    // MARK: X (owner 10/6): the newest post or reply code confirmed sent leads the row; a draft never does
+
+    func onX(_ id: String, _ text: String, _ seconds: Double, send: String, control: String? = nil) -> Evidence {
+        var e = typed(id, text, seconds, surface: "social", send: send, run: "run-" + id, url: "https://x.com/home")
+        e.title = "Home / X"; e.captureProvenance?.unit?.sendControl = control
+        return e
+    }
+    try check(try store.ingest(onX("x-post", "shipping the export fix today", 18, send: "detected"), now: now)
+              && store.ingest(onX("x-reply", "yes, the  fix is\nin 1.4.2", 12, send: "detected", control: "reply"), now: now)
+              && store.ingest(onX("x-draft", "thinking about a thread", 6, send: "none"), now: now),
+              "fixture: on X, a confirmed post, a confirmed reply, then a newer draft")
+    let xRequest = MomentPromptRequest(momentID: "m-x-sent", actionIDs: ["x-post", "x-reply", "x-draft"], primaryBundle: "com.apple.Notes", site: "x.com")
+    let xPick = try store.momentPromptRows([xRequest])
+    try check(xPick["m-x-sent"] == ["x-reply", "x-post"], "X pick: the newest confirmed send first, never the newer draft (\(xPick))")
+    try check(try store.momentPromptRows([MomentPromptRequest(momentID: "m-x-draft", actionIDs: ["x-draft"], primaryBundle: "com.apple.Notes", site: "x.com")]).isEmpty,
+              "X pick: a draft alone leads nothing (the row keeps \"On X for N minutes.\")")
+    try check(try store.momentPromptRows([MomentPromptRequest(momentID: "m-x-ai", actionIDs: ["x-post"], primaryBundle: "com.apple.Notes", site: nil)]).isEmpty,
+              "X pick: an X send is never an AI ask of a moment that isn't on X")
+    let xShown = try store.ownerMomentPrompts(xPick, now: now)
+    let xSplit = xShown["m-x-sent"].map(MomentPromptText.split)
+    try check(xSplit?.lead == "Replied" && xSplit?.words == "yes, the fix is in 1.4.2" && xSplit?.at == iso(now.addingTimeInterval(-12)),
+              "X owner: \"Replied\", when it was typed, and the reply's words, one line (\(xShown))")
+    try check(try store.ownerMomentPrompts(["m-x-post": ["x-post"]], now: now)["m-x-post"].map(MomentPromptText.split)?.lead == "Posted",
+              "X owner: a confirmed post leads with \"Posted\"")
+    try check(MomentPromptText.split("how do I fix it").lead == nil && MomentPromptText.split("how do I fix it").words == "how do I fix it"
+              && shown["m-chat"].map(MomentPromptText.split)?.lead == nil, "an AI ask carries no lead (unchanged)")
+
     // Typing off: nothing opens; on again: it does.
     policy.captureText = false; try store.updatePolicy(policy, now: now)
     try check(try store.ownerMomentPrompts(asks, now: now).isEmpty, "typing off: no ask opens (the row keeps today's text)")

@@ -35,6 +35,7 @@ import PrivacyPolicy
         grouping()
         oldDayBracket()
         capturedWording()
+        askLines()
         messagesFold()
         textsVerbatim()
         composeLines()
@@ -301,7 +302,7 @@ import PrivacyPolicy
         let stale = FocusAppCard.members(FocusListLayout.sessions([olderAsk, noted], sectionID: "loose")[0])
         require(!FocusAppCard.collapsedLine(stale).contains("an older ask"), "an older member's ask never leads the card")
         let rows = source("Sources/MemoryUI/FocusListRows.swift")
-        require(rows.contains("MomentSubtitle.shownPrompt(anchor)") && rows.contains("PromptLine(prompt: ask)"),
+        require(rows.contains("FocusAppCard.promptMember(members), let ask = MomentSubtitle.shownPrompt(lead)") && rows.contains("PromptLine(prompt: ask, lead: lead.promptLead)"),
                 "the collapsed header draws the ask as PromptLine (cut before its closing quote)")
         let cache = source("Sources/MemoryUI/MomentPromptCache.swift")
         require(cache.contains("newestFirst: !m.currentSummaryState.isReady"), "a moment without a note asks for its newest ask")
@@ -472,6 +473,203 @@ import PrivacyPolicy
                                                      checkedAt: iso(when), generation: 1, unit: unit)
         return e
     }
+    /// Owner 10/6: a confirmed AI ask reads as a search does ("Searched “red boots”."): "Asked ChatGPT “…”.", plain; a draft
+    /// keeps the bare italic quote; two typed pieces never run together ("thatWe").
+    static func askLines() {
+        // The join: a new line or sentence whose separator wasn't kept still gets its space; a mid-word cut still joins.
+        require(MessagesTypedFold.join("Okay, I think that", "We should implement posthog.") == "Okay, I think that We should implement posthog."
+                && MessagesTypedFold.join("wanna me", "et us") == "wanna meet us" && MessagesTypedFold.join("v2", "ok") == "v2ok",
+                "join: \"that\" + \"We\" gets a space (never \"thatWe\"); a mid-word cut still joins", MessagesTypedFold.join("Okay, I think that", "We should"))
+        let pieces = [CapturedStitch.Fragment(place: " in ChatGPT", at: "2026-10-06T10:00:00Z", text: "Okay, I think that"),
+                      CapturedStitch.Fragment(place: " in ChatGPT", at: "2026-10-06T10:00:09Z", text: "We should implement posthog. However, I am not sure", sent: true)]
+        require(CapturedStitch.messages(pieces) == ["Okay, I think that We should implement posthog. However, I am not sure"],
+                "stitch: two pieces of one ask never run together", "\(CapturedStitch.messages(pieces))")
+        // One preview of an ask typed in two parts (a part ended without its space): the parts join with one.
+        let words = "why does the export crash when the file is over 2gb, and is it the same bug as the one in the import sheet last week"
+        func preview(_ id: String, _ parts: [String], state: String) -> OwnerSourcePreview {
+            OwnerSourcePreview(id: id, actionIDs: parts.indices.map { id + "-\($0)" }, at: "2026-10-06T10:01:00Z", runID: "run-" + id,
+                parts: parts.indices.map { OwnerSourcePart(actionID: id + "-\($0)", text: parts[$0], state: $0 == parts.count - 1 ? state : "draft") },
+                state: state, lead: (state == "submitted" ? "Submitted text" : "Drafted text") + " in ChatGPT", readAt: at(10, 2),
+                disclosureRevision: "fixture", expiresAt: nil)
+        }
+        let joined = CapturedStitch.fragments([preview("p", ["Okay, I think that", "We should implement posthog."], state: "draft")]).map(\.text)
+        require(joined == ["Okay, I think that We should implement posthog."], "a preview's parts join with a space", "\(joined)")
+        // A confirmed ask (`ComposeLine` asked, a send detected): "Asked ChatGPT “…”.".
+        let asked = ComposeLine(ComposeOutcome(kind: .asked, destination: ComposeDestination(service: "ChatGPT")))
+        let sent = preview("g", [words], state: "submitted")
+        let column = FocusAppCard.leftColumn([], previews: [sent], pending: true, compose: ["g-0": asked])
+        let quote = FocusAppCard.quote(column.quotes.first ?? "")
+        let line = FocusAppCard.askLine(column.action(0), quote: quote) ?? ""
+        require(column.header == "Summary" && column.codeLines && column.action(0)?.lead == "Asked ChatGPT" && line.hasPrefix("Asked ChatGPT \u{201C}why does the export crash")
+                && line.hasSuffix("\u{2026}\u{201D}.") && !line.contains(":"),
+                "a confirmed ask reads \"Asked ChatGPT “…”.\" (no colon, a period) under \"Summary\" (code's own line)", "\(column.header ?? "nil") \(line)")
+        // Owner 10/6: code's action lines read "Summary" before the note, and Summarize Now stays (greyed, "Summarizing…",
+        // while it runs); the note's bullets then replace them as before.
+        require(FocusAppCard.offersSummarizeNow(column, targets: 1, running: false) && FocusAppCard.offersSummarizeNow(column, targets: 0, running: true)
+                && !FocusAppCard.offersSummarizeNow(column, targets: 0, running: false),
+                "code's action lines under \"Summary\" keep Summarize Now")
+        require(CardSummaryState.pending.label(column.header, codeLines: column.codeLines) == "Summary"
+                && !CardSummaryState.violet(CardSummaryState.pending.label(column.header, codeLines: true))
+                && CardSummaryState.working.label(column.header, codeLines: column.codeLines) == FocusAppCard.summarizingTitle
+                && CardSummaryState.done.label("Summary") == "Summary" && CardSummaryState.working.label("Summary") == "Summary",
+                "\"Summary\" (grey) over code's lines; \"Summarizing…\" while it runs; a note's Summary unchanged")
+        let noted = slice("n", at(10, 0), at(10, 5), subject: "ChatGPT", app: "ChatGPT", bundle: "com.openai.chat",
+                          bullets: [MomentBullet(text: "Asked ChatGPT why the export crashes on big files.", actionIDs: ["g-0"])], actionIDs: ["g-0"])
+        let after = FocusAppCard.leftColumn([noted], previews: [sent], pending: false, compose: ["g-0": asked])
+        require(after.header == "Summary" && !after.codeLines && after.quotes.isEmpty && after.bullets.count == 1
+                && !FocusAppCard.offersSummarizeNow(after, targets: 1, running: false),
+                "once the note arrives: its bullets under Summary, no Summarize Now (as before)")
+        // A bare quote beside the ask (a draft never sent) keeps the old header: raw words never sit under "Summary".
+        let mixed = FocusAppCard.leftColumn([], previews: [sent, preview("h", ["and maybe the import too"], state: "draft")], pending: true,
+                                            compose: ["g-0": asked])
+        require(mixed.quotes.count == 2 && !mixed.codeLines && mixed.header == "Summary pending"
+                && FocusAppCard.offersSummarizeNow(mixed, targets: 1, running: false),
+                "an ask beside a bare draft: \"Summary pending\" as before", "\(mixed.header ?? "nil") \(mixed.quotes)")
+        require(FocusAppCard.askLine(.init(lead: "Asked Claude", sent: true), quote: FocusAppCard.quote("fix the parser")) == "Asked Claude \u{201C}fix the parser\u{201D}.",
+                "the ask line: Asked <App> “…”.")
+        // Not confirmed: a gesture alone ("submitted", no compose line) or a draft's compose line is no ask: the bare quote.
+        let draft = ComposeLine(ComposeOutcome(kind: .draft, destination: ComposeDestination(service: "ChatGPT")))
+        for (compose, why) in [([:], "a gesture alone"), (["g-0": draft], "a draft")] as [([String: ComposeLine], String)] {
+            let c = FocusAppCard.leftColumn([], previews: [sent], pending: true, compose: compose)
+            require(c.quotes.count == 1 && c.action(0) == nil && FocusAppCard.askLine(c.action(0), quote: quote) == nil,
+                    "\(why): no \"Asked\", the bare quote as before")
+        }
+        // Another send (a text) is never an ask.
+        let texted = ComposeLine(ComposeOutcome(kind: .sentMessage, destination: ComposeDestination(name: "Sam")))
+        require(CapturedStitch.action(texted) == nil && CapturedStitch.action(asked)?.lead == "Asked ChatGPT", "only an AI ask is an ask")
+        // The card and the details page draw it plain (regular, not italic); the collapsed row keeps its quoted ask.
+        let expanded = source("Sources/MemoryUI/FocusListExpanded.swift"), detail = source("Sources/MemoryUI/DaydreamKitMoments.swift")
+        let view = expanded.range(of: "struct CapturedQuoteText: View {").map { String(expanded[$0.lowerBound...].prefix(700)) } ?? ""
+        let askBranch = view.range(of: "if let line = FocusAppCard.askLine(").flatMap { r in view.range(of: "} else {", range: r.upperBound..<view.endIndex).map { String(view[r.lowerBound..<$0.lowerBound]) } } ?? ""
+        require(!askBranch.isEmpty && !askBranch.contains("italic") && askBranch.contains("Text(line)")
+                && expanded.contains("action: column.action(index), dimmed:") && detail.contains("action: column.action(index))"),
+                "the card and the details page draw the ask line plain (not italic)", askBranch)
+        require(source("Sources/MemoryUI/FocusAppCard.swift").contains("if let lead = promptMember(members), let line = MomentSubtitle.promptText(lead) { return line }")
+                && PromptLine.text("fix the parser", lead: nil) == "\u{201C}fix the parser\u{201D}",
+                "the collapsed line keeps its quoted ask")
+        xLines()
+    }
+
+    /// Owner 10/6: X cards, most specific line first, never more than code saved; "Posted" and "Replied" only from a send
+    /// code confirmed (`ComposeSend`: a gesture and a confirmation).
+    static func xLines() {
+        // 1. With the words: Posted / Replied only when confirmed sent, Typed for the rest (never Posted for a draft).
+        func xLine(_ kind: ComposeKind, context: ComposeContext = .init()) -> ComposeLine {
+            ComposeLine(ComposeOutcome(kind: kind, destination: ComposeDestination(service: "X"), context: context))
+        }
+        func xPreview(_ id: String, _ words: String, state: String) -> OwnerSourcePreview {
+            OwnerSourcePreview(id: id, actionIDs: [id], at: "2026-10-06T11:00:00Z", runID: "run-" + id,
+                parts: [OwnerSourcePart(actionID: id, text: words, state: state)], state: state,
+                lead: (state == "submitted" ? "Submitted text" : "Drafted text") + " in Google Chrome", readAt: at(11, 1),
+                disclosureRevision: "fixture", expiresAt: nil)
+        }
+        let words = "shipping the new export today"
+        for (line, state, want) in [(xLine(.posted), "submitted", "Posted \u{201C}\(words)\u{201D} on X."),
+                                    (xLine(.quoted), "submitted", "Posted \u{201C}\(words)\u{201D} on X."),
+                                    (xLine(.replied, context: ComposeContext(author: "Ada")), "submitted", "Replied \u{201C}\(words)\u{201D} on X."),
+                                    (xLine(.draft), "draft", "Typed \u{201C}\(words)\u{201D} on X."),
+                                    // Return pressed but no confirmation: a draft, never "Posted".
+                                    (xLine(.draft), "submitted", "Typed \u{201C}\(words)\u{201D} on X.")] as [(ComposeLine, String, String)] {
+            let c = FocusAppCard.leftColumn([], previews: [xPreview("x1", words, state: state)], pending: false, compose: ["x1": line])
+            let got = FocusAppCard.askLine(c.action(0), quote: FocusAppCard.quote(c.quotes.first ?? "")) ?? "-"
+            require(got == want && c.header == "Summary" && c.codeLines && FocusAppCard.offersSummarizeNow(c, targets: 1, running: false),
+                    "X with words: \(line.kind) \(state) reads \"\(want)\" under \"Summary\", Summarize Now kept", got)
+        }
+        // A post the preview calls sent but code never confirmed has no compose "posted" line: no "Posted".
+        let unconfirmed = FocusAppCard.leftColumn([], previews: [xPreview("x2", words, state: "submitted")], pending: false, compose: [:])
+        require(unconfirmed.action(0) == nil, "X: a gesture alone is never \"Posted\"")
+        // A confirmed post whose piece did not end the message (a later piece is still typing) is not "Posted".
+        let later = CapturedStitch.quotes([CapturedStitch.Fragment(place: " in Google Chrome", at: "1", text: "first", sent: false,
+                                                                   action: CapturedStitch.action(xLine(.posted)))])
+        require(later.first?.action == nil, "X: \"Posted\" only when the confirmed piece ended the message")
+        // Other sites keep their bare quote.
+        let reddit = ComposeLine(ComposeOutcome(kind: .posted, destination: ComposeDestination(service: "Reddit")))
+        require(CapturedStitch.action(reddit) == nil, "X lines are for X only")
+
+        // 2. Without the words: the pages' own links (else titles); no search line (X searches keep the site only).
+        require(XLines.pageLine(link: "https://x.com/ada/status/1840000000000000001", title: "Ada Lovelace on X: \"notes on the engine\"") == "Viewed @ada's post."
+                && XLines.pageLine(link: "https://x.com/ada", title: "Ada Lovelace (@ada) / X") == "Viewed @ada on X."
+                && XLines.pageLine(link: "https://x.com/ada/media", title: "") == "Viewed @ada on X."
+                && XLines.pageLine(link: nil, title: "Ada Lovelace on X: \"notes\"") == "Viewed Ada Lovelace's post."
+                && XLines.pageLine(link: nil, title: "Ada Lovelace (@ada)") == "Viewed @ada on X.",
+                "X pages: a post is \"Viewed @ada's post.\", a profile \"Viewed @ada on X.\"")
+        for (link, title) in [("https://x.com/home", "Home"), ("https://x.com/notifications", ""), ("https://x.com/i/bookmarks", ""),
+                              ("https://x.com/explore", "Explore"), ("https://x.com/search", "")] as [(String?, String)] {
+            require(XLines.pageLine(link: link, title: title) == nil, "X: \(link ?? title) names no one")
+        }
+        require(BrowserSites.pageDecision("https://x.com/search?q=red%20boots&src=typed_query", userBlocked: []) == .siteOnly(origin: "https://x.com")
+                && BrowserSites.pageLink("https://x.com/search?q=red%20boots") == nil && SearchPage.engine(host: "x.com") == nil,
+                "X searches keep the site only (no words, no link): no \"Searched … on X\" line")
+        // DayDream only knows a post was in front, never that it was read.
+        require(!source("Sources/MemoryUI/FocusAppCard.swift").contains("\"Read @") && !source("Sources/MemoryUI/FocusAppCard.swift").contains("return \"Read \\("),
+                "X pages say \"Viewed\", never \"Read\"")
+        // 3. The time line, then the specific lines, each once; page lines capped.
+        let start = at(11, 0), end = at(11, 25)
+        func page(_ id: String, _ link: String, _ title: String) -> MomentDetailEntry {
+            var e = MomentDetailEntry(id: id, bundle: "com.google.Chrome", app: "Google Chrome", host: "x.com", title: title, detail: "",
+                                      first: start, last: start, actionIDs: [id], openActionID: id, sends: [], typed: [])
+            e.link = link
+            return e
+        }
+        var posted = MomentDetailEntry(id: "p", bundle: "com.google.Chrome", app: "Google Chrome", host: "", title: "Posted on X", detail: "",
+                                       first: start, last: start, actionIDs: ["p"], openActionID: nil, sends: [], typed: [])
+        posted.message = MessagesTypedFold.Line(sent: true, returned: false, name: nil, title: "Posted on X", kind: ComposeKind.posted.rawValue)
+        let lines = [page("h", "https://x.com/home", "Home"), page("a", "https://x.com/ada/status/1", "Ada on X: \"one\""),
+                     page("a2", "https://x.com/ada/status/1", "Ada on X: \"one\""), page("b", "https://x.com/bob", "Bob (@bob) / X"),
+                     posted, page("c", "https://x.com/cy/status/2", ""), page("d", "https://x.com/dee/status/3", "")]
+        let said = XLines.sentences(lines, start: start, end: end)
+        require(said == ["On X for 25 minutes.", "Viewed @ada's post.", "Viewed @bob on X.", "Posted on X.", "Viewed @cy's post."],
+                "X without words: the time line, then posts, profiles and the send, each once (pages capped)", "\(said)")
+        require(XLines.timeLine(from: start, to: start.addingTimeInterval(20)) == "On X for less than a minute.", "X time line under a minute")
+        // Owner 10/6: an X card's own lines (no words, no note) read "Summary", with Summarize Now kept.
+        let xCard = slice("xc", start, end, subject: "X", app: "Google Chrome", bundle: "com.google.Chrome", actionIDs: ["xa"], sites: ["x.com"])
+        let xa = action("xa", start, "app.focus", app: "Google Chrome", bundle: "com.google.Chrome", title: "Home / X")
+        let xColumn = FocusAppCard.leftColumn([xCard], previews: [], pending: true, actions: [xa])
+        require(XLines.card([xCard]) && xColumn.header == "Summary" && xColumn.codeLines && xColumn.quotes.isEmpty
+                && FocusAppCard.offersSummarizeNow(xColumn, targets: 1, running: false),
+                "X card's own lines: \"Summary\" (not \"Summary pending\"), Summarize Now kept", xColumn.header ?? "nil")
+        let other = slice("tc", start, end, subject: "Terminal", app: "Terminal", bundle: "com.apple.Terminal", actionIDs: ["ta"])
+        require(FocusAppCard.leftColumn([other], previews: [], pending: true, actions: [xa]).header == "Summary pending",
+                "other cards without a note stay \"Summary pending\"")
+        // Owner 10/6: the collapsed X row leads with its newest post or reply code confirmed sent, as the expanded card
+        // says it ("Replied “…” on X."), the words cut as an AI ask's are (`MomentPromptText.clean`, then before the
+        // closing quote); a draft never leads (the prompt pipeline hands X only confirmed sends, `promptLead` set).
+        var xNewest = slice("xn", at(11, 20), at(11, 25), subject: "X", app: "Google Chrome", bundle: "com.google.Chrome", actionIDs: ["xn1"], sites: ["x.com"])
+        var xOlder = slice("xo", at(11, 0), at(11, 10), subject: "X", app: "Google Chrome", bundle: "com.google.Chrome", actionIDs: ["xo1"], sites: ["x.com"])
+        require(FocusAppCard.collapsedLine([xNewest, xOlder]) == "On X for 25 minutes.", "X row, no confirmed send: \"On X for 25 minutes.\"",
+                FocusAppCard.collapsedLine([xNewest, xOlder]))
+        xOlder.prompt = "yes, the fix is in 1.4.2"; xOlder.promptLead = "Replied"; xOlder.promptAt = "2026-10-02T16:08:00Z"
+        require(FocusAppCard.collapsedLine([xNewest, xOlder]) == "Replied \u{201C}yes, the fix is in 1.4.2\u{201D} on X."
+                && FocusAppCard.promptMember([xNewest, xOlder])?.id == "xo",
+                "X row: the newest confirmed reply leads, \"Replied “…” on X.\" (a newer member without one doesn't hide it)",
+                FocusAppCard.collapsedLine([xNewest, xOlder]))
+        xNewest.prompt = "shipping the export fix today"; xNewest.promptLead = "Posted"; xNewest.promptAt = "2026-10-02T16:02:00Z"
+        require(FocusAppCard.collapsedLine([xNewest, xOlder]).hasPrefix("Replied"),
+                "X row: the most recent send leads even from an older member (moments interleave on X)")
+        xNewest.promptAt = "2026-10-02T16:21:00Z"
+        require(FocusAppCard.collapsedLine([xNewest, xOlder]) == "Posted \u{201C}shipping the export fix today\u{201D} on X."
+                && MomentSubtitle.rowText(for: xNewest) == "Posted \u{201C}shipping the export fix today\u{201D} on X.",
+                "X row: the most recent confirmed send leads (\"Posted “…” on X.\"), on the card and on a member row")
+        var xDraft = xNewest; xDraft.promptLead = nil
+        require(FocusAppCard.collapsedLine([xDraft]) == "On X for 5 minutes.", "X row: words without a confirmed send never lead (the time line)",
+                FocusAppCard.collapsedLine([xDraft]))
+        var xNoted = slice("xd", at(11, 20), at(11, 25), subject: "X", app: "Google Chrome", bundle: "com.google.Chrome",
+                           bullets: [MomentBullet(text: "Posted about the export fix on X.", actionIDs: ["xd1"])], actionIDs: ["xd1"], sites: ["x.com"])
+        xNoted.prompt = "shipping"; xNoted.promptLead = "Posted"
+        require(FocusAppCard.collapsedLine([xNoted]) == "Posted about the export fix on X.", "X row with a note: the note's line wins, as for asks")
+        require(MomentPromptText.split(MomentPromptText.sent(lead: "Replied", at: "t", words: "ok")) == .init(words: "ok", lead: "Replied", at: "t")
+                && MomentPromptText.split("plain ask") == .init(words: "plain ask", lead: nil, at: nil)
+                && PromptLine.text("ok", lead: "Replied") == "Replied \u{201C}ok\u{201D} on X."
+                && source("Sources/MemoryUI/DaydreamTodayData.swift").contains("copy.promptLead = split[m.id]?.lead")
+                && source("Sources/MemoryUI/DaydreamKitMoments.swift").contains("Text(Self.open).fixedSize()\n            Text(prompt).lineLimit(1).truncationMode(.tail)"),
+                "the row's value carries the lead; the words cut before the closing quote, as an ask's")
+        // The card uses them for X members only; its collapsed line is the time line, never "Worked in X".
+        let card = source("Sources/MemoryUI/FocusAppCard.swift")
+        require(card.contains("if XLines.card(members) { return XLines.sentences(lines, start: start, end: end) }")
+                && card.contains("if XLines.card(members) { return XLines.timeLine(from: start, to: end) }"),
+                "X cards say these lines in What happened and the collapsed line")
+    }
+
     /// The Return marker every Return in Messages also writes.
     static func smsReturn(_ id: String, _ when: Date, title: String = "Messages") -> CanonicalAction {
         action(id, when, "keyboard.submit", app: "Messages", bundle: sms, title: title)

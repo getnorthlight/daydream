@@ -20,6 +20,11 @@ public enum DaydreamSetupText {
     public static let ownMac = "Use DayDream only to record yourself, on your own Mac account."
     /// Common password managers are skipped; the list can't be complete.
     public static let passwordManagers = "Common password managers are skipped. Add others in Settings."
+    /// A new history is empty, so the first question to an AI app finds nothing (owner, 10/4): shown on the last page
+    /// until recording starts.
+    public static let comeBack = "After you start, give it an hour or so of work. Then ask your AI what you got done."
+    /// What connecting means, in Settings › Connections' words: said on setup's Connect page too.
+    public static let aiReads = "Connected AI apps can read your history and may send it to their own online service."
     /// Summaries on this Mac need the runtime inside the app. Every release carries it; only a test build
     /// staged with --without-writer-runtime-for-tests lacks it. It's the runtime, not the model, that's missing (writer/v2).
     public static let localUnavailable = "Not in this version. This copy of DayDream can't write summaries on this Mac."
@@ -189,6 +194,8 @@ public struct DaydreamSummariesContent: View {
     private let focusRequest: Int
 
     public static let localTitle = "Summaries on this Mac"
+    /// Row 1's tag (owner, 10/5): the private, free choice is the one to pick.
+    public static let recommendedTag = "Recommended"
     /// Row 1's line before anything is downloaded: the size, once, and where it runs.
     public static func localLine(size: String) -> String { "Downloads \(size) once. Runs on this Mac." }
     public static let localReadyLine = "Runs on this Mac."
@@ -221,7 +228,12 @@ public struct DaydreamSummariesContent: View {
             if localAvailable {
                 HStack(alignment: .top, spacing: 12) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(Self.localTitle).font(.system(size: 13, weight: .semibold))
+                        HStack(spacing: 6) {
+                            Text(Self.localTitle).font(.system(size: 13, weight: .semibold))
+                            Text(Self.recommendedTag).font(.system(size: 10, weight: .semibold)).foregroundStyle(Color.accentColor)
+                                .padding(.horizontal, 7).padding(.vertical, 2)
+                                .background(Color.accentColor.opacity(0.12), in: Capsule())
+                        }
                         Text(localLine).font(.system(size: 11)).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }.frame(maxWidth: .infinity, alignment: .leading)
@@ -535,33 +547,45 @@ public struct DaydreamChromeStepContent: View {
     }
 }
 
-/// Setup's last page: the choices, one value each, then the own-Mac line, and the FileVault line only while
-/// FileVault is off. `message` is a reason recording can't start that the page's button doesn't already say.
+/// Setup's last page under its Connect list (owner, 10/5): a status row only while something needs saying (the
+/// summaries download, or a problem with its one button), then the lines: when to come back, what connecting means, and
+/// the FileVault line only while FileVault is off. `message` is a reason recording can't start that the page's button
+/// doesn't already say.
 public struct DaydreamReviewContent: View {
     private let rows: [DaydreamReviewRow]
     private let message: String?
     private let fileVaultOff: Bool
+    private let comeBack: Bool
+    private let aiReads: Bool
 
-    public init(rows: [DaydreamReviewRow], message: String? = nil, fileVaultOff: Bool = false) {
+    /// `comeBack`: recording hasn't started yet, so the page says when there will be something to ask about.
+    /// `aiReads`: the page offers Connect, so it says what a connected app can read.
+    public init(rows: [DaydreamReviewRow], message: String? = nil, fileVaultOff: Bool = false, comeBack: Bool = false,
+                aiReads: Bool = false) {
         self.rows = rows
         self.message = message
         self.fileVaultOff = fileVaultOff
+        self.comeBack = comeBack
+        self.aiReads = aiReads
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            VStack(spacing: 0) {
-                ForEach(rows) { row in
-                    DaydreamReviewRowView(row: row)
-                    if row.id != rows.last?.id { Divider() }
-                }
-            }.padding(.horizontal, 8)
-            .background(DaydreamOnboardingTheme.card, in: RoundedRectangle(cornerRadius: 18))
-            .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.primary.opacity(0.06)))
-            .shadow(color: .black.opacity(0.07), radius: 7, y: 3)
+            if !rows.isEmpty {
+                VStack(spacing: 0) {
+                    ForEach(rows) { row in
+                        DaydreamReviewRowView(row: row)
+                        if row.id != rows.last?.id { Divider() }
+                    }
+                }.padding(.horizontal, 8)
+                .background(DaydreamOnboardingTheme.card, in: RoundedRectangle(cornerRadius: 18))
+                .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.primary.opacity(0.06)))
+                .shadow(color: .black.opacity(0.07), radius: 7, y: 3)
+            }
             VStack(alignment: .leading, spacing: 6) {
+                if comeBack { notice("clock", DaydreamSetupText.comeBack) }
+                if aiReads { notice("info.circle", DaydreamSetupText.aiReads) }
                 if fileVaultOff { notice("lock.open", DaydreamSetupText.fileVault) }
-                notice("person", DaydreamSetupText.ownMac)
             }
             .padding(.horizontal, 3)
             if let message, !message.isEmpty {
@@ -577,6 +601,55 @@ public struct DaydreamReviewContent: View {
                 .accessibilityHidden(true)
             Text(text).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+/// Setup's Connect page when none of the AI apps DayDream connects to is on this Mac (owner, 10/5): what it works with,
+/// a way to get one, and the manual setup for any other MCP app. Recording still starts without one.
+public struct DaydreamNoAIApps: View {
+    private let getApp: () -> Void
+    private let otherApp: () -> Void
+
+    public static let title = "No AI apps on this Mac yet"
+    public static let line = "DayDream works with Claude, Claude Code, Cursor, ChatGPT and Windsurf. Install one and it shows up here, or connect it later in Settings."
+    public static let getAppTitle = "Get Claude"
+    public static let otherAppTitle = "Use another MCP app"
+
+    public init(getApp: @escaping () -> Void, otherApp: @escaping () -> Void) {
+        self.getApp = getApp
+        self.otherApp = otherApp
+    }
+
+    public var body: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 8) {
+                ForEach(["claude", "claude-code", "cursor", "chatgpt"], id: \.self) { ConnectionProductIcon(id: $0, size: 34) }
+            }
+            Text(Self.title).font(.system(size: 14, weight: .semibold))
+            Text(Self.line).font(.system(size: 12)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true).frame(maxWidth: 400)
+            HStack(spacing: 10) {
+                Button(Self.getAppTitle, action: getApp)
+                Button(Self.otherAppTitle, action: otherApp).buttonStyle(.link).font(.system(size: 12))
+            }
+        }
+        .frame(maxWidth: .infinity).padding(.vertical, 22).padding(.horizontal, 16)
+        .background(DaydreamOnboardingTheme.card, in: RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.primary.opacity(0.06)))
+        .shadow(color: .black.opacity(0.07), radius: 7, y: 3)
+    }
+}
+
+/// Setup's Connect list: the same rows as Settings › Connections, on setup's card.
+public struct DaydreamConnectCard<Rows: View>: View {
+    private let rows: Rows
+    public init(@ViewBuilder rows: () -> Rows) { self.rows = rows() }
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 10) { rows }
+            .padding(.horizontal, 16).padding(.vertical, 12)
+            .background(DaydreamOnboardingTheme.card, in: RoundedRectangle(cornerRadius: 18))
+            .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.primary.opacity(0.06)))
+            .shadow(color: .black.opacity(0.07), radius: 7, y: 3)
     }
 }
 

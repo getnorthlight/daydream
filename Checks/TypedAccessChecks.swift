@@ -301,7 +301,7 @@ func runTypedAccessChecks(home: URL) throws {
 
     let read = AssistantCatalog.tools.first { $0.name == "read" }?.description ?? ""
     // Typing-all decision 4 superseded by owner decision 2026-10-03: the exact words reach AI apps only through
-    // moment_details (and search's typed hits), from the running app, while "Let AI apps read what you typed" is on.
+    // moment_details (and search's typed hits), from the running app, while "Let AI apps see your typed words" is on.
     // read still gives only a short description, and points at moment_details; it never offers a per-app permission.
     try check(read.contains("only a short description of where and about how much the person typed") && read.contains("for the typed words use moment_details")
               && !read.contains("allowed this app") && !read.contains("exact words") && !read.contains("when they allowed typing capture"), "read tool: a short description of typing; the words only through moment_details")

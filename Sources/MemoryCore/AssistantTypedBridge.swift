@@ -2,7 +2,7 @@ import Foundation
 import Darwin
 
 /// claude/summary-1003 (owner decision 2026-10-03): the private local socket that carries typed words from the DayDream
-/// app (which holds the typing key) to `mac-mem mcp` (which never does), for "Let AI apps read what you typed".
+/// app (which holds the typing key) to `mac-mem mcp` (which never does), for "Let AI apps see your typed words".
 ///
 /// - The socket lives next to the history (`<home>/ai-read.sock`), or, when that path is too long for a socket, in a
 ///   folder only this user can open (`/private/tmp/daydream-ai-<uid>/<hash>.sock`, mode 0700). The socket is 0600.

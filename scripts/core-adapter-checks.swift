@@ -586,7 +586,7 @@ import BrowserBridge
                   "writer/v2 ai-apps-no-typed-words: \(name): read, search, context and the day page never contain the words")
         }
         // claude/summary-1003 (owner decision 2026-10-03): the one intended path for the words is the app's bridge
-        // (`assistantTypedWords`, served to `moment_details`/`search`), gated by "Let AI apps read what you typed". The
+        // (`assistantTypedWords`, served to `moment_details`/`search`), gated by "Let AI apps see your typed words". The
         // surfaces above stay word-free; the bridge gives nothing with the setting off, nor in a keyless process.
         let offWords=(try? typedStore.assistantTypedWords(["typed-writer-1"],reader:reader,enabled:false,now:now)) ?? [:]
         let keylessWords=(try? keyless.assistantTypedWords(["typed-writer-1"],reader:reader,enabled:true,now:now)) ?? [:]

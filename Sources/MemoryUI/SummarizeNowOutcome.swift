@@ -63,11 +63,11 @@ public enum CardSummaryState: Equatable, Sendable {
     }
 
     /// The column's label: `header` is the left column's own (`FocusAppCard.leftColumn`); while working, a pending or
-    /// "What you wrote" label reads "Summarizing…".
-    public func label(_ header: String?) -> String? {
+    /// "What you wrote" label reads "Summarizing…", and so does code's action lines' "Summary" (owner 10/6, `codeLines`).
+    public func label(_ header: String?, codeLines: Bool = false) -> String? {
         switch self {
         case .done: return "Summary"
-        case .working: return header == "Summary pending" || header == "What you wrote" ? FocusAppCard.summarizingTitle : header
+        case .working: return codeLines || header == "Summary pending" || header == "What you wrote" ? FocusAppCard.summarizingTitle : header
         case .pending, .failed: return header
         }
     }

@@ -434,7 +434,7 @@ enum WebContentChecks {
         let remote=Tree(url:"https://example.com/newsletter");remote.focused=3;remote.editable[3]=true
         check(read(remote,WebContentFocusWitness<Int>(),bundle:"com.apple.mail")==nil,"Mail: a web area with a web URL is refused")
 
-        manualSwitch();keyPanels();benchmark()
+        manualSwitch();enhancedSwitch();keyPanels();benchmark()
         return count
     }
     static func manualSwitch() {
@@ -464,6 +464,45 @@ enum WebContentChecks {
         check(!s.ensure(identity:"7:2:com.anthropic.claudefordesktop",read:{false},write:{true}) && s.writes==4,"a relaunched app (same PID, new launch) is asked once again")
         for i in 0..<100 {_=s.ensure(identity:"p\(i)",read:{false},write:{true})}
         check(s.states.count<=ManualAccessibilitySwitch.limit,"the switch remembers a bounded number of processes")
+    }
+    /// chatgpt-capture: ChatGPT (no AXManualAccessibility) gets AXEnhancedUserInterface once per process, and it goes
+    /// back off where DayDream turned it on.
+    static func enhancedSwitch() {
+        let s=EnhancedUserInterfaceSwitch()
+        var on=false,writes=0
+        check(!s.ensure(identity:"21:1:com.openai.codex",read:{on},write:{writes+=1;on=true;return true}) && writes==1 && s.states["21:1:com.openai.codex"] == .ours,
+              "enhanced: the first key turns ChatGPT's tree on and is not read")
+        var later=0
+        for _ in 0..<10_000 where s.ensure(identity:"21:1:com.openai.codex",read:{later+=1;return on},write:{writes+=1;return true}) {}
+        check(writes==1 && later==0 && s.holdsAny,"enhanced: 10,000 more keys: no more reads or writes (set once per process)")
+        var foreign=0
+        check(s.ensure(identity:"23:1:com.openai.codex",read:{true},write:{foreign+=1;return true}) && foreign==0 && s.states["23:1:com.openai.codex"] == .theirs,
+              "enhanced: already on (VoiceOver): never written")
+        var refused=0
+        check(!s.ensure(identity:"25:1:com.openai.codex",read:{false},write:{refused+=1;return false}) &&
+              !s.ensure(identity:"25:1:com.openai.codex",read:{false},write:{refused+=1;return false}) && refused==1,
+              "enhanced: a refusal is not asked again and gets no typing")
+        // Restore: only what DayDream turned on, never VoiceOver's, nothing for a process that quit.
+        var offs:[String]=[]
+        let kept=s.restore(keep:{_ in true},running:{_ in true},assistiveOn:false,read:{_ in true},write:{offs.append($0);return true})
+        check(kept.isEmpty && offs.isEmpty && s.states["21:1:com.openai.codex"] == .ours,"enhanced: restore keeps what is still allowed")
+        let off=s.restore(running:{_ in true},assistiveOn:false,read:{_ in true},write:{offs.append($0);on=false;return true})
+        check(off == ["21:1:com.openai.codex"] && offs == ["21:1:com.openai.codex"] && s.states["21:1:com.openai.codex"] == nil
+              && s.states["23:1:com.openai.codex"] == .theirs && !s.holdsAny,
+              "enhanced: recording or typing off turns it back off only where DayDream turned it on (VoiceOver's stays)")
+        check(!s.ensure(identity:"21:1:com.openai.codex",read:{on},write:{writes+=1;on=true;return true}) && writes==2,
+              "enhanced: allowed again, the next key turns it on again")
+        let screenReader=s.restore(running:{_ in true},assistiveOn:true,read:{_ in true},write:{offs.append($0);return true})
+        check(screenReader.isEmpty && offs.count==1 && s.states["21:1:com.openai.codex"] == .theirs,
+              "enhanced: while VoiceOver is on it is left on and handed over")
+        _=s.ensure(identity:"27:1:com.openai.codex",read:{false},write:{true})
+        let gone=s.restore(running:{$0 != "27:1:com.openai.codex"},assistiveOn:false,read:{_ in true},write:{offs.append($0);return true})
+        check(gone.isEmpty && offs.count==1 && s.states["27:1:com.openai.codex"] == nil,"enhanced: a quit process is forgotten, never written")
+        _=s.ensure(identity:"29:1:com.openai.codex",read:{false},write:{true})
+        let already=s.restore(running:{_ in true},assistiveOn:false,read:{_ in false},write:{offs.append($0);return true})
+        check(already.isEmpty && offs.count==1 && s.states["29:1:com.openai.codex"] == nil,"enhanced: a value someone else turned off is not written")
+        for i in 0..<100 {_=s.ensure(identity:"e\(i)",read:{false},write:{true})}
+        check(s.states.count<=EnhancedUserInterfaceSwitch.limit,"enhanced: the switch remembers a bounded number of processes")
     }
     static func keyPanels() {
         let names:[Int32:String]=[7:"com.apple.Notes",42:"com.apple.Spotlight",99:"com.1password.1password"]

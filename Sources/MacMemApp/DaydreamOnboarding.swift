@@ -6,7 +6,8 @@ import MemoryUI
 import WriterBackend
 
 /// Setup (owner, 9/28): forced and proper, and every page works while recording.
-/// - A first setup: Permissions, Summaries, Apps, then the review, whose Start Recording starts recording at once. The
+/// - A first setup: Permissions, Summaries, Apps, then Connect your AI (`.review`, owner 10/5: the AI apps on this Mac
+///   with Connect, as in Settings › Connections), whose Start Recording starts recording at once. The
 ///   Permissions card has a Google Chrome row while Chrome is installed and its access isn't decided
 ///   (`DaydreamOnboardingChromeRow`, owner 10/2); its Allow asks macOS on the press, and it never holds Continue.
 /// - Once, for someone who finished setup before that row (`DaydreamChromeCard`): the Permissions card alone, with Done.
@@ -19,6 +20,8 @@ struct DaydreamOnboarding: View {
     @ObservedObject var model: MemoryViewModel
     @ObservedObject private var writer: WriterIntegration
     @ObservedObject private var typing: TypingModel
+    /// The last page's Connect rows: the same model as Settings › Connections.
+    @ObservedObject private var connection: ConnectionSettingsModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openWindow) private var openWindow
     @Environment(\.daydreamPermissionRequests) private var requests
@@ -118,6 +121,7 @@ struct DaydreamOnboarding: View {
         self.model = model
         writer = model.noteWriter
         typing = model.typing
+        connection = model.connection
         _whatsNew = State(initialValue: model.setupIsWhatsNew)
         _choice = State(initialValue: Self.initialChoice(phase: SummaryControls.phase(model.noteWriter), localOffered: model.noteWriter.localOffered,
                                                          qualifies: Self.macQualifies, cloudChosen: Self.cloudChosen(model.noteWriter)))
@@ -224,12 +228,12 @@ struct DaydreamOnboarding: View {
         #endif
         // Before the page is decided (`opened`): the window and nothing on it.
         DaydreamOnboardingShell(
-            title: opened ? title : "", subtitle: nil,
+            title: opened ? title : "", subtitle: opened && page == .review ? Self.connectSubtitle : nil,
             back: opened ? backAction : nil,
             continueTitle: continueTitle,
             canContinue: opened && canContinue, working: working,
-            // The icon opens and closes setup; the summaries and apps steps use its room for their controls.
-            showsIcon: opened && (page == .permissions || page == .review),
+            // The icon opens setup; the summaries, apps and connect steps use its room for their controls.
+            showsIcon: opened && page == .permissions,
             continueAction: proceed
         ) {
             if opened {
@@ -285,7 +289,7 @@ struct DaydreamOnboarding: View {
             PermissionGrantView(enabled: available, readAccessibility: { Self.readPermissions().accessibility },
                                 readInputMonitoring: { Self.readPermissions().inputMonitoring }, embedded: true, showsRelaunchRow: false,
                                 dragHint: dragHintInitially, known: shownPermissions.snapshot, allowedBefore: model.permissionsAllowedBefore,
-                                chromeRow: chromeRow, showsAIReadsToggle: true, onStatusChange: permissionChanged)
+                                chromeRow: chromeRow, onStatusChange: permissionChanged)
         case .summaries:
             DaydreamSummariesContent(choice: Binding(get: { choice }, set: { choice = $0; choiceTouched = true }), cloudKey: $key, localAvailable: writer.localOffered, localLine: localLine,
                                      savedKey: savedKey || keyKept, problem: cloudProblem, fix: fixCloudProblem, focusRequest: focusKey)
@@ -308,9 +312,19 @@ struct DaydreamOnboarding: View {
                 enabled: preview || (available && model.preferencesAvailable && !working),
                 allowTyping: available || preview, compact: model.preferenceNotice != nil || appsProblem != nil, toggle: toggleApp)
         case .review:
+            connectRows
+                .disabled(!available || working)
+                .onAppear { connection.pageAppeared() }
+                .onDisappear { connection.pageDisappeared() }
+                .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in connection.refresh() }
+                .connectionAlerts(connection)
+                // Usage counts: an AI app connected on this page (its id only), once per app per install.
+                .onChange(of: connection.connects) { _, _ in
+                    if let app = connection.lastConnected { UsageReport.setupStep("ai_connected", ["ai_app": .text(UsageReport.aiApp(app))]) }
+                }
             // A blocker setup fixes is said by the button ("Allow Permissions"); only the others need a sentence.
             DaydreamReviewContent(rows: reviewRows, message: startBlocker.flatMap { $0.fix == nil ? $0.text : nil },
-                                  fileVaultOff: fileVaultOff)
+                                  fileVaultOff: fileVaultOff, comeBack: !model.recording, aiReads: true)
             // Only what setup can't fix itself goes to Settings; Start Recording goes to every other fix.
             if let issue = startBlocker, issue.settings {
                 Button(Self.openSettingsTitle) { showSettings(Self.settingsSection(for: issue.text)) }
@@ -319,28 +333,44 @@ struct DaydreamOnboarding: View {
         }
     }
 
+    /// The AI apps on this Mac, each with its one button (Settings › Connections' rows). An app that isn't installed
+    /// isn't listed; with none at all, the page says what DayDream works with and how to get one.
+    @ViewBuilder private var connectRows: some View {
+        if !connection.loaded {
+            ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 60)
+        } else if connection.visibleRows.isEmpty {
+            DaydreamNoAIApps(getApp: { NSWorkspace.shared.open(Self.getClaudeURL) },
+                             otherApp: { NSWorkspace.shared.open(Self.connectByHandURL) })
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                if let unavailable = connection.unavailable {
+                    Label { Text(unavailable).fixedSize(horizontal: false, vertical: true) } icon: { Image(systemName: "exclamationmark.triangle") }
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+                DaydreamConnectCard {
+                    ForEach(Array(connection.visibleRows.enumerated()), id: \.element.id) { index, row in
+                        if index > 0 { Divider() }
+                        AIAppRow(row: row, model: connection)
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: Words
 
     static let whatsNewTitle = "What's new"
-    static let allSetTitle = "You're all set"
-    static let almostReadyTitle = "Almost ready"
+    static let connectTitle = "Connect your AI"
+    static let connectSubtitle = "DayDream works inside the AI apps you already use."
+    static let getClaudeURL = URL(string: "https://claude.ai/download")!
+    static let connectByHandURL = URL(string: "https://github.com/getnorthlight/daydream/blob/main/docs/install.md#connect-an-ai-app-by-hand")!
 
     private var title: String {
         switch page {
         case .permissions: return "Grant DayDream Permissions"
         case .summaries: return whatsNew ? Self.whatsNewTitle : "Set up summaries"
         case .apps: return "Apps to remember"
-        // "You're all set" only when summaries aren't off, nothing failed and nothing stands in the way.
-        case .review: return allSet ? Self.allSetTitle : Self.almostReadyTitle
-        }
-    }
-
-    private var allSet: Bool {
-        guard startBlocker == nil else { return false }
-        if preview { return true }
-        switch phase {
-        case .off, .failed: return false
-        default: return true
+        case .review: return Self.connectTitle
         }
     }
 
@@ -462,15 +492,17 @@ struct DaydreamOnboarding: View {
     /// and the page stays. An empty field (no key saved) leaves summaries off: the review says so, with Add Key.
     private func continueSummaries() {
         guard summariesAvailable else { show(.apps); return }
+        func chosen(_ summaries: String) { UsageReport.setupStep("summaries_chosen", ["summaries": .text(summaries)]) }
         cloudProblem = nil
         switch choice {
         case .local:
             guard writer.localOffered else { error = DaydreamSetupText.localUnavailable; return }
             // Already on, downloading or checking: nothing to start. A problem is tried again.
             if !SummaryPhaseReading.localOn(phase) || SummaryPhaseReading.problem(phase) != nil { SummaryControls.current.chooseLocal(writer) }
+            chosen("local")
             show(.apps)
         case .cloud:
-            if key.isEmpty && savedKey { show(.apps); return }
+            if key.isEmpty && savedKey { chosen("openrouter"); show(.apps); return }
             guard key.utf8.count <= 4096, !key.contains("\n"), !key.contains("\r") else {
                 error = "Enter an OpenRouter API key on a single line."
                 return
@@ -478,6 +510,7 @@ struct DaydreamOnboarding: View {
             if key.isEmpty && !keyKept {
                 // No key: summaries are off (turning this row on turned the other off).
                 if phase != .off { SummaryControls.current.turnOff(writer) }
+                chosen("off")
                 show(.apps)
                 return
             }
@@ -493,11 +526,13 @@ struct DaydreamOnboarding: View {
                     if problem == .cloudKey { focusKey += 1 }
                 } else {
                     key = ""
+                    chosen("openrouter")
                     show(.apps)
                 }
             }
         case .later:
             if phase != .off { SummaryControls.current.turnOff(writer) }
+            chosen("off")
             show(.apps)
         }
     }
@@ -647,20 +682,15 @@ struct DaydreamOnboarding: View {
         error = nil
     }
 
-    // MARK: Review
+    // MARK: Status
 
-    /// Summaries, Typed text and Web pages in Chrome, one value each; each row is one click back to its page. Summaries
-    /// says the state live (Downloading 1.2 of 2.7 GB, On this Mac, OpenRouter, Off or a problem); Off and a problem carry
-    /// their one button.
+    /// The Connect page's one status row, only while summaries aren't simply on (owner, 10/5): the download while it runs
+    /// (Downloading 1.2 of 2.7 GB), Off with Turn On or Add Key, or a problem with its one button. Typed text and Web
+    /// pages in Chrome were just chosen on the page before.
     private var reviewRows: [DaydreamReviewRow] {
-        [
-            summariesRow,
-            DaydreamReviewRow(id: "typing", title: "Typed text", value: typedText ? "On" : "Off", systemImage: "keyboard",
-                              edit: { show(.apps) })
-        ] + (ReleaseFeatures.chromePageHistory ? [
-            DaydreamReviewRow(id: "chrome-pages", title: ChromePagesCard.title, value: chromePages ? "On" : "Off", systemImage: "globe",
-                              edit: { show(.apps) })
-        ] : [])
+        guard !preview, summariesAvailable else { return [] }
+        if case .on = phase { return [] }
+        return [summariesRow]
     }
 
     static let addKeyTitle = "Add Key"
@@ -762,6 +792,7 @@ struct DaydreamOnboarding: View {
         guard !model.preferencesUnresolved else { show(.apps); return }
         completed = true
         model.setupFinished()
+        UsageReport.setupStep("setup_done")
         whatsNew = false
         dismiss()
     }
@@ -838,6 +869,11 @@ struct DaydreamOnboarding: View {
     // MARK: Permissions
 
     private func permissionChanged(_ accessibility: Bool, _ inputMonitoring: Bool) {
+        // Usage counts: each permission allowed during setup, once per install (UsageReport.setupStep).
+        if available && !preview {
+            if accessibility { UsageReport.setupStep("accessibility_allowed") }
+            if inputMonitoring { UsageReport.setupStep("input_monitoring_allowed") }
+        }
         self.accessibility = accessibility
         self.inputMonitoring = inputMonitoring
         guard !working else { return }

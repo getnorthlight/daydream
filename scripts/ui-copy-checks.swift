@@ -17,7 +17,7 @@
 //            "stopped" beside Paused), and a control the menu bar panel really has, enabled, in that state.
 //   R2-3     a restore preview after a repair that couldn't read back every deletion says why fewer actions are added.
 //   T1       (claude/today-copy-1004, owner 10/04) the Today card's lines have no bold anywhere, and an ask's "about …" never
-//            only says the AI app again ("Asked Claude about Claude" reads "Asked Claude: “…”").
+//            only says the AI app again ("Asked Claude about Claude" reads "Asked Claude “…”.", owner 10/6: as a search reads).
 //   T2       (claude/today-rank-1005, owner 10/05) the Today card leads with work (AI apps, docs, code); texting shows once, last.
 //   C1       (claude/chromeask-1005, owner 10/05) macOS's Chrome question: the row's words before it, once refused, and
 //            after setup ("Chrome pages aren't being saved. Fix"), the same in every place, and Fix goes where it fixes.
@@ -763,7 +763,7 @@ import SwiftUI
         }
         let heavy: [Font] = [.system(size: 13, weight: .semibold), .system(size: 13, weight: .bold), .system(size: 13).bold()]
         let lines = [DayReviewBullet(id: "a", thread: "t", lead: "Texted Avery Fixture:", link: nil, rest: nil, quote: "fixture words", moments: []),
-                     DayReviewBullet(id: "b", thread: "t", lead: "Asked Claude:", link: nil, rest: nil, quote: "fixture question", moments: []),
+                     DayReviewBullet(id: "b", thread: "t", lead: "Asked Claude", link: nil, rest: nil, quote: "fixture question", moments: []),
                      DayReviewBullet(id: "c", thread: "t", lead: "Read", link: nil, rest: "posts on X", quote: nil, moments: [])]
         for b in lines {
             let a = DayReviewList.attributed(b)
@@ -783,8 +783,17 @@ import SwiftUI
         let thread = DayReviewThread(key: "app:chatgpt", name: "ChatGPT", kind: "ai", seconds: 60, words: 0, personSends: 0, asks: 1, sendHours: 0, stakes: [],
                                      score: 1, items: [item], moments: ["m"])
         let facts = DayReviewFacts(day: "2026-10-04", threads: [thread], clauses: [:], activeSeconds: 60, personSends: 0)
-        equal(DayReview.assemble(facts, quotes: ["q": "fixture question"]).flatMap(\.bullets).map(\.text), ["Asked ChatGPT: \u{201C}fixture question\u{201D}"],
-              "T1 the line reads \"Asked ChatGPT: “…”\"")
+        // Owner 10/6: as "Searched “red boots”." reads: no colon, the words plain (not italic), a period.
+        let askBullets = DayReview.assemble(facts, quotes: ["q": "fixture question"]).flatMap(\.bullets)
+        equal(askBullets.map(\.text), ["Asked ChatGPT \u{201C}fixture question\u{201D}."], "T1 the line reads \"Asked ChatGPT “…”.\"")
+        if let b = askBullets.first {
+            let a = DayReviewList.attributed(b)
+            check(String(a.characters) == "Asked ChatGPT \u{201C}fixture question\u{201D}." && !a.runs.contains { $0.font == .system(size: 13).italic() },
+                  "T1 the card draws the ask's words plain, not italic, then a period", String(a.characters))
+        }
+        let texted = DayReviewBullet(id: "t", thread: "t", lead: "Texted Avery Fixture:", link: nil, rest: nil, quote: "fixture words", moments: [])
+        check(texted.text == "Texted Avery Fixture: \u{201C}fixture words\u{201D}" && DayReviewList.attributed(texted).runs.contains { $0.font == .system(size: 13).italic() },
+              "T1 a text keeps its colon and italic quote")
         // At the source: the ask's tail goes through DayReview.topic, never the thread's name as it is.
         let store = code("Sources/MemoryCore/DayReviewStore.swift").joined(separator: "\n")
         check(!store.contains("tail: \"about \" + about") && store.contains("DayReview.topic(about, echoing:"),
@@ -836,12 +845,12 @@ import SwiftUI
         equal(Row.subtitle(access: .chromeNotRunning, typing: true, opensChrome: true),
               "macOS will ask once. Click Allow so DayDream knows which page you're typing on. Chrome opens in the background to ask.",
               "C1 before, Chrome closed: Allow says it opens Chrome in the background")
-        check(Row.illustration(access: .notAsked) == .ask && Row.trailing(access: .notAsked) == .allow && Row.allowTitle == "Allow",
-              "C1 before: the drawing of macOS's box beside one Allow")
+        check(Row.trailing(access: .notAsked) == .allow && Row.allowTitle == "Allow",
+              "C1 before: one Allow (owner 10/6: beside Chrome's icon, no drawing of macOS's box)")
         // Refused (owner 10/5): short, with Ask again (macOS's question comes back); no Settings path.
         for access in [ChromeAccessState.denied, .askFailed] {
             equal(Row.subtitle(access: access, typing: true, opensChrome: true), "Chrome pages are off.", "C1 refused (\(access)): Chrome pages are off.")
-            check(Row.illustration(access: access) == nil && Row.trailing(access: access) == .refused && Row.line(access: access, asked: true) == nil
+            check(Row.trailing(access: access) == .refused && Row.line(access: access, asked: true) == nil
                   && Row.askAgainTitle == "Ask again", "C1 refused (\(access)): Ask again, said once")
         }
         // A press Chrome couldn't answer: what to do, never "macOS will ask later".

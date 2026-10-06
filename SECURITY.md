@@ -37,7 +37,7 @@ This section says what DayDream protects against today and what it doesn't. The 
 
 ### The MCP server (connecting AI apps)
 
-- `mac-mem mcp` is a read-only MCP server. The AI app starts it as a child process and talks to it over standard input and output. It opens no network port.
+- `mac-mem mcp` is a read-only MCP server. The AI app starts it as a child process and talks to it over standard input and output. It opens no network port and makes no network connection. Its one write: while usage counts are on, it appends one line per tool call (an AI app id, the tool name, a result count and the time taken) to `usage-inbox.jsonl` in DayDream's folder, and only if the DayDream app already made that file (it removes it when usage counts are turned off). The app keeps only lines that match the fixed list of counts.
 - Its tools are `status`, `context`, `current-context`, `search`, `read`, `open`, `recall` and `recap`. None of them can start or stop recording, change settings, create grants or delete anything.
 - Every tool except `status` requires a grant: a client and recipient label plus a secret token. Settings › Connections creates one when you connect an app, and `mac-mem grant` creates one by hand. The database stores only the token's SHA-256 hash. `status` answers without a grant. It reveals whether DayDream is recording and why, when the last action was recorded, and summary progress; as a setup check, it also says whether the calling app's own grant works (checked with the token it was started with), which settings are on (typed text, Web pages in Chrome, summaries), and when typing was last saved within the past 24 hours. It holds no titles, addresses or typed text.
 - Changing which apps, typing or web pages are recorded, and restoring a backup, revoke every grant. The AI apps have to be connected again.
@@ -48,7 +48,7 @@ This section says what DayDream protects against today and what it doesn't. The 
 
 - On by default: setup shows it switched on, and one click turns it off, then or any time in Settings. Nothing is recorded before Start Recording. When on, DayDream records what you type in a fixed list of apps, each checked by its code signature, and, only while Web pages in Chrome is on too, on websites in Google Chrome. The README's [Typed text](README.md#typed-text) section lists the apps, the websites and what is always skipped.
 - The words are encrypted with AES-GCM, one key per day, and the keys are kept in your macOS Keychain. Where and when you typed, and how much, are not encrypted. DayDream deletes the exact words after 7 days unless you choose another time. Time Machine backups of your Mac can keep older encrypted copies.
-- `mac-mem`, which AI apps start as the MCP server, has no typing key. While **Let AI apps read what you typed** is on, the DayDream app (which holds the key) hands it the words of the moments an AI app asks for, over a socket only this Mac account can open (mode 0600, same user checked), after checking that AI app's key; secrets, private windows, excluded apps, blocked sites and expired words are never handed over. While it is off, or DayDream isn't open, AI apps get where and about how much you typed, never the words DayDream saves. Cloud summaries, when you turn them on, get the words you type, who a message went to, and Chrome page titles and sites (never web addresses). Window titles, which can include words you typed, are read and sent like any other window title.
+- `mac-mem`, which AI apps start as the MCP server, has no typing key. While **Let AI apps see your typed words** is on, the DayDream app (which holds the key) hands it the words of the moments an AI app asks for, over a socket only this Mac account can open (mode 0600, same user checked), after checking that AI app's key; secrets, private windows, excluded apps, blocked sites and expired words are never handed over. While it is off, or DayDream isn't open, AI apps get where and about how much you typed, never the words DayDream saves. Cloud summaries, when you turn them on, get the words you type, who a message went to, and Chrome page titles and sites (never web addresses). Window titles, which can include words you typed, are read and sent like any other window title.
 - Anyone typing on your macOS account while typed text is on is recorded as you.
 
 ### Chrome page history
@@ -58,8 +58,9 @@ This section says what DayDream protects against today and what it doesn't. The 
 
 ### Network
 
-DayDream has no analytics or telemetry. It contacts the network only in these cases:
+DayDream sends anonymous usage counts (below) and nothing else about how it's used. It contacts the network only in these cases:
 
+- **Usage counts** (on by default; Settings › Advanced › Share anonymous usage counts turns them off): about once an hour, a batch of counts goes to PostHog (`https://us.i.posthog.com/batch/`) over HTTPS, with no cookies, cache or redirects, and a random install ID (a UUID, not derived from the Mac or the user). Every event name, property key and text value is from a fixed list (`UsageCounts` in `Sources/MemoryCore/UsageCounts.swift`) checked before anything is queued; never history, typed words, titles, sites or searches. Each event sets `$geoip_disable` and an empty `$ip`. Turning it off cancels a send in flight and drops the queue. Test and development builds (debug, the source checks, the QA harness, any copy that isn't the released app) never send, and nothing is sent until the project key in `packaging/Info.plist` is set. `scripts/usage-counts-checks.py` checks all of this.
 - **Update checks** (on by default, can be turned off): Sparkle 2.9.6 fetches the list of versions from this repository's GitHub Releases. The list must be signed with DayDream's update key (EdDSA), and so must each update. No system profile is sent.
 - **Cloud summaries** (off by default): the activity being summarized is sent to `openrouter.ai` with the user's own API key. Each request requires a zero-data-retention provider, denies data collection and disables fallback providers. OpenRouter still keeps request metadata. The words you type are included, and so are Chrome page titles and sites, cleaned of web addresses and unread counts.
 - **"Open Original"** on a web link: one `HEAD` request to that HTTPS address, without cookies, credentials, redirects or query strings.
@@ -77,6 +78,7 @@ Reading the history from code that already runs as the same macOS user is a know
 - DayDream recording while recording is off, or recording something it says it never records (password fields, secure input, excluded apps, known browsers, Chrome pages or website typing while the switch is off or while an Incognito or Guest window is open, typed text when that's off or in an app or on a site it doesn't cover);
 - secrets that get past the redaction of titles and typed text;
 - a way for an MCP client to write, delete, raise its own access, or read without a valid grant (other than `status`);
+- usage counts that carry anything beyond the documented counts, or that are sent with the switch off;
 - a backup or restore that can write outside the folder it was given, or restore data it shouldn't;
 - an update or feed that DayDream accepts without a valid signature;
 - DayDream sending data anywhere not listed above.

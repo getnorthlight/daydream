@@ -5,7 +5,8 @@
 //   B. setup's summaries page: "Summaries on this Mac", then "Use an OpenRouter key instead" with its one line (both off is Off),
 //      and "Summaries on this Mac" offered in a build with the runtime inside (every release, writer/v2) and hidden in a
 //      test build without it;
-//   C. setup's review page always shows the own-Mac notice, and the FileVault notice exactly when FileVault is off;
+//   C. setup's last page (Connect your AI) says what a connected app can read, and shows the FileVault notice exactly
+//      when FileVault is off (owner 10/5: no own-Mac notice there; README and PRIVACY.md say it);
 //   D. no user-facing source still says activity "stays on this Mac" or names zero data retention;
 //   E. the visible cloud line against the request CloudWriter really sends (a stub transport, no network): typed words
 //      are in the body exactly when the switch is on with the version-2 notice recorded, and nothing is sent otherwise.
@@ -141,16 +142,17 @@ import WriterBackend
         check(switchBody.contains(CloudSummariesText.line) && switchBody.contains(CloudSummariesText.title),
               "the switch draws its title and the one line (what is sent)")
 
-        // C. The review page: the view's body, dumped, holds the own-Mac notice whatever the rows are, and the
-        // FileVault notice only when FileVault reads as off (never a false "isn't encrypted").
+        // C. The last page: the view's body, dumped, says what a connected app can read whatever the rows are, and holds
+        // the FileVault notice only when FileVault reads as off (never a false "isn't encrypted").
         for rows in [[], [DaydreamReviewRow(id: "summaries", title: "Summaries", value: "Off", systemImage: "text.alignleft")]] {
             for off in [false, true] {
                 var body = ""
-                dump(DaydreamReviewContent(rows: rows, message: rows.isEmpty ? nil : "Fabricated message", fileVaultOff: off).body, to: &body)
+                dump(DaydreamReviewContent(rows: rows, message: rows.isEmpty ? nil : "Fabricated message", fileVaultOff: off, aiReads: true).body, to: &body)
                 // dump() prints strings as debug text, which escapes the apostrophes.
                 func dumped(_ text: String) -> String { String(String(reflecting: text).dropFirst().dropLast()) }
-                check(body.contains(dumped(DaydreamSetupText.ownMac)) && body.contains(dumped(DaydreamSetupText.fileVault)) == off,
-                      "review: own-Mac notice always, FileVault notice \(off ? "shown when off" : "hidden when on or unknown") (\(rows.count) rows)")
+                check(body.contains(dumped(DaydreamSetupText.aiReads)) && !body.contains(dumped(DaydreamSetupText.ownMac))
+                      && body.contains(dumped(DaydreamSetupText.fileVault)) == off,
+                      "last page: what AI apps can read always, FileVault notice \(off ? "shown when off" : "hidden when on or unknown") (\(rows.count) rows)")
             }
         }
         _ = host(DaydreamReviewContent(rows: []))

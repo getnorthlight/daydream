@@ -720,6 +720,7 @@ struct RecallActionForgetRequest: Identifiable, Equatable {
             }
             items = more ? items + fresh : fresh; result = page
             rebuild()
+            if !more { browser.searched?(items.count + notes.count) }
             // VoiceOver hears the count once the hits sit in their moments (the list's count).
             if !resolveMoments(announcing: true) { announce() }
         } catch {

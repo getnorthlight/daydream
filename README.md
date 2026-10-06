@@ -23,6 +23,7 @@ DayDream remembers which app and window you were in on your Mac, and when. It ke
 - [Your data](#your-data)
 - [Uninstall](#uninstall)
 - [Network connections](#network-connections)
+  - [Usage counts](#usage-counts)
 - [Known limits](#known-limits)
 - [Report a problem](#report-a-problem)
 - [Build from source](#build-from-source)
@@ -63,7 +64,7 @@ Setup shows typed text switched on, and one click turns it off, then or any time
 - In apps, DayDream also notes that you pressed Return or a keyboard shortcut, but not which one.
 - **Who it went to.** With a message, DayDream keeps who it went to when the app shows it: the Messages conversation's name, a chat's channel or person, an email's To name. Cloud summaries get it with the words.
 - **Encrypted on this Mac.** What you type is encrypted, with a key DayDream keeps in your Keychain. DayDream deletes the exact words after 7 days, unless you choose another time in Settings, and keeps a short note of where you typed.
-- **AI apps read the words only if you let them.** With **Let AI apps read what you typed** on (Settings › Connections; on by default), AI apps you connect can read the words you typed and sent, through the DayDream app while it is open: never passwords, secrets, private windows, excluded apps, blocked sites or words past their kept time. With it off, they see where and about how much you typed, and your summaries, never the words DayDream saves. A summary can say what a message was about ("Texted Mom about calling tonight"). If you choose cloud summaries, they get the words you type, to write your notes. Window titles can include words you typed, like an email subject or a shell command. Those are saved, read by AI apps and sent to cloud summaries like any other window title.
+- **AI apps read the words only if you let them.** With **Let AI apps see your typed words** on (Settings › Connections; on by default), AI apps you connect can read the words you typed and sent, through the DayDream app while it is open: never passwords, secrets, private windows, excluded apps, blocked sites or words past their kept time. With it off, they see where and about how much you typed, and your summaries, never the words DayDream saves. A summary can say what a message was about ("Texted Mom about calling tonight"). If you choose cloud summaries, they get the words you type, to write your notes. Window titles can include words you typed, like an email subject or a shell command. Those are saved, read by AI apps and sent to cloud summaries like any other window title.
 - **Anyone typing on this Mac account while it's on is recorded as you.** Turn typed text off while they use it, or give them their own macOS user. The typing pause lasts only 10 minutes.
 
 ## What it doesn't record
@@ -165,7 +166,7 @@ DayDream includes a read-only [Model Context Protocol](https://modelcontextproto
 - **In Terminal:** `mac-mem connect <app>` and `mac-mem disconnect <app>` do the same. The tool is inside the app at `/Applications/DayDream.app/Contents/MacOS/mac-mem` (or under `~/Applications` if you installed DayDream there).
 - **Other MCP apps:** see [Connect an AI app by hand](docs/install.md#connect-an-ai-app-by-hand).
 
-The AI app starts `mac-mem mcp` itself and talks to it over standard input and output. The MCP server opens no network port. Its tools are `status`, `context`, `current-context`, `search`, `read`, `open`, `recall`, `recap` and `moment_details`. `status` is the setup check: whether this AI app's connection works, whether recording is on, off or paused, whether typed text is on and DayDream has saved typing in the last 24 hours (the time only, never the words), whether Web pages in Chrome is on, whether summaries run on this Mac, in the cloud or not at all, and example questions that fit those settings. An empty history on a new install reads as ready, not as a problem. `recap` gives a few days at a glance (a headline per day and a few time blocks, with what you sent, asked or worked on first; brief visits are only counted), so the AI app can answer "what have the past couple of days been like?" in a few lines. It reads DayDream's notes, never your typed words. `moment_details` reads one moment's real actions: with **Let AI apps read what you typed** on and DayDream open, the exact words you typed and sent (the DayDream app hands them over through a private local socket after checking the AI app's key), and `search` then matches typed words too; with it off, where and about how much you typed. The tools can't start or stop recording, change settings or delete anything.
+The AI app starts `mac-mem mcp` itself and talks to it over standard input and output. The MCP server opens no network port. Its tools are `status`, `context`, `current-context`, `search`, `read`, `open`, `recall`, `recap` and `moment_details`. `status` is the setup check: whether this AI app's connection works, whether recording is on, off or paused, whether typed text is on and DayDream has saved typing in the last 24 hours (the time only, never the words), whether Web pages in Chrome is on, whether summaries run on this Mac, in the cloud or not at all, and example questions that fit those settings. An empty history on a new install reads as ready, not as a problem. `recap` gives a few days at a glance (a headline per day and a few time blocks, with what you sent, asked or worked on first; brief visits are only counted), so the AI app can answer "what have the past couple of days been like?" in a few lines. It reads DayDream's notes, never your typed words. `moment_details` reads one moment's real actions: with **Let AI apps see your typed words** on and DayDream open, the exact words you typed and sent (the DayDream app hands them over through a private local socket after checking the AI app's key), and `search` then matches typed words too; with it off, where and about how much you typed. The tools can't start or stop recording, change settings or delete anything. While [usage counts](#usage-counts) are on, the server adds one line per tool call (which AI app, which tool, how many results and how long it took, never what was asked) to a small file in DayDream's folder, which the DayDream app sends with its counts; with them off it writes nothing. The server itself never connects to anything.
 
 A connection records which AI apps you allowed, but it isn't a lock: any program running under your macOS account can read the history file directly (see [Known limits](#known-limits)).
 
@@ -181,7 +182,7 @@ Your history, and everything DayDream derives from it, is in one folder:
 ~/Library/Application Support/DayDream/
 ```
 
-It holds your history (`memory.sqlite`) and your AI app connections. Only your macOS account can open the folder. Your cloud summary key, if you add one, is kept in your macOS Keychain, not in the folder. So is the key that encrypts what you type, while typed text is on. History is kept until you delete it.
+It holds your history (`memory.sqlite`), your AI app connections and the [usage counts](#usage-counts) waiting to be sent. Only your macOS account can open the folder. Your cloud summary key, if you add one, is kept in your macOS Keychain, not in the folder. So is the key that encrypts what you type, while typed text is on. History is kept until you delete it.
 
 DayDream was called Mac Mem while it was being built. The command-line tool is still called `mac-mem`. If you used a build from before the rename, DayDream moves your old folder here the first time it opens; see [docs/rename.md](docs/rename.md).
 
@@ -191,10 +192,11 @@ DayDream can remove itself, with or without your history: open Settings › Adva
 
 ## Network connections
 
-DayDream has no account, analytics, telemetry or crash reporting. The developers receive nothing from your Mac. It connects to the internet only in these cases:
+Your activity is stored on your Mac. DayDream has no account and no crash reporting. It does send anonymous [usage counts](#usage-counts) to PostHog, which you can turn off; they never include your history, typed words, titles, sites or searches. It connects to the internet only in these cases:
 
 | When | Where | What is sent |
 | --- | --- | --- |
+| It sends usage counts (on by default; turn off **Share anonymous usage counts** in Settings › Advanced) | `us.i.posthog.com` | About once an hour, the counts listed below, with a random ID made for this copy of DayDream. No history |
 | It checks for updates (on by default; you can turn it off) | `getdaydream.app`, then `github.com` for a new version | A request for the list of versions, then the update itself. No history |
 | You turn on cloud summaries | `openrouter.ai` | The activity being summarized, with your API key |
 | You turn on Summaries on this Mac (in setup, it's on when you press Continue) | `huggingface.co` (it may hand the download to `us.aws.cdn.hf.co`) | A request for the 2.74 GB model file. No history |
@@ -206,6 +208,18 @@ DayDream has no account, analytics, telemetry or crash reporting. The developers
 
 Web pages in Chrome doesn't use the network: DayDream asks the Chrome app on your Mac directly. Report a Problem never sends anything itself: it opens a new email in your own mail app, and nothing goes until you press Send there.
 
+### Usage counts
+
+So we can tell how many people use DayDream and which parts work, it sends these counts to PostHog, about once an hour:
+
+- **Installed**: once, with the macOS version and the kind of chip.
+- **Setup**: each setup step you finish: a permission allowed, the summaries you chose (on this Mac, OpenRouter or off), the AI app you connected, and setup done.
+- **Once a day**: whether recording is on, paused or off; whether Accessibility and Input Monitoring are allowed; about how long DayDream recorded the day before (none, under an hour, 1–3, 3–6 or 6+ hours); which summaries are on; which AI apps are connected; whether Web pages in Chrome is on; and how many summaries were written or failed, and why (like an OpenRouter key that stopped working).
+- **AI apps**: each time an AI app uses a DayDream tool: which app (Claude, Claude Code, Cursor, ChatGPT, Windsurf or other), which tool, how many results and how long it took. Never what it asked or what it got.
+- **Opening and searching**: each time you open DayDream's window (from the menu bar, the Dock or another way; not when it opens by itself at login), and each search in DayDream's window, with how many results. Never what you searched.
+
+Each count carries DayDream's version and a random ID made for this copy of DayDream, never anything from your Mac, your name or an account. DayDream asks PostHog not to keep your IP address or look up where you are. It never sends your history, typed words, window or page titles, sites, searches, notes or file names. Turn it off any time in Settings › Advanced › **Share anonymous usage counts**: sending stops at once and anything waiting is dropped. **See what's sent** there shows the last counts exactly as they go, and **Copy ID** copies the random ID, if you'd like us to delete its counts. Test and development builds never send. `mac-mem mcp` never sends anything itself (see [AI apps](#connect-an-ai-app)).
+
 ## Known limits
 
 - **Beta.** Expect bugs. Please [report them](#report-a-problem).
@@ -215,6 +229,7 @@ Web pages in Chrome doesn't use the network: DayDream asks the Chrome app on you
 - **Short skip lists.** The password manager and sensitive-site lists cover common ones. They are not complete. Exclude any other app, and add any other site, yourself.
 - **Typed text only in the apps listed in [Typed text](#typed-text) and on websites in Google Chrome**, and only while typed text is on (it starts on; one click turns it off). It works only with the US, ABC or British keyboard layout, and input methods (such as Chinese or Japanese input) aren't captured. Paste, autofill and dictation aren't captured.
 - **Terminal password prompts.** DayDream can't always tell when a terminal is asking for a password. Passwords typed right after `sudo`, `ssh` and similar commands are skipped, but a script or custom prompt can be missed. If you switch to another tab, window or app while a password prompt or a remote `ssh` session is open, what you type there after you come back can be recorded.
+- **ChatGPT needs an accessibility setting turned on.** ChatGPT's app shows its prompt box to DayDream only with the setting VoiceOver uses. While typed text and AI prompts are on, DayDream turns that setting on for ChatGPT, and off again when recording or typing stops or DayDream quits. While it's on, ChatGPT uses a little more memory, and window managers such as Rectangle move its windows more slowly. The first key after ChatGPT opens isn't recorded. See [privacy-model.md](docs/privacy-model.md).
 - **Incognito or temporary chats in Claude and ChatGPT.** DayDream can't tell when Claude or ChatGPT is in an incognito or temporary chat, so what you type there is saved like any other prompt. Turn off Search boxes and AI prompts, or turn typed text off, before you use one.
 - **History is kept until you delete it.** There's no setting yet to expire old history automatically.
 - **Summaries are experimental, and many moments get none.** A note covers at most 400 recorded actions, so very long moments get none. Cloud summaries cover only activity recorded after you first turned them on (they stay on across a quit), so earlier moments are written on your Mac or by code, or stay without notes. Their actions stay as they are. Notes can still be wrong.

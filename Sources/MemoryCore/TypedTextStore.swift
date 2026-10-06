@@ -43,7 +43,7 @@ protocol WebsiteTypingRows: Sendable {
 public enum TypedDisclosure: String {
     case owner, summary, exact, localWriter, cloudWriter
     /// claude/summary-1003 (owner decision 2026-10-03): a connected AI app reading through the app's bridge while
-    /// "Let AI apps read what you typed" is on (`AssistantTypedRead.swift`; the bridge checks the grant and the setting).
+    /// "Let AI apps see your typed words" is on (`AssistantTypedRead.swift`; the bridge checks the grant and the setting).
     case assistant
 }
 

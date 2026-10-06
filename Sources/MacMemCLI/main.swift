@@ -200,7 +200,7 @@ final class ServedHistory {
     }
 }
 /// claude/summary-1003 (owner decision 2026-10-03): typed words for AI apps come only from the running DayDream app
-/// (`AssistantTypedBridge`), which checks this AI app's key and the setting "Let AI apps read what you typed" itself.
+/// (`AssistantTypedBridge`), which checks this AI app's key and the setting "Let AI apps see your typed words" itself.
 enum AssistantTypedAccess {
     static var reader: [String:Any] { ["client":client,"recipient":recipient,"capability":capability] }
     static let typedCoverage = "Matches app names, window and document titles, website names, the person's own corrections and, in typed, the words the person typed (the person allowed AI apps to read them). Pass a typed hit's id to moment_details for the whole moment."
@@ -307,6 +307,18 @@ func agentContext(_ store: MemoryStore, owner: Bool = false, now: Date = Date(),
 /// claude/mcp-prompts-1003: a JSON-RPC protocol error (an unknown tool or method), as opposed to a tool that ran and
 /// failed, which answers as a tool result with isError so the AI app's model reads what to do next.
 struct MCPProtocolError: Error { let code: Int; let message: String }
+/// Usage counts (Settings › Advanced › Share anonymous usage counts): one `ai_used` line per tool call (which AI app, the
+/// tool's name, how many results, how long it took), appended to `UsageInbox`'s file in DayDream's folder only while it
+/// exists, which is while sharing is on (the app makes and removes it). The DayDream app reads the file and sends the
+/// counts. This process never sends anything and opens no connection; the line holds no query, title or word.
+enum MCPUsage {
+    /// The name the AI app gave at initialize (a renewal forgets it; `--client` stands in then).
+    static var clientName: String?
+    static func record(home: URL, tool: String, startedAt: TimeInterval, resultCount: Int?) {
+        let ms = Int((ProcessInfo.processInfo.systemUptime - startedAt) * 1000)
+        UsageInbox.appendAIUse(home: home, aiApp: UsageCounts.aiApp(clientName: clientName, connection: client), tool: tool, resultCount: resultCount, latencyMs: ms)
+    }
+}
 func mcp(_ served: ServedHistory) {
     var store: MemoryStore { served.store }
     var file = historyFile(served.store.home)
@@ -323,6 +335,9 @@ func mcp(_ served: ServedHistory) {
         ServerRenewal.awaitRequest()
         let current = ServerRenewal.settle()
         guard let line = readLine() else { break }
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        // A tool call to count once answered (MCPUsage): its name and, for search, how many hits.
+        var usage: (tool: String, count: Int?)?
         var id: Any = NSNull()
         do {
             guard line.utf8.count <= 65536, let request = try JSONSerialization.jsonObject(with:Data(line.utf8)) as? [String:Any], let method = request["method"] as? String else { throw MemError.invalid("Invalid request") }
@@ -345,6 +360,7 @@ func mcp(_ served: ServedHistory) {
             // MemoryCore/AssistantCatalog.swift. Tools stay read-only.
             case "initialize":
                 negotiated = AssistantCatalog.negotiatedVersion(params["protocolVersion"])
+                MCPUsage.clientName = (params["clientInfo"] as? [String:Any])?["name"] as? String
                 ToolListState.initialized(negotiated)
                 result = ["protocolVersion":negotiated,"capabilities":["tools":["listChanged":true],"resources":[:]],"serverInfo":["name":"DayDream","title":"DayDream","version":try companionIdentity.get().version],"instructions":AssistantCatalog.serverInstructions(ToolListState.toolset)] as [String:Any]
             case "ping": result = [:] as [String:String]
@@ -367,6 +383,7 @@ func mcp(_ served: ServedHistory) {
                         if let scope { try authorize(store, scope, mcp: true) }
                         let access = name == "status" ? store.assistantAccess(client:client,recipient:recipient,capability:capability) : nil
                         let output = AgentTools.run(name: name, arguments: input, context: agentContext(store), access: access)
+                        usage = (name, output.isError ? nil : output.resultCount)
                         // Access is checked again after reading: a connection turned off meanwhile gets nothing.
                         if let scope { try authorize(store, scope, mcp: true) }
                         var reply: [String:Any] = ["content":[["type":"text","text":output.text]]]
@@ -376,6 +393,7 @@ func mcp(_ served: ServedHistory) {
                         result = reply
                     } catch let failure where !(failure is MCPProtocolError) {
                         result = ["content":[["type":"text","text":AssistantCatalog.errorMessage(failure)]],"isError":true]
+                        usage = (name, nil)
                     }
                     if let notice = ToolListState.notice, var reply = result as? [String:Any], let content = reply["content"] as? [[String:Any]] {
                         reply["content"] = [["type":"text","text":notice]] + content
@@ -384,6 +402,7 @@ func mcp(_ served: ServedHistory) {
                     let reply: [String:Any] = ["jsonrpc":"2.0","id":id,"result":result]
                     print(String(decoding:try JSONSerialization.data(withJSONObject:reply,options:[.sortedKeys]),as:UTF8.self))
                     fflush(stdout)
+                    if let usage { MCPUsage.record(home: store.home, tool: usage.tool, startedAt: startedAt, resultCount: usage.count) }
                     continue
                 }
                 // claude/mcp-prompts-1003: tools answer in concise Markdown unless response_format is "detailed" (the JSON
@@ -392,6 +411,7 @@ func mcp(_ served: ServedHistory) {
                 var zone = TimeZone.current
                 do {
                 guard let format else { throw MemError.invalid(AssistantCatalog.formatMessage) }
+                if resource == nil { usage = (name, nil) }
                 var body: String
                 if WriterFreshen.covers(name, input) { WriterFreshen.ask(store) }
                 // MCP replies use the assistant presentation (local times, app
@@ -416,7 +436,7 @@ func mcp(_ served: ServedHistory) {
                         let notes = try store.noteHits(query:q)
                         if !notes.isEmpty { report["notes"] = notes; body = String(decoding:try JSONSerialization.data(withJSONObject:report,options:[.sortedKeys]),as:UTF8.self) }
                     }
-                    // claude/summary-1003 (owner decision 2026-10-03): with "Let AI apps read what you typed" on, typed and
+                    // claude/summary-1003 (owner decision 2026-10-03): with "Let AI apps see your typed words" on, typed and
                     // sent words match too, through the running app (only it holds the key). Off or no app: as before.
                     if let q = input["query"] as? String, !q.trimmingCharacters(in:.whitespaces).isEmpty, input["after"] == nil,
                        let typed = AssistantTypedAccess.search(store, query:q), var report = try JSONSerialization.jsonObject(with:Data(body.utf8)) as? [String:Any] {
@@ -425,6 +445,9 @@ func mcp(_ served: ServedHistory) {
                         body = String(decoding:try JSONSerialization.data(withJSONObject:report,options:[.sortedKeys]),as:UTF8.self)
                     }
                     try authorize(store,"search",mcp:true)
+                    if resource == nil, let report = try? JSONSerialization.jsonObject(with:Data(body.utf8)) as? [String:Any] {
+                        usage = (name, (report["hits"] as? [Any])?.count)
+                    }
                 case "recall":
                     try authorize(store,"detail",mcp:true)
                     body = try store.assistantRecall(level:input["level"] as? String,when:input["when"] as? String,open:input["open"] as? String,query:input["query"] as? String)
@@ -435,7 +458,7 @@ func mcp(_ served: ServedHistory) {
                     body = try store.assistantRecap(when:input["when"] as? String)
                     try authorize(store,"detail",mcp:true)
                 // claude/summary-1003 (owner decision 2026-10-03): one moment's real actions, with the exact typed and sent
-                // words from the running app while "Let AI apps read what you typed" is on; otherwise where and how much.
+                // words from the running app while "Let AI apps see your typed words" is on; otherwise where and how much.
                 case "moment_details":
                     try authorize(store,"detail",mcp:true)
                     guard let page = try store.assistantMomentPage(id:input["id"] as? String,uri:input["moment"] as? String,day:input["day"] as? String,after:input["after"] as? String) else {
@@ -474,6 +497,7 @@ func mcp(_ served: ServedHistory) {
             }
             let reply: [String:Any] = ["jsonrpc":"2.0","id":id,"result":result]
             print(String(decoding:try JSONSerialization.data(withJSONObject:reply,options:[.sortedKeys]),as:UTF8.self))
+            if let usage { fflush(stdout); MCPUsage.record(home: store.home, tool: usage.tool, startedAt: startedAt, resultCount: usage.count) }
         } catch {
             let reply: [String:Any] = ["jsonrpc":"2.0","id":id,"error":(error as? MCPProtocolError).map { ["code":$0.code,"message":$0.message] as [String:Any] } ?? ["code":-32000,"message":AssistantCatalog.errorMessage(error)]]
             if let data = try? JSONSerialization.data(withJSONObject:reply) { print(String(decoding:data,as:UTF8.self)) }

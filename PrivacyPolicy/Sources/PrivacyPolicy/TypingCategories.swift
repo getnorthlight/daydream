@@ -89,8 +89,17 @@ public enum TypingSigner: Equatable, Sendable {
 public struct TypingWebContent: Equatable, Sendable {
     /// Electron and Chromium build their Accessibility tree only after
     /// `AXManualAccessibility` is set on the app. DayDream sets it once per
-    /// process, never `AXEnhancedUserInterface`. WebKit (Mail) needs neither.
+    /// process. WebKit (Mail) needs neither.
     public let manualAccessibility: Bool
+    /// chatgpt-capture: the app has no `AXManualAccessibility` (read and set both "unsupported"), so its Chromium builds
+    /// a web tree only when `AXEnhancedUserInterface` is on, the attribute VoiceOver sets. DayDream then sets that one,
+    /// once per process, and only while recording, typing for this app and its signature all hold
+    /// (`AccessibilityReader.prepareAppTree`); it turns it back off when they stop holding. Trade-off: with it on,
+    /// Chromium keeps a full Accessibility tree (some CPU and memory while the app runs) and animates window frame
+    /// changes, so window managers that move windows through Accessibility (Rectangle, Magnet) are slower there;
+    /// Rectangle already turns it off around each move and back on after. Only rows listed in
+    /// `TypingCategories.enhancedUserInterfaceApps` (ChatGPT) may set it; a check keeps that list to one app.
+    public let enhancedUserInterface: Bool
     /// Non-web schemes the vendor's own UI is loaded from.
     public let schemes: Set<String>
     /// https hosts the vendor serves its own UI from (a subdomain counts).
@@ -100,9 +109,9 @@ public struct TypingWebContent: Equatable, Sendable {
     /// The editable web area itself takes focus (Mail's message body).
     public let webAreaEditor: Bool
     public init(manualAccessibility: Bool, schemes: Set<String> = ["file", "app"], hosts: Set<String> = [],
-                urlless: Bool = false, webAreaEditor: Bool = false) {
+                urlless: Bool = false, webAreaEditor: Bool = false, enhancedUserInterface: Bool = false) {
         self.manualAccessibility = manualAccessibility; self.schemes = schemes; self.hosts = hosts
-        self.urlless = urlless; self.webAreaEditor = webAreaEditor
+        self.urlless = urlless; self.webAreaEditor = webAreaEditor; self.enhancedUserInterface = enhancedUserInterface
     }
     /// Whether the web area's URL (`AXURL`, read with the proof) is the
     /// vendor's own UI. nil or "" = the page has no URL. Plain http, other
@@ -123,6 +132,9 @@ public struct TypingWebContent: Equatable, Sendable {
     public static let electron = TypingWebContent(manualAccessibility: true)
     /// Electron with its UI served from the vendor's own https hosts.
     public static func electron(hosts: Set<String>) -> TypingWebContent { TypingWebContent(manualAccessibility: true, hosts: hosts) }
+    /// chatgpt-capture: an Electron fork without `AXManualAccessibility` (ChatGPT's "Codex Framework", Chromium 154):
+    /// its UI in bundled files, its web tree built only with `AXEnhancedUserInterface` (`enhancedUserInterface`).
+    public static let electronWithoutManualSwitch = TypingWebContent(manualAccessibility: true, enhancedUserInterface: true)
 }
 
 public struct TypingApp: Equatable, Sendable {
@@ -197,7 +209,10 @@ public enum TypingCategories {
         TypingApp("com.anthropic.claudefordesktop", "Claude", .searchAndAI, .team("Q6L2SF6YDW"), .embeddedWeb, web: .electron(hosts: ["claude.ai"])),
         // Electron (app.asar) with its UI in bundled files; its built-in
         // browser pages are https pages on other hosts, so they are refused.
-        TypingApp("com.openai.codex", "ChatGPT", .searchAndAI, .team("2DC432GLL2"), .embeddedWeb, web: .electron),
+        // chatgpt-capture: its framework (an Electron fork, "Codex Framework") has no AXManualAccessibility, so with
+        // nothing else on (VoiceOver) it exposes no web tree and no key was ever proved (owner's laptop, 26.930.51102:
+        // no focused element). It is the one row that may turn AXEnhancedUserInterface on (`enhancedUserInterfaceApps`).
+        TypingApp("com.openai.codex", "ChatGPT", .searchAndAI, .team("2DC432GLL2"), .embeddedWeb, web: .electronWithoutManualSwitch),
         // fix/sx-all round 3: OpenAI's native ChatGPT app (com.openai.chat, AppKit/SwiftUI text fields). Same developer as
         // com.openai.codex above (team 2DC432GLL2, read on this Mac); the requirement pins that team, so a copy signed by
         // anyone else is refused. Native fields, each checked fresh before a character is read.
@@ -250,6 +265,10 @@ public enum TypingCategories {
         "com.markmcguill.strongbox.mac.pro", "com.keepassium.ios", "com.hicknhacksoftware.MacPass", "pw.buttercup.desktop",
         "com.outercorner.Secrets",
     ])
+
+    /// chatgpt-capture: the rows whose app may get `AXEnhancedUserInterface` from DayDream (`TypingWebContent.enhancedUserInterface`).
+    /// Exactly ChatGPT (`com.openai.codex`); Checks/TypingCategoryChecks.swift fails if any other row asks for it.
+    public static let enhancedUserInterfaceApps: Set<String> = Set(apps.filter { $0.web?.enhancedUserInterface == true }.map(\.bundle))
 
     private static let byBundle: [String: TypingApp] = Dictionary(apps.map { ($0.bundle, $0) }, uniquingKeysWith: { a, _ in a })
     public static func app(_ bundle: String) -> TypingApp? { byBundle[bundle] }

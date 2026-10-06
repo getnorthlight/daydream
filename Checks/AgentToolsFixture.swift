@@ -43,12 +43,12 @@ public struct AgentToolsFixtureManifest: Codable {
 /// The typed-words source the tools read in-process: WP-A's `AgentStoreTypedSource` on the fixture's own store (which
 /// holds the test key), read with a fixture grant exactly as the app's bridge answers an AI app: the same policy, the
 /// same errors, no socket. Only the two app-side states the store can't know stay here: `reachable` (false = DayDream
-/// isn't open, no socket answer) and the "Let AI apps read what you typed" setting.
+/// isn't open, no socket answer) and the "Let AI apps see your typed words" setting.
 public final class AgentToolsFixtureTypedSource: AgentTypedSource {
     let store: MemoryStore
     let now: Date
     let reader: TypedReader
-    /// The app's "Let AI apps read what you typed" setting, as the bridge would read it.
+    /// The app's "Let AI apps see your typed words" setting, as the bridge would read it.
     public var typedWordsSetting = true
     /// false: behave as if DayDream isn't open (no socket answer).
     public var reachable = true

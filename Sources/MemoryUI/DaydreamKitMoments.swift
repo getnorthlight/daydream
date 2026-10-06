@@ -22,8 +22,12 @@ public struct MomentSubtitle: View {
     /// A Focus List row's subtitle (the same words: there is no pending state to leave out any more), except that an
     /// AI-app moment's ask stands in, in quotes, until the note has a line (fix/prompt-row: `shownPrompt`).
     public static func rowText(for m: MomentSlice) -> String {
-        if let prompt = shownPrompt(m) { return PromptLine.open + prompt + PromptLine.close }
-        return text(for: m)
+        promptText(m) ?? text(for: m)
+    }
+    /// The shown prompt as one line: an ask in quotes, or (owner 10/6) an X send as the expanded card says it,
+    /// "Replied “…” on X." (`MomentSlice.promptLead`); nil when no prompt is shown.
+    public static func promptText(_ m: MomentSlice) -> String? {
+        shownPrompt(m).map { PromptLine.text($0, lead: m.promptLead) }
     }
 
     /// fix/prompt-row: the ask a row shows (`MomentSlice.prompt`, one line), or nil. The note's line wins once there is
@@ -99,18 +103,26 @@ public struct MomentSubtitle: View {
 public struct PromptLine: View {
     static let open = "\u{201C}", close = "\u{201D}"
     let prompt: String
-    public init(prompt: String) { self.prompt = prompt }
+    /// Owner 10/6: an X send's lead ("Posted", "Replied"): "Replied “…” on X.", the words cut as an ask's are.
+    let lead: String?
+    public init(prompt: String, lead: String? = nil) { self.prompt = prompt; self.lead = lead }
+    /// The line as text: “…”, or "Replied “…” on X.".
+    public static func text(_ prompt: String, lead: String?) -> String {
+        guard let lead else { return open + prompt + close }
+        return lead + " " + open + prompt + close + MomentPromptText.xTail
+    }
     public var body: some View {
         HStack(spacing: 0) {
+            if let lead { Text(lead + " ").fixedSize() }
             Text(Self.open).fixedSize()
             Text(prompt).lineLimit(1).truncationMode(.tail)
-            Text(Self.close).fixedSize()
+            Text(Self.close + (lead == nil ? "" : MomentPromptText.xTail)).fixedSize()
         }
         .font(.system(size: 12))
         .foregroundStyle(.secondary)
         .lineLimit(1)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Self.open + prompt + Self.close)
+        .accessibilityLabel(Self.text(prompt, lead: lead))
     }
 }
 
@@ -228,7 +240,7 @@ extension DDRow where Icon == MomentIcon, Chip == AnyView {
             subtitle = AnyView(text.font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1))
         } else {
             // fix/prompt-row: an ask draws as `PromptLine` (cut before its closing quote); every other subtitle as before.
-            subtitle = MomentSubtitle.shownPrompt(m).map { AnyView(PromptLine(prompt: $0)) }
+            subtitle = MomentSubtitle.shownPrompt(m).map { AnyView(PromptLine(prompt: $0, lead: m.promptLead)) }
                 ?? AnyView(Text(subtitleText).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1))
         }
         self.init(icon: MomentIcon(moment: m, size: 32, ring: ring), title: MomentSubtitle.rowTitle(m),
@@ -636,11 +648,10 @@ public struct MomentDetailBody: View {
                     .foregroundStyle(header == "Summary pending" ? AnyShapeStyle(DaydreamStyle.model) : AnyShapeStyle(.secondary))
                     .accessibilityAddTraits(.isHeader)
                 VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(column.quotes.enumerated()), id: \.offset) { _, message in
+                    ForEach(Array(column.quotes.enumerated()), id: \.offset) { index, message in
                         HStack(alignment: .firstTextBaseline, spacing: 7) {
                             Text("\u{2022}").foregroundStyle(.tertiary).accessibilityHidden(true)
-                            Text(FocusAppCard.quote(message, limit: FocusAppCard.detailQuoteLimit))
-                                .italic().foregroundStyle(.secondary)
+                            CapturedQuoteText(quote: FocusAppCard.quote(message, limit: FocusAppCard.detailQuoteLimit), action: column.action(index))
                                 .fixedSize(horizontal: false, vertical: true)
                                 .textSelection(.enabled)
                         }
