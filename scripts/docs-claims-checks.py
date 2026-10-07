@@ -21,6 +21,7 @@ REPO = "getnorthlight/daydream"
 # The files the docs track owns (SPEC 6.6). Other docs have their own checks.
 OWNED = [
     "README.md", "PRIVACY.md", "SECURITY.md", "CONTRIBUTING.md",
+    "docs/README-details.md",   # claude/rel-017c: the full reference the short README links to
     "docs/README.md", "docs/privacy-model.md", "docs/summaries.md", "docs/backup-restore.md",
     "docs/install.md", "docs/faq.md", "docs/bad-build-plan.md",
     "PrivacyPolicy/README.md",
@@ -31,8 +32,16 @@ PENDING = {"docs/uninstall.md": "uninstall track"}
 GITHUB_FILES = sorted(str(p.relative_to(ROOT)) for p in (ROOT / ".github").rglob("*") if p.is_file())
 
 
-def read(rel):
+def raw(rel):
     return (ROOT / rel).read_text(encoding="utf-8")
+
+
+def read(rel):
+    """A file's text. claude/rel-017c: README.md is the short version and docs/README-details.md, which it links to,
+    holds the rest of what it used to say, so a claim about the README is checked against both (links and anchors are
+    still checked per file: `anchors` reads each file alone)."""
+    text = raw(rel)
+    return text + "\n" + raw("docs/README-details.md") if rel == "README.md" else text
 
 
 def slug(heading):
@@ -45,7 +54,7 @@ def slug(heading):
 def anchors(rel):
     out, seen = set(), {}
     in_code = False
-    for line in read(rel).splitlines():
+    for line in raw(rel).splitlines():
         if line.lstrip().startswith("```"):
             in_code = not in_code
             continue
@@ -60,7 +69,7 @@ def anchors(rel):
 
 def links(rel):
     """Markdown and HTML links outside code blocks and inline code."""
-    text = re.sub(r"(?s)```.*?```", "", read(rel))
+    text = re.sub(r"(?s)```.*?```", "", raw(rel))   # claude/rel-017c: each file alone, so links resolve from its folder
     text = re.sub(r"`[^`\n]*`", "", text)
     found = re.findall(r"\]\(([^)\s]+)\)", text)
     found += re.findall(r'(?:src|href)="([^"]+)"', text)
@@ -155,7 +164,9 @@ class Readme(unittest.TestCase):
     def test_title_and_links(self):
         self.assertTrue(self.text.startswith("# DayDream\n"))
         for target in ["docs/uninstall.md", "docs/rename.md", "docs/install.md", "docs/faq.md", "PRIVACY.md", "SECURITY.md"]:
-            self.assertIn(f"]({target}", self.text, target)
+            # claude/rel-017c: from README.md, or from docs/README-details.md (whose links start in docs/).
+            from_details = target[len("docs/"):] if target.startswith("docs/") else "../" + target
+            self.assertTrue(f"]({target}" in raw("README.md") or f"]({from_details}" in raw("docs/README-details.md"), target)
 
     def test_release_facts(self):
         low = self.text.lower()

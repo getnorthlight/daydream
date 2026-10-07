@@ -92,6 +92,12 @@ if [ -z "${OWNER_UI:-}" ]; then
       scripts/summary-sends-checks.swift $(oobjs MemoryCore HistoryCore WriterBackend PrivacyPolicy CLlamaBridge) -lc++ -o "$OUT/owner-summary-sends"
     step owner-summary-sends "$OUT/owner-summary-sends"
   fi
+  # claude/notesfix-015: the card states and the final-card-lines golden, flagged as they ship.
+  if [ -f scripts/summary-fail-checks.swift ]; then
+    step compile-owner-summary-fail swiftc -parse-as-library "${OSW[@]}" -module-cache-path "$I/modcache" -I "$OB/Modules" -I Sources/CSQLite \
+      scripts/summary-fail-checks.swift $(oobjs MemoryCore HistoryCore MemoryUI PrivacyPolicy) -lsqlite3 -lc++ -o "$OUT/owner-summary-fail"
+    step owner-summary-fail "$OUT/owner-summary-fail"
+  fi
   OWRITERSRC="Sources/MacMemApp/WriterIntegration.swift Sources/MacMemApp/WriterScheduling.swift Sources/MacMemApp/WriterPreferences.swift Sources/MacMemApp/LevelPower.swift adapters/CoreWriterBinding.swift adapters/LevelWriterBinding.swift"
   for name in writer-cadence writer-state writer-spin notes-writer; do
     [ -f scripts/$name-checks.swift ] || continue

@@ -26,8 +26,8 @@ public struct MomentSubtitle: View {
     }
     /// The shown prompt as one line: an ask in quotes, or (owner 10/6) an X send as the expanded card says it,
     /// "Replied “…” on X." (`MomentSlice.promptLead`); nil when no prompt is shown.
-    public static func promptText(_ m: MomentSlice) -> String? {
-        shownPrompt(m).map { PromptLine.text($0, lead: m.promptLead) }
+    public static func promptText(_ m: MomentSlice, asks: Int? = nil) -> String? {
+        shownPrompt(m).map { PromptLine.text($0, lead: m.promptLead, asks: asks ?? m.promptAsks) }
     }
 
     /// fix/prompt-row: the ask a row shows (`MomentSlice.prompt`, one line), or nil. The note's line wins once there is
@@ -37,7 +37,9 @@ public struct MomentSubtitle: View {
     /// to say) the ask beats "Asked ChatGPT" and "~10 min".
     public static func shownPrompt(_ m: MomentSlice) -> String? {
         guard let prompt = m.prompt, !prompt.isEmpty else { return nil }
-        if m.summary.isReady, let line = LevelWords.intentLine(m.bullets) ?? m.firstBullet, !line.isEmpty { return nil }
+        // claude/int-017 (owner 10/06): an AI app's collapsed row says what was asked, over code's note ("Used the send
+        // key in ChatGPT." read as the row); a model's note still wins, and X rows and every other row are as in 0.1.6.
+        if m.summary.isReady, !(m.byCode && m.promptLead == nil), let line = LevelWords.intentLine(m.bullets) ?? m.firstBullet, !line.isEmpty { return nil }
         return prompt
     }
 
@@ -105,17 +107,26 @@ public struct PromptLine: View {
     let prompt: String
     /// Owner 10/6: an X send's lead ("Posted", "Replied"): "Replied “…” on X.", the words cut as an ask's are.
     let lead: String?
-    public init(prompt: String, lead: String? = nil) { self.prompt = prompt; self.lead = lead }
-    /// The line as text: “…”, or "Replied “…” on X.".
-    public static func text(_ prompt: String, lead: String?) -> String {
-        guard let lead else { return open + prompt + close }
-        return lead + " " + open + prompt + close + MomentPromptText.xTail
+    /// claude/int-017 (owner 10/06): an AI ask code saw sent, and how many the card sent (`MomentSlice.promptAsks`).
+    let asks: Int?
+    public init(prompt: String, lead: String? = nil, asks: Int? = nil) { self.prompt = prompt; self.lead = lead; self.asks = asks }
+    /// The line as text: “…”, "Replied “…” on X.", or (claude/int-017) "Asked “…”" / "Asked 5 questions · latest “…”".
+    public static func text(_ prompt: String, lead: String?, asks: Int? = nil) -> String {
+        if let lead { return lead + " " + open + prompt + close + MomentPromptText.xTail }
+        let words = lead == nil && asks != nil ? FocusAppCard.shortQuoteWords(prompt) : prompt
+        return askLead(asks) + open + words + close
+    }
+    /// "", "Asked ", or "Asked 5 questions · latest ".
+    public static func askLead(_ asks: Int?) -> String {
+        guard let asks else { return "" }
+        return asks > 1 ? "Asked \(asks) questions \u{00B7} latest " : "Asked "
     }
     public var body: some View {
         HStack(spacing: 0) {
             if let lead { Text(lead + " ").fixedSize() }
+            else if asks != nil { Text(Self.askLead(asks)).fixedSize() }
             Text(Self.open).fixedSize()
-            Text(prompt).lineLimit(1).truncationMode(.tail)
+            Text(lead == nil && asks != nil ? FocusAppCard.shortQuoteWords(prompt) : prompt).lineLimit(1).truncationMode(.tail)
             Text(Self.close + (lead == nil ? "" : MomentPromptText.xTail)).fixedSize()
         }
         .font(.system(size: 12))
@@ -240,7 +251,7 @@ extension DDRow where Icon == MomentIcon, Chip == AnyView {
             subtitle = AnyView(text.font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1))
         } else {
             // fix/prompt-row: an ask draws as `PromptLine` (cut before its closing quote); every other subtitle as before.
-            subtitle = MomentSubtitle.shownPrompt(m).map { AnyView(PromptLine(prompt: $0, lead: m.promptLead)) }
+            subtitle = MomentSubtitle.shownPrompt(m).map { AnyView(PromptLine(prompt: $0, lead: m.promptLead, asks: m.promptAsks)) }
                 ?? AnyView(Text(subtitleText).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1))
         }
         self.init(icon: MomentIcon(moment: m, size: 32, ring: ring), title: MomentSubtitle.rowTitle(m),
@@ -420,6 +431,8 @@ public struct MomentDetailBody: View {
     let onShowInContext: (() -> Void)?
     /// The host's `onOpenOriginal` activates a native-only action's app (`\.daydreamDetailOpensApps`).
     @Environment(\.daydreamDetailOpensApps) private var opensApps
+    /// claude/int-017: the Summary's "+N more" is open.
+    @State private var summaryOpen = false
 
     /// - `actions`: the moment's actions loaded so far, any order (shown chronologically).
     /// - `complete`: `actions` holds every action of the moment.
@@ -531,7 +544,9 @@ public struct MomentDetailBody: View {
             let text = MomentSubtitle.text(for: m)
             return text.isEmpty ? nil : text
         // claude/messages2-1003: "" for a moment still going (`SummaryQueue.openLine`): no summary line at all.
-        case .pending: return phase.line ?? queue?.line(for: m, phase: phase) ?? SummaryQueue.writingLine
+        // claude/notesfix-015 (owner 10/05, 0.1.6): no model writes a moment, so a moment never waits for one: nothing
+        // drawn (no "Writing the summary…", "No summary yet" or waiting line left hanging on a card).
+        case .pending: return ""
         case .summariesOff: return "Summaries are off"
         case .notWritten: return "No summary for this moment"
         case .tooLong: return "Too long to summarize"
@@ -628,100 +643,30 @@ public struct MomentDetailBody: View {
         }
     }
 
+    /// claude/int-017 (owner 10/06, 0.1.7): the details page's Summary is the card's: "Summary" over code's own condensed
+    /// lines (`FocusAppCard.summaryLines`), at most about 5 and "+N more", then What happened with every row. Never
+    /// "Summary pending", "What you wrote", "Updating…", "Writing the summary…" or "No summary yet" (no model writes a
+    /// moment, so there is nothing to wait for), and never a filler line ("Used the send key in ChatGPT."). One grey dot
+    /// for every line (`CardLine`).
     @ViewBuilder private var summary: some View {
-        // Owner 10/3: before the summary, the card's new design (never the old "Captured wording · time / Wrote: …"
-        // stand-in): "Summary pending" in the model's violet (else "What you wrote") over the stitched messages, quoted.
         let column = Self.capturedColumn(moment, previews: sourcePreviews, phase: phase, queue: queue, compose: composeLines, actions: actions)
-        if !column.threads.isEmpty {
-            // claude/messages2-1003 (owner 10/3): a Texts moment's Summary is its conversations and the texts sent, verbatim.
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Summary").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                    .accessibilityAddTraits(.isHeader)
-                TextThreadList(threads: column.threads, size: 13)
-                ForEach(Array(column.bullets.enumerated()), id: \.offset) { _, b in Bullet(b, size: 13) }
-                ForEach(Array(moment.bullets.filter(\.correction).enumerated()), id: \.offset) { _, b in Bullet(b, size: 13) }
-            }
-            .accessibilityElement(children: .contain)
-        } else if let header = column.header, !column.quotes.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(header).font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(header == "Summary pending" ? AnyShapeStyle(DaydreamStyle.model) : AnyShapeStyle(.secondary))
-                    .accessibilityAddTraits(.isHeader)
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(column.quotes.enumerated()), id: \.offset) { index, message in
-                        HStack(alignment: .firstTextBaseline, spacing: 7) {
-                            Text("\u{2022}").foregroundStyle(.tertiary).accessibilityHidden(true)
-                            CapturedQuoteText(quote: FocusAppCard.quote(message, limit: FocusAppCard.detailQuoteLimit), action: column.action(index))
-                                .fixedSize(horizontal: false, vertical: true)
-                                .textSelection(.enabled)
-                        }
-                        .font(.system(size: 13))
-                    }
-                }
-                ForEach(Array(moment.bullets.filter(\.correction).enumerated()), id: \.offset) { _, b in Bullet(b, size: 13) }
-            }
-            .accessibilityElement(children: .contain)
-        } else if let phase, let status = Self.summaryStatus(moment, phase: phase, queue: queue) {
-            // fix/show-all: the full view always says where the summary is (owner, test 7). claude/messages2-1003: a
-            // moment still going has no line ("" status): nothing is drawn, never the writer's schedule.
-            let corrections = moment.bullets.filter(\.correction)
-            if !status.isEmpty || !corrections.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
+        let lines = FocusAppCard.summaryLines(column)
+        let corrections = moment.bullets.filter(\.correction)
+        if !lines.isEmpty || !corrections.isEmpty {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 6) {
                     Text("Summary").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                    if !status.isEmpty { Text(status).font(.system(size: 12.5)).foregroundStyle(.secondary) }
-                    if !corrections.isEmpty {
-                        VStack(alignment: .leading, spacing: 7) {
-                            ForEach(Array(corrections.enumerated()), id: \.offset) { _, b in Bullet(b, size: 13) }
-                        }
-                        .padding(.top, 4)
-                    }
+                        .accessibilityAddTraits(.isHeader)
+                    // Marked only when the person's cloud key wrote it (an older day's note); a local note needs no chip.
+                    if FocusListExpanded.showsCloudKeyChip(moment) { OnThisMacChip(.cloudKey, size: .small) }
                 }
-                .accessibilityElement(children: .contain)
-            }
-        } else if (moment.summary.isReady && !moment.bullets.isEmpty) || !Self.noteless(moment).isEmpty || moment.bullets.contains(where: \.correction) {
-            summaryBlock
-        } else {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Summary").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                    .accessibilityAddTraits(.isHeader)
-                Text("No summary yet").font(.system(size: 12.5)).foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    @ViewBuilder private var summaryBlock: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Text("Summary").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                // Marked only when the person's cloud key wrote it; a local note needs no chip.
-                if FocusListExpanded.showsCloudKeyChip(moment) { OnThisMacChip(.cloudKey, size: .small) }
-            }
-            if let status = moment.previousSummaryStatus(phase: phase, queue: queue) {
-                Text(status).font(.system(size: 12.5)).foregroundStyle(.secondary)
-            }
-            // The ready note's bullets only; otherwise the summary state. Corrections follow in
-            // their own block (each marked `Your correction`), never standing in for the summary.
-            let generated = moment.bullets.filter { !$0.correction }
-            let corrections = moment.bullets.filter(\.correction)
-            if moment.summary.isReady && !generated.isEmpty {
-                VStack(alignment: .leading, spacing: 7) {
-                    ForEach(Array(generated.enumerated()), id: \.offset) { _, b in Bullet(b, size: 13) }
+                ForEach(Array(FocusAppCard.visibleSummary(lines, expanded: summaryOpen).enumerated()), id: \.offset) { _, line in
+                    CardLine(line, size: 13).textSelection(.enabled)
                 }
-            } else if !moment.lines.isEmpty {
-                VStack(alignment: .leading, spacing: 7) {
-                    ForEach(Array(moment.lines.enumerated()), id: \.offset) { _, line in Bullet(line, size: 13) }
-                }
-            } else {
-                ForEach(Array(Self.noteless(moment).enumerated()), id: \.offset) { _, line in
-                    Text(line).font(.system(size: 12)).foregroundStyle(.secondary)
-                }
+                OverflowToggle(collapsed: FocusAppCard.summaryMore(lines), expanded: $summaryOpen, size: 12)
+                ForEach(Array(corrections.enumerated()), id: \.offset) { _, b in CardLine(b, size: 13) }
             }
-            if !corrections.isEmpty {
-                VStack(alignment: .leading, spacing: 7) {
-                    ForEach(Array(corrections.enumerated()), id: \.offset) { _, b in Bullet(b, size: 13) }
-                }
-                .padding(.top, 4)
-            }
+            .accessibilityElement(children: .contain)
         }
     }
 

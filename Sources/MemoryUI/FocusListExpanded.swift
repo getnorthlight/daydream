@@ -156,73 +156,40 @@ public struct FocusListExpanded: View {
         let corrections = FocusAppCard.corrections(members)
         // claude/messages2-1003: the column as drawn (a Texts card's conversations included).
         let column = leftColumn
-        let bullets = column.bullets, messages = column.quotes
-        // Owner-approved summary-v2 (10/3): Summary pending → Summarizing… (one sweep over the quotes) → Summary.
-        let state = cardState(column)
-        let header = state.label(column.header, codeLines: column.codeLines)
+        // claude/int-017 (owner 10/06, 0.1.7): "Summary" over code's own condensed lines (`FocusAppCard.summaryLines`:
+        // "Asked ChatGPT “…”." per question, "To Sam: “…”" per person, X's "Posted “…” on X."), at most about 5 and
+        // "+N more"; without any, What happened as sentences. Never "Summary pending", "Updating…" or a filler line
+        // ("Used the send key in ChatGPT."), never a model's rewrite. One grey dot for every line (`CardLine`); violet
+        // stays the day summary's.
+        let lines = FocusAppCard.summaryLines(column)
+        let start = members.map(\.start).min() ?? moment.start, end = members.map(\.end).max() ?? moment.end
+        let shown = !lines.isEmpty ? lines
+            : readIDs != nil && !historyActions.isEmpty
+                ? FocusAppCard.plainSentences(FocusAppCard.sentences(condensed, start: start, end: end, members: members, names: panelRows.map(\.name)))
+                : []
         return VStack(alignment: .leading, spacing: 8) {
-            if let header {
-                Text(header).font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(CardSummaryState.violet(header) ? AnyShapeStyle(DaydreamStyle.model) : AnyShapeStyle(.secondary))
+            if !shown.isEmpty || !corrections.isEmpty {
+                Text("Summary").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
                     .accessibilityAddTraits(.isHeader)
                     .accessibilityIdentifier("card-summary-header")
             }
-            if !column.threads.isEmpty {
-                // claude/messages2-1003 (owner 10/3): each conversation, then the texts sent, verbatim, newest first.
-                TextThreadList(threads: column.threads, size: 12.5).accessibilityIdentifier("card-text-threads")
-            }
-            if !bullets.isEmpty {
+            if !shown.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(bullets.enumerated()), id: \.offset) { _, bullet in Bullet(bullet, size: 12.5) }
-                }
-                // fix/resummarize: dimmed in place while Summarize Now writes the new note.
-                .opacity(members.contains { browser.updatingMoments.contains($0.id) } ? 0.5 : 1)
-                // summary-v2: the bullets fade in when the summary arrives.
-                .transition(reduceMotion ? .identity : .opacity.combined(with: .offset(y: 3)))
-                .accessibilityIdentifier("card-summary-bullets")
-            } else if !messages.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(FocusAppCard.visibleMessages(messages, expanded: quotesOpen).enumerated()), id: \.offset) { index, message in
-                        HStack(alignment: .firstTextBaseline, spacing: 7) {
-                            Text("\u{2022}").foregroundStyle(.tertiary).accessibilityHidden(true)
-                            // Owner 10/6: a confirmed AI ask or X post reads as a search does, "Asked ChatGPT “…”." (`CapturedQuoteText`).
-                            CapturedQuoteText(quote: FocusAppCard.quote(message, limit: quotesOpen ? FocusAppCard.openQuoteLimit : FocusAppCard.quoteLimit),
-                                              action: column.action(index), dimmed: state.sweeps && reduceMotion)
-                                .lineLimit(quotesOpen ? 4 : 2)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .font(.system(size: 12.5))
+                    ForEach(Array(FocusAppCard.visibleSummary(shown, expanded: quotesOpen).enumerated()), id: \.offset) { _, line in
+                        CardLine(line, size: 12.5)
                     }
-                    // claude/searchui-1005 (owner 10/04): "+N earlier messages" opens them inline; "Show less" closes them.
-                    OverflowToggle(collapsed: FocusAppCard.earlierLine(messages.count), expanded: $quotesOpen, size: 11.5)
+                    // claude/searchui-1005 (owner 10/04): "+N more" opens the rest inline; "Show less" closes them.
+                    OverflowToggle(collapsed: FocusAppCard.summaryMore(shown), expanded: $quotesOpen, size: 11.5)
                 }
-                // summary-v2: ONE sweep over the whole quote block (a single band, a single phase), never one per line.
-                .modifier(QuoteSweep(active: state.sweeps && !reduceMotion))
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { quotesOpen.toggle() }
-                }
-                .accessibilityAddTraits(.isButton)
-                .accessibilityValue(quotesOpen ? "Expanded" : "Collapsed")
-                .accessibilityIdentifier("card-captured-messages")
-            } else if column.threads.isEmpty, readIDs != nil, !historyActions.isEmpty {
-                let start = members.map(\.start).min() ?? moment.start, end = members.map(\.end).max() ?? moment.end
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(FocusAppCard.sentences(condensed, start: start, end: end, members: members,
-                                                         names: panelRows.map(\.name)).enumerated()), id: \.offset) { _, line in
-                        Text(line).font(.system(size: 12.5)).fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                .accessibilityIdentifier("card-what-happened-sentences")
+                .accessibilityIdentifier(lines.isEmpty ? "card-what-happened-sentences" : "card-summary-lines")
             }
             if !corrections.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(corrections.enumerated()), id: \.offset) { _, bullet in Bullet(bullet, size: 12.5) }
+                    ForEach(Array(corrections.enumerated()), id: \.offset) { _, bullet in CardLine(bullet, size: 12.5) }
                 }
                 .padding(.top, 2)
             }
         }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.35), value: state)
     }
 
     /// The card's Summarize Now state (`CardSummaryState`) from the left column as drawn and the browser's running and
@@ -828,6 +795,32 @@ struct CapturedQuoteText: View {
         } else {
             Text(quote).italic().foregroundStyle(dimmed ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.secondary))
         }
+    }
+}
+
+/// claude/int-017 (owner 10/06: "one bullet style"): a moment card's line, drawn as its quotes and texts are: a grey
+/// dot, then the words. Code's lines, the What happened sentences and the person's corrections ("Your correction") all
+/// use it; the model's violet dot (`Bullet`) is only for what a model wrote, the day summary.
+struct CardLine: View {
+    let text: String
+    let marker: String?
+    let size: CGFloat
+    init(_ text: String, size: CGFloat) { self.text = text; self.marker = nil; self.size = size }
+    init(_ bullet: MomentBullet, size: CGFloat) {
+        self.text = bullet.text; self.size = size
+        self.marker = bullet.correction ? "Your correction" : bullet.interpretation ? "Interpretation" : nil
+    }
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 7) {
+            Text("\u{2022}").foregroundStyle(.tertiary).accessibilityHidden(true)
+            label.fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.system(size: size))
+        .accessibilityElement(children: .combine)
+    }
+    private var label: Text {
+        guard let marker else { return Text(text) }
+        return Text(text) + Text("  " + marker).italic().foregroundColor(.secondary)
     }
 }
 

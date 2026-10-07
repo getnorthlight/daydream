@@ -474,7 +474,7 @@ struct FocusAppCardHeader: View {
                     // claude/livefix-1004: the newest member's ask draws as `PromptLine` (cut before its closing quote).
                     // Owner 10/6: on X, the newest confirmed post or reply ("Replied “…” on X.", `promptMember`).
                     if let lead = expanded ? nil : FocusAppCard.promptMember(members), let ask = MomentSubtitle.shownPrompt(lead) {
-                        PromptLine(prompt: ask, lead: lead.promptLead)
+                        PromptLine(prompt: ask, lead: lead.promptLead, asks: FocusAppCard.cardAsks(members, lead: lead))
                     } else if !line.isEmpty {
                         Text(line).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
                     }

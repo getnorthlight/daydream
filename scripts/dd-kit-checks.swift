@@ -321,14 +321,15 @@ let markSnapshots: [String: String] = [
     /// the model's mark decision behind it (`FocusListExpanded.showsModelMark`). A note code wrote (the fallback note, or
     /// the moment writer by code) is ready but not the model's: rendered side by side with the model's note, only the
     /// model's carries the chip. The code note here is the worst case, marked not-local, so only `byCode` keeps it off.
+    /// 0.1.7: the line is one that adds information; a bare "Typed … in TextEdit." restates the row and draws no Summary.
     @MainActor static func codeNoteMark() {
         typealias E = FocusListExpanded
-        var code = moment("fb-code", 9, 0, 9, 10, summary: .ready(generatedAt: nil, local: false), bullet: "Typed a draft in TextEdit.", actions: 4,
+        var code = moment("fb-code", 9, 0, 9, 10, summary: .ready(generatedAt: nil, local: false), bullet: "Wrote the launch checklist in TextEdit.", actions: 4,
                           bundles: ["com.apple.TextEdit"], app: "TextEdit")
         code.byCode = true
-        let model = moment("fb-model", 9, 0, 9, 10, summary: .ready(generatedAt: nil, local: false), bullet: "Typed a draft in TextEdit.", actions: 4,
+        let model = moment("fb-model", 9, 0, 9, 10, summary: .ready(generatedAt: nil, local: false), bullet: "Wrote the launch checklist in TextEdit.", actions: 4,
                            bundles: ["com.apple.TextEdit"], app: "TextEdit")
-        let local = moment("fb-local", 9, 0, 9, 10, summary: .ready(generatedAt: nil, local: true), bullet: "Typed a draft in TextEdit.", actions: 4,
+        let local = moment("fb-local", 9, 0, 9, 10, summary: .ready(generatedAt: nil, local: true), bullet: "Wrote the launch checklist in TextEdit.", actions: 4,
                            bundles: ["com.apple.TextEdit"], app: "TextEdit")
         check(!E.showsModelMark(code) && E.showsModelMark(model) && E.showsModelMark(local), "code note mark: code's note has no model mark; the model's notes keep theirs")
         check(!E.showsCloudKeyChip(code) && E.showsCloudKeyChip(model) && !E.showsCloudKeyChip(local),
@@ -1044,24 +1045,24 @@ let markSnapshots: [String: String] = [
         // thing with what was sent and typed there, never thirteen rows that all say "Claude".
         let onPhase = SummaryPhase.on(.local)
         equal(MomentDetailBody.summaryStatus(ready, phase: onPhase), nil, "show all: a ready note shows its lines (no status)")
-        equal(MomentDetailBody.summaryStatus(pending, phase: onPhase), "Writing the summary…", "show all: a pending moment says the summary is being written")
-        equal(MomentDetailBody.summaryStatus(pending, phase: .checking), "Checking the model", "show all: pending while the model is checked says so")
-        // fix/writing-forever (owner, launch day): "Writing the summary…" only while the writer has the moment queued or running.
+        // 0.1.7 (notesfix, owner): a pending card draws no status at all, never "Updating…" or "Writing the summary…"; the
+        // writer runs on its own and the card shows code's condensed lines until the note lands.
         let looked = pending.end.addingTimeInterval(60)
-        equal(MomentDetailBody.summaryStatus(pending, phase: onPhase, queue: SummaryQueue(writing: ["p"], lookedAt: looked)), "Writing the summary…",
-              "writing forever: a queued moment says the summary is being written")
-        equal(MomentDetailBody.summaryStatus(pending, phase: onPhase, queue: SummaryQueue(lookedAt: looked)), "No summary yet",
-              "writing forever: a closed moment the writer hasn't queued never says writing")
-        equal(MomentDetailBody.summaryStatus(pending, phase: onPhase, queue: SummaryQueue(open: ["p"], lookedAt: looked)), "Summarized when this moment ends",
-              "writing forever: the moment still going says it is summarized when it ends")
-        equal(MomentDetailBody.summaryStatus(pending, phase: onPhase, queue: SummaryQueue(lookedAt: pending.end.addingTimeInterval(-60))), "Summarized when this moment ends",
-              "writing forever: a moment with actions after the writer's last look is still going")
-        equal(MomentDetailBody.summaryStatus(pending, phase: onPhase, queue: SummaryQueue(writing: ["p"], lookedAt: looked, wait: .battery)), "Waiting for power",
-              "writing forever: a queued moment under 20% says it waits for power")
-        equal(MomentDetailBody.summaryStatus(pending, phase: onPhase, queue: SummaryQueue(writing: ["p"], lookedAt: looked, wait: .lowPower)), "Waiting for Low Power Mode to end",
-              "writing forever: Low Power Mode says so")
-        equal(MomentDetailBody.summaryStatus(pending, phase: .checking, queue: SummaryQueue(writing: ["p"], lookedAt: looked)), "Checking the model",
-              "writing forever: the phase's own line still wins")
+        let pendingCases: [(SummaryPhase, SummaryQueue?, String)] = [
+            (onPhase, nil, "show all: a pending moment draws no status (0.1.7)"),
+            (.checking, nil, "show all: pending while the model is checked draws no status (0.1.7)"),
+            (onPhase, SummaryQueue(writing: ["p"], lookedAt: looked), "writing forever: a queued moment draws no status (0.1.7)"),
+            (onPhase, SummaryQueue(lookedAt: looked), "writing forever: a closed moment the writer hasn't queued draws no status (0.1.7)"),
+            (onPhase, SummaryQueue(open: ["p"], lookedAt: looked), "writing forever: the moment still going draws no status (0.1.7)"),
+            (onPhase, SummaryQueue(lookedAt: pending.end.addingTimeInterval(-60)), "writing forever: actions after the writer's last look draw no status (0.1.7)"),
+            (onPhase, SummaryQueue(writing: ["p"], lookedAt: looked, wait: .battery), "writing forever: waiting for power draws no status (0.1.7)"),
+            (onPhase, SummaryQueue(writing: ["p"], lookedAt: looked, wait: .lowPower), "writing forever: Low Power Mode draws no status (0.1.7)"),
+            (.checking, SummaryQueue(writing: ["p"], lookedAt: looked), "writing forever: checking the model draws no status (0.1.7)"),
+        ]
+        for (phase, queue, name) in pendingCases {
+            let status = queue.map { MomentDetailBody.summaryStatus(pending, phase: phase, queue: $0) } ?? MomentDetailBody.summaryStatus(pending, phase: phase)
+            equal(status, "", name)
+        }
         equal(MomentDetailBody.summaryStatus(moment("o2", 9, 0, 9, 5, summary: .summariesOff, bullet: nil), phase: .off, queue: SummaryQueue(writing: ["o2"], lookedAt: looked)),
               "Summaries are off", "writing forever: summaries off says so whatever the queue")
         equal(MomentDetailBody.summaryStatus(moment("o", 9, 0, 9, 5, summary: .summariesOff, bullet: nil), phase: .off), "Summaries are off", "show all: summaries off says so")

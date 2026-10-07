@@ -234,11 +234,29 @@ class MCPUpdate(unittest.TestCase):
         self.assertLessEqual(self.history_opens(server.p.pid), 1)
 
     def test_renewals_are_capped(self):
-        server = self.start(env=dict(self.env, DAYDREAM_MCP_RENEWALS='20'))
+        # claude/rel-017c: the cap is on renewals in a row (each within ten minutes of the one before).
+        server = self.start(env=dict(self.env, DAYDREAM_MCP_RENEWALS='20', DAYDREAM_MCP_RENEWED_AT=str(int(time.time()) - 60)))
         self.update_in_place('500', 'sat-test-5')
         reply = server.ask('tools/call', {'name': 'status'})
         self.assertEqual(reply.get('error', {}).get('message'), UPDATING, 'past the cap the old copy still never answers')
         self.assertIsNone(server.p.poll())
+
+    def test_renewals_far_apart_are_never_capped(self):
+        # claude/rel-017c: an AI app kept open across many ordinary updates (ChatGPT's helpers on the owner's Mac had
+        # renewed 8-10 times in four days) keeps working: the count starts again after ten quiet minutes, and a session
+        # an older copy started (a count, no time) renews too. The same process carries on: the AI app never disconnects.
+        for extra in ({'DAYDREAM_MCP_RENEWED_AT': str(int(time.time()) - 3600)}, {}):
+            with self.subTest(extra=extra):
+                server = self.start(env=dict(self.env, DAYDREAM_MCP_RENEWALS='20', **extra))
+                pid = server.p.pid
+                self.update_in_place('500', 'sat-test-5')
+                reply = server.ask('tools/call', {'name': 'status'})
+                self.assertIn('result', reply, f'past the old cap, an ordinary update still answers: {reply}')
+                self.assertEqual(server.version(), 'sat-test-5', 'the updated copy answers')
+                self.assertEqual(server.p.pid, pid, 'the same process carries on (no disconnect)')
+                self.assertIsNone(server.p.poll())
+                self.assertEqual(server.close(), 0)
+                self.update_in_place('400', 'sat-test-4')   # back to the first copy for the next case
 
     def test_time_zone_is_read_for_each_request(self):
         # A server lives as long as its AI app session, across a trip or a daylight-saving change. Its "today" and "now"

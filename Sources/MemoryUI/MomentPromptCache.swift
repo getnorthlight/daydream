@@ -46,8 +46,10 @@ import MemoryCore
         let requests = moments.compactMap { m -> MomentPromptRequest? in
             guard let bundle = m.primaryBundle ?? m.bundles.first, !m.actionIDs.isEmpty else { return nil }
             // claude/livefix-1004: a moment without a note (still going, or not written yet) shows its newest ask.
+            // claude/int-017 (owner 10/06: "Asked 5 questions · latest “…”"): every moment shows its newest ask (no model
+            // writes a moment, so a note's line no longer stands over it).
             return MomentPromptRequest(momentID: m.id, actionIDs: m.actionIDs, primaryBundle: bundle, site: m.sites.first,
-                                       newestFirst: !m.currentSummaryState.isReady)
+                                       newestFirst: true)
         }
         tickets[day, default: 0] += 1
         let ticket = tickets[day]!, all = allTicket

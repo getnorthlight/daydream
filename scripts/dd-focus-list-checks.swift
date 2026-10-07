@@ -846,8 +846,9 @@ final class FlagBox: @unchecked Sendable { var open = false; var fail = false }
             check(!bar(bare).contains("Copy Summary") && !bar(sent).contains("Copy Summary"), "expanded summary: \(name) has no Copy Summary",
                   "\(bar(sent))")
         }
-        equal(bar(slice("n-pending", summary: .pending, count: 5)), ["Summarize Now", "Forget This Moment…"],
-              "expanded summary: pending keeps Summarize Now")
+        // 0.1.7 (notesfix): no Summarize Now anywhere; the writer runs on its own.
+        equal(bar(slice("n-pending", summary: .pending, count: 5)), ["Forget This Moment…"],
+              "expanded summary: pending offers no Summarize Now (0.1.7)")
         var offCaps = caps; offCaps.summaries = SummaryAvailability(provider: .off, busy: false)
         equal(bar(slice("n-off", summary: .summariesOff, count: 5), offCaps), ["Forget This Moment…"],
               "expanded summary: summaries off has neither Copy Summary nor Summarize Now")
@@ -902,8 +903,9 @@ final class FlagBox: @unchecked Sendable { var open = false; var fail = false }
                                                  ["Typed a draft in X.", "Used the send key in X."], gen: fb.gen, ver: fb.ver, site: "x.com")]))
         equal(mixed.moments.first { $0.id == "mx" }!.bullets.map(\.text), ["Typed a draft in TextEdit."],
               "fallback summary: code's note keeps its own line and still drops other filler")
-        equal(mixed.moments.first { $0.id == "mx-x" }!.bullets.map(\.text), ["Typed a draft in X.", "Used the send key in X."],
-              "fallback summary (X): the draft line and the send-key line both show, nothing more")
+        // 0.1.7 (owner 10/06): "Used the send key in <App>." never shows, and "draft" never shows (undraft).
+        equal(mixed.moments.first { $0.id == "mx-x" }!.bullets.map(\.text), ["Typed in X."],
+              "fallback summary (X): the typed line shows, never the send-key line (0.1.7)")
         // Attribution as rendered: side by side in one day, code's fallback note, the moment writer by code, the local
         // model's note and the cloud model's note. Only the model's carry the model's mark; only the cloud one the chip.
         let side = snapshot(day(todayKey, [spec("at-fb", "TextEdit", "com.apple.TextEdit", "TextEdit", ["Typed a draft in TextEdit."], gen: fb.gen, ver: fb.ver),
@@ -988,8 +990,8 @@ final class FlagBox: @unchecked Sendable { var open = false; var fail = false }
               "VoiceOver: the body's named actions (no Find Related Moments in a moment's detail, owner 9/30)")
         let notes = s.moments.first { $0.id == "t-notes" }!
         let native = MomentActions.items(for: notes, context: .focusList, browser: caps)
-        equal(E.barItems(native).map(\.title), ["Summarize Now", "Forget This Moment…"],
-              "bar: a pending window moment offers Summarize Now (no Open <App> button)")
+        equal(E.barItems(native).map(\.title), ["Forget This Moment…"],
+              "bar: a pending window moment offers no Summarize Now (0.1.7) and no Open <App> button")
         equal(E.barItems(native).first { $0.id == .summarizeNow }?.keys, nil, "bar: Summarize Now has no keycap")
         equal(native.first { $0.id == .openApp }?.keys, "⌘↩", "menus: Open <App> is ⌘↩")
         equal(E.accessibilityActions(native).map(\.title), ["Open Notes", "Forget This Moment…"],
@@ -1004,8 +1006,8 @@ final class FlagBox: @unchecked Sendable { var open = false; var fail = false }
 
         // fix/resummarize (owner, test 7): a moment that already has a summary offers Summarize Now in its menus (a fresh
         // note from everything in it now); the bar keeps Copy Summary alone.
-        equal(web.filter { [.copySummary, .summarizeNow].contains($0.id) }.map(\.title), ["Copy Summary", "Summarize Now"],
-              "menus: a summarized moment offers Copy Summary and Summarize Now")
+        equal(web.filter { [.copySummary, .summarizeNow].contains($0.id) }.map(\.title), ["Copy Summary"],
+              "menus: a summarized moment offers Copy Summary, no Summarize Now (0.1.7)")
         check(!E.barItems(web).contains { $0.id == .summarizeNow }, "bar: a summarized moment's bar keeps Copy Summary, no Summarize Now")
         check(MomentActions.canSummarizeNow(chrome, caps: caps) && MomentActions.canSummarizeNow(notes, caps: caps),
               "Summarize Now: a written moment and a pending one")

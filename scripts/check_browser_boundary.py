@@ -56,7 +56,8 @@ RECIPE_AND_DOC_FILES = {
 # the check entry point that calls them, and the scripts that build or check them.
 FLAG_FILES = set(CHROME_TYPING_FILES) | {'Checks/main.swift', 'Checks/ChromeBracketChecks.swift', 'scripts/check_browser_boundary.py', 'scripts/chrome-typing-checks.py',
                                          # claude/scrub-1004: README's Build from source names the release's two typing flags.
-                                         'README.md',
+                                         # claude/rel-017c: that section moved to docs/README-details.md with the short README.
+                                         'README.md', 'docs/README-details.md',
                                          'scripts/chrome-apple-event-parse-checks.swift', 'scripts/daydream-core-source-checks.py',
                                          # The owner build (SPEC-LATER section 3) needs Chrome typing too: the
                                          # packager's owner block, the compile guard and its check.
@@ -104,7 +105,8 @@ OWNER_FLAG_FILES = {'PrivacyPolicy/Sources/PrivacyPolicy/OwnerTyping.swift', 'So
                     'scripts/developer-id-release.py', 'scripts/typing-release-gate-checks.py', 'scripts/check_browser_boundary.py',
                     'scripts/daydream-core-source-checks.py',
                     # claude/scrub-1004: README's Build from source names the release's two typing flags.
-                    'README.md',
+                    # claude/rel-017c: that section moved to docs/README-details.md with the short README.
+                    'README.md', 'docs/README-details.md',
                     # claude/chrome-offmain-1003: the replay of website typing on and off the main thread (owner build only).
                     'scripts/chrome-offmain-checks.swift',
                     # typing-all apps track: the web-content proof's live reads (owner build only).
@@ -522,8 +524,13 @@ class BrowserBoundary(unittest.TestCase):
     def test_docs_match_build(self):
         # Legal conditions F, G and I: the README and the privacy page describe
         # exactly what this build does with browsers, and never overclaim.
-        for name in ['README.md','PRIVACY.md']:
+        # claude/rel-017c: README.md is the short version; docs/README-details.md, which it links to, holds the rest,
+        # so "the README" here is both.
+        def doc(name):
             text=(ROOT/name).read_text()
+            return text+'\n'+(ROOT/'docs/README-details.md').read_text() if name=='README.md' else text
+        for name in ['README.md','PRIVACY.md']:
+            text=doc(name)
             for need in ['Google Chrome','Incognito','page titles and sites from Google Chrome','AI apps you connect']:
                 self.assertIn(need,text,name)
             lower=text.lower()
@@ -533,12 +540,12 @@ class BrowserBoundary(unittest.TestCase):
         for need in ['Guest','Time Machine','Safari',"Don't record this site",'Exclude Google Chrome','not complete','Use it on your own Mac']:
             self.assertIn(need,privacy)
         self.assertEqual(privacy.split('\n## Browser history questions\n',1)[1].count('\n### '),6,'the FAQ has six entries')
-        readme=(ROOT/'README.md').read_text()
+        readme=doc('README.md')
         self.assertIn('Use it on your own Mac',readme)
         self.assertNotIn('Unsupported browser typing stays OFF',readme)
         # Honesty review: no absolute claim the code can't back.
         for name in ['README.md','PRIVACY.md']:
-            lower=(ROOT/name).read_text().lower()
+            lower=doc(name).lower()
             for banned in ['every other browser',"an ai app you never connected can't",'only apps you connect yourself get access',
                            'records a browser only when','- search, email and chat pages save','while the change is saved','password managers are never recorded']:
                 self.assertNotIn(banned,lower,name)
@@ -560,9 +567,9 @@ class BrowserBoundary(unittest.TestCase):
         # longer shows the line; the sentence stays defined in the app's words (honesty-ui-checks pins it).
         screens=(ROOT/'Sources/MemoryUI/OnboardingScreens.swift').read_text()
         self.assertIn('public static let ownMac = "Use DayDream only to record yourself, on your own Mac account."',screens)
-        for doc in [privacy,(ROOT/'README.md').read_text()]:
-            self.assertIn("Use DayDream only to record yourself, on your own Mac user account.",doc)
-            self.assertIn("isn't a monitoring tool",doc)
+        for text in [privacy,doc('README.md')]:
+            self.assertIn("Use DayDream only to record yourself, on your own Mac user account.",text)
+            self.assertIn("isn't a monitoring tool",text)
     def test_chrome_typing_is_private_build_only_and_unwired(self):
         for f in CHROME_TYPING_FILES:
             lines=[l for l in (ROOT/f).read_text().splitlines() if l.strip()]

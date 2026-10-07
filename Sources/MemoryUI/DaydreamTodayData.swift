@@ -177,6 +177,9 @@ public struct MomentSlice: Identifiable, Equatable {
     public var promptLead: String? = nil
     /// When that send was typed (ISO 8601), so a card of several X moments leads with the most recent one.
     public var promptAt: String? = nil
+    /// claude/int-017 (owner 10/06): the prompt is an AI ask code saw sent, and the moment sent this many: the collapsed
+    /// row reads "Asked “…”" or "Asked 5 questions · latest “…”" (`MomentSubtitle.promptText`). nil: the bare quote.
+    public var promptAsks: Int? = nil
     /// fix/summary-fallback: the note shown was written by code, not a model (the moment writer by code, or code's
     /// fallback note when every model answer failed): it never carries the model's mark (`FocusListExpanded.showsModelMark`).
     public var byCode: Bool = false
@@ -219,13 +222,8 @@ public struct MomentSlice: Identifiable, Equatable {
     /// claude/messages2-1003 (owner 10/3): a previous summary just shows its bullets, with at most this quiet note while
     /// a rewrite is due (the moment is pending and summaries are on); never a "previous summary" label and the writer's
     /// schedule. nil otherwise.
-    public func previousSummaryStatus(phase: SummaryPhase?, queue: SummaryQueue?) -> String? {
-        guard stale, case .pending = currentSummaryState else { return nil }
-        switch phase {
-        case .off?, .failed?: return nil
-        default: return Self.updatingLine
-        }
-    }
+    /// claude/notesfix-015 (owner 10/05, 0.1.6): nil. No model rewrites a moment, so a card never says "Updating…".
+    public func previousSummaryStatus(phase: SummaryPhase?, queue: SummaryQueue?) -> String? { nil }
     public static let updatingLine = "Updating\u{2026}"
 
     /// Builds the slice and applies the §3 gating.
@@ -299,6 +297,8 @@ public struct MomentSlice: Identifiable, Equatable {
             let text = DaydreamNotes.tidy(bullet.text, apps: appNames)
             let fallbackLine = codeFallback && CodeFallbackNote.isFallbackLine(bullet.text)
             // claude/dayeval-1005: never "draft" on screen (`DisplayWords.undraft`), after the filler rules read the stored words.
+            // claude/int-017 (owner 10/06): "Used the send key in ChatGPT." never shows, code's fallback note included.
+            if DisplayWords.sendKeyOnly(text) { return nil }
             return DaydreamNotes.isFiller(text, apps: appNames) && !fallbackLine ? nil
                 : MomentBullet(text: DisplayWords.undraft(text), interpretation: bullet.interpretation, actionIDs: bullet.actionIDs)
         })
@@ -409,10 +409,11 @@ public struct TodaySnapshot: Equatable {
     public func withPrompts(_ prompts: [String: String]) -> TodaySnapshot {
         // Owner 10/6: a confirmed X send's value carries its lead (`MomentPromptText.sent`); split here.
         let split = prompts.mapValues(MomentPromptText.split)
-        func differs(_ m: MomentSlice) -> Bool { m.prompt != split[m.id]?.words || m.promptLead != split[m.id]?.lead || m.promptAt != split[m.id]?.at }
+        func differs(_ m: MomentSlice) -> Bool { m.prompt != split[m.id]?.words || m.promptLead != split[m.id]?.lead || m.promptAt != split[m.id]?.at
+            || m.promptAsks != split[m.id]?.asks }
         guard moments.contains(where: differs) || (latest.map(differs) ?? false) else { return self }
         func apply(_ m: MomentSlice) -> MomentSlice { var copy = m; copy.prompt = split[m.id]?.words; copy.promptLead = split[m.id]?.lead
-            copy.promptAt = split[m.id]?.at; return copy }
+            copy.promptAt = split[m.id]?.at; copy.promptAsks = split[m.id]?.asks; return copy }
         var next = TodaySnapshot(dayKey: dayKey, loadedAt: loadedAt, momentCount: momentCount, actionCount: actionCount,
                                  countComplete: countComplete, partial: partial, moments: moments.map(apply), headline: headline,
                                  headlineBullets: headlineBullets, headlineGeneratedAt: headlineGeneratedAt, headlineLocal: headlineLocal,

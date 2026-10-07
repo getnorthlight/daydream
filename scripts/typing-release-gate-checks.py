@@ -70,7 +70,8 @@ OWNER_FLAG_PASSERS = {'scripts/package.sh', 'scripts/developer-id-release.py', '
                       # launch/candidate: the DayDream Preview builder (separate bundle id) passes the release stage's flags.
                       'scripts/preview/build-preview-app.sh',
                       # claude/scrub-1004: README's Build from source shows the release's swift build line with both flags.
-                      'README.md'}
+                      # claude/rel-017c: that section moved to docs/README-details.md with the short README.
+                      'README.md', 'docs/README-details.md'}
 # Check recipes, QA-harness build scripts and docs that compile or describe the owner lane (never a shipping build:
 # Package.swift, packaging/ and the app's sources still never define the flag). Each with the commit that added it.
 CHECK_AND_QA_PASSERS = {

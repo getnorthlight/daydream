@@ -1,6 +1,6 @@
 ---
 name: daydream
-description: Answers questions about what the person did on their Mac by reading DayDream, the local memory app connected over MCP (the "daydream" server). Covers recaps of a day or week, standups, "where did I leave off", "when did I last open X", "what did I ask Claude about X", "what did I text Sam", and quoting the person's own typed words when they share them. Use whenever the person refers to something they did, saw, wrote or asked on this computer earlier, even if they don't name DayDream, and before guessing from git history or files.
+description: Answers questions about what the person did on their Mac by reading DayDream, the local memory app connected over MCP (the "daydream" server). Covers recaps of a day or week, standups, "where did I leave off", "when did I last open X", "what did I ask Claude about X", "what did I text Sam", the status of their own work ("what's the status of X", "what's left to do on X", "catch me up on X"), and quoting the person's own typed words when they share them. Use whenever the person refers to something they did, saw, wrote or asked on this computer earlier, even if they don't name DayDream, and before guessing from git history or files.
 ---
 
 # Using DayDream
@@ -16,9 +16,10 @@ Call DayDream first, without being asked, when the person:
 - asks what they did: "what did I do yesterday", "my week", "write my standup"
 - refers to earlier work: "where did I leave off", "that doc from Tuesday", "the site I had open this morning"
 - asks about a conversation: "what did I tell Priya", "what did I ask Claude about pricing"
+- asks about their own work in progress: "what's the status of the launch", "what's left on the pricing page", "catch me up on Acme". Search for what they last did on it, and for deadlines ahead also check their calendar or task list if one is connected
 - asks about DayDream itself: "is DayDream working", "what can I ask it"
 
-Don't use it for questions that have nothing to do with the person's own past activity on this Mac, or for anything in the future: DayDream only knows what already happened. For plans and meetings ahead, use a calendar.
+Don't use it for questions that have nothing to do with the person's own work or past activity on this Mac, or as the only source for anything in the future: DayDream only knows what already happened. For plans and meetings ahead, also check their calendar if one is connected.
 
 ## Pick one tool
 

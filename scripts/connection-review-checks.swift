@@ -819,7 +819,9 @@ final class FakeConnectionCommand: ConnectionCommandRunning, @unchecked Sendable
         let pageSource = (try? String(contentsOfFile: "Sources/MacMemApp/ConnectionSettings.swift", encoding: .utf8)) ?? ""
         let modelSource = (try? String(contentsOfFile: "Sources/MacMemApp/ConnectionSettingsModel.swift", encoding: .utf8)) ?? ""
         let controlSource = (try? String(contentsOfFile: "Sources/MacMemApp/AIAppControl.swift", encoding: .utf8)) ?? ""
-        check(pageSource.contains("Connected AI apps can read your history and may send it to their own online service."),
+        // 0.1.6 (setup's Connect page): the line moved to `DaydreamSetupText.aiReads`, which the page and setup share.
+        let readsLine = "Connected AI apps can read your history and may send it to their own online service."
+        check(pageSource.contains(readsLine) || (pageSource.contains("static let intro = DaydreamSetupText.aiReads") && DaydreamSetupText.aiReads == readsLine),
               "the page says, in one line, that a connected app reads your history and may send it online")
         check(pageSource.contains("\"Adds DayDream to \\(model.settingsFile(row.app))") && pageSource.contains("Copies a first question to ask it."),
               "Connect's help tag names the settings file it changes and says when it copies a first question")

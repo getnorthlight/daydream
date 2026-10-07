@@ -186,6 +186,8 @@ struct Scenario {
     var start: Date, end: Date
     /// fix/sx-all round 3: things the person does to the store mid-day (Forget a range), at their times.
     var hooks: [(at: Date, run: (MemoryStore, Date) throws -> Void)] = []
+    /// claude/notesfix-015: false is the shipped app (`WriterEnvironment.app`: no model writes a moment or level note).
+    var momentModel = true
 }
 struct HourRow: Codable { var hour: String; var runs = 0; var ordinaryRuns = 0; var liveRuns = 0; var serviceRuns = 0; var staleTurns = 0; var finalRuns = 0; var mcpRuns = 0; var catchUpRuns = 0; var ordinaryTimerPasses = 0; var loads = 0; var passes = 0; var timerPasses = 0; var onDemand = 0; var catchUp = 0; var modelSeconds = 0.0 }
 struct Result: Codable {
@@ -528,6 +530,7 @@ func run(_ scenario: Scenario, day rows: [[String: Any]], history: [[String: Any
     env.timezone = { zone }
     env.defaults = defaults
     env.makeRuntime = { _ in model }
+    env.momentModel = scenario.momentModel
     env.unloadSleep = { _ in try await Task.sleep(nanoseconds: 1_000_000_000_000_000) }
     env.postDone = { world.done += 1 }
     env.automatic = false
@@ -922,7 +925,21 @@ func scenario(_ name: String, day: Date) -> Scenario? {
               "AC: ordinary rewrites stay at most 1 in 5 moments; required live/final work independently proved", "\(ac.moments) moments, \(ac.ordinaryRewrites) ordinary rewrites")
         check(mean <= 7 && (runs.max() ?? 0) <= 12, "AC: ordinary note runs per busy hour mean <= 7, at most 12 in any hour", "mean \(mean) peak \(runs.max() ?? 0) \(runs)")
         check(ac.loads <= 40 && (loads.max() ?? 0) <= 4, "AC: model loads <= 40 a day and <= 4 an hour", "\(ac.loads) a day, peak \(loads.max() ?? 0)")
-        check(ac.modelSeconds <= 900, "AC: model time <= 900 s a day", "\(ac.modelSeconds)")
+        // claude/notesfix-015 (owner 10/05, 0.1.6: no model rewrite of a moment card): the 900 s budget is the shipped
+        // app's, where no model writes a moment (`WriterEnvironment.app`, momentModel false). The per-moment model day
+        // (the hidden DayDreamMomentSummaries default, never shipped) is printed, not held to it.
+        print("TARGET AC model time with per-moment model notes (hidden default, not shipped): \(Int(ac.modelSeconds)) s")
+        var shippedScenario = scenario("ac", day: nine)!; shippedScenario.momentModel = false
+        // The oracle's own failure (a cadence rule broken on the shipped day) is one FAIL here, so the checks below still run.
+        do {
+            let shipped = try await run(shippedScenario, day: day, history: [], root: root)
+            check(shipped.modelSeconds <= 900, "AC: model time <= 900 s a day (shipped: no model for moments)", "\(shipped.modelSeconds)")
+            check(shipped.modelSeconds < ac.modelSeconds || ac.modelSeconds == 0, "AC: the shipped day spends less model time than per-moment model notes",
+                  "\(shipped.modelSeconds) vs \(ac.modelSeconds)")
+            check(shipped.moments > 0 && shipped.noteRuns >= shipped.moments, "AC (shipped): every closed moment still gets its (code) note", "\(shipped.moments) moments, \(shipped.noteRuns) runs")
+        } catch {
+            check(false, "AC (shipped): the shipped day passes the cadence oracle", "\(error)")
+        }
         check(ac.maxNonMandatoryRunsPerMoment - 1 <= 5, "AC: at most 5 ordinary rewrites after a first ordinary note; all live/final exceptions independently proved", "ordinary max \(ac.maxNonMandatoryRunsPerMoment), total max \(ac.maxRunsPerMoment)")
         check(ac.dayNoteRuns == 0, "AC: no whole-day note runs", "\(ac.dayNoteRuns)")
         let timer = perHour(ac, \.ordinaryTimerPasses)

@@ -88,18 +88,27 @@ enum ServerRenewal {
     static let idleCheck: Int32 = 2000
     /// How long a waiting request gives an update in progress to finish.
     static let updateWait: TimeInterval = 10
-    /// Renewals one AI app session may make: an update that keeps changing can never loop.
+    /// Renewals one AI app session may make in a row: an update that keeps changing can never loop.
     static let limit = 20
     static let counter = "DAYDREAM_MCP_RENEWALS"
+    /// claude/rel-017c: renewals further apart than this are ordinary updates, not a loop, so the count starts again.
+    /// Without it an AI app kept open across 20 updates (ChatGPT's helpers on the owner's Mac were at 8-10 after four
+    /// days) would answer "being updated" until it restarted.
+    static let loopWindow: TimeInterval = 10 * 60
+    static let renewedAt = "DAYDREAM_MCP_RENEWED_AT"
 
     static func freshness() -> CompanionIdentity.Freshness {
         CompanionIdentity.freshness(executable:companionExecutable, loaded:try? companionIdentity.get())
     }
     /// Replaces this process with `executable`. Returns only when it couldn't (the caller answers "being updated").
     static func renew(as executable: URL) {
-        let count = getenv(counter).flatMap { Int(String(cString:$0)) } ?? 0
+        let now = Date().timeIntervalSince1970
+        let last = getenv(renewedAt).flatMap { Double(String(cString:$0)) }
+        let recent = last.map { now - $0 < loopWindow && now >= $0 } ?? false
+        let count = recent ? getenv(counter).flatMap { Int(String(cString:$0)) } ?? 0 : 0
         guard count < limit else { return }
         setenv(counter, String(count + 1), 1)
+        setenv(renewedAt, String(Int(now)), 1)
         fflush(stdout)
         // Only stdin, stdout and stderr carry over: the history file this process had open closes with it.
         let open = min(getdtablesize(), 65536)
@@ -585,9 +594,16 @@ func connectCommand() throws -> Int32 {
         result = try AIAppConnect.disconnect(app, env: env, command: executable, home: pinned, expectedSHA256: expected,
             revoke: { if FileManager.default.fileExists(atPath: home.appendingPathComponent("memory.sqlite").path) { try writableStore().connectRevoke(app) } })
     }
+    // claude/rel-017c: ChatGPT also gets DayDream's skill (~/.codex/skills/daydream) and loses it again on Disconnect. A
+    // skill that can't be written never undoes the connection; one the person changed is left alone.
+    var skill: AgentSkill.Outcome?
+    if app.id == "chatgpt" {
+        skill = (try? (action == .connect ? AgentSkill.install(env) : AgentSkill.remove(env))) ?? .keptTheirs
+    }
     if asJSON {
         var value: [String: Any] = ["app": app.id, "action": action.rawValue, "outcome": result.plan.outcome.rawValue, "wrote": result.wrote,
                                     "file": file, "message": result.message]
+        if let skill { value["skill"] = skill.rawValue }
         if let backup = result.backup { value["backup"] = AIAppConnect.display(backup, env) }
         try emit(value)
     } else {

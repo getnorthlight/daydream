@@ -302,10 +302,12 @@ import PrivacyPolicy
         let stale = FocusAppCard.members(FocusListLayout.sessions([olderAsk, noted], sectionID: "loose")[0])
         require(!FocusAppCard.collapsedLine(stale).contains("an older ask"), "an older member's ask never leads the card")
         let rows = source("Sources/MemoryUI/FocusListRows.swift")
-        require(rows.contains("FocusAppCard.promptMember(members), let ask = MomentSubtitle.shownPrompt(lead)") && rows.contains("PromptLine(prompt: ask, lead: lead.promptLead)"),
+        require(rows.contains("FocusAppCard.promptMember(members), let ask = MomentSubtitle.shownPrompt(lead)")
+                && rows.contains("PromptLine(prompt: ask, lead: lead.promptLead, asks: FocusAppCard.cardAsks(members, lead: lead))"),
                 "the collapsed header draws the ask as PromptLine (cut before its closing quote)")
         let cache = source("Sources/MemoryUI/MomentPromptCache.swift")
-        require(cache.contains("newestFirst: !m.currentSummaryState.isReady"), "a moment without a note asks for its newest ask")
+        // claude/int-017 (owner 10/06, 0.1.7): every moment asks for its newest ask ("Asked 5 questions · latest “…”").
+        require(cache.contains("newestFirst: true"), "every moment asks for its newest ask")
     }
 
     /// Grouping (owner 10/2, corrected): one card per app per bracket, terminals included; each website its own card.
@@ -448,8 +450,9 @@ import PrivacyPolicy
         require(!FocusAppCard.summaryPending([m], phase: .on(.local), queue: SummaryQueue(lookedAt: at(17, 30))), "not queued: not pending")
         m.currentSummary = .tooLong
         require(!FocusAppCard.summaryPending([m], phase: .on(.local), queue: queue), "too long: not pending")
-        require(FocusAppCard.header(bullets: false, quotes: true, pending: true) == "Summary pending", "pending: \"Summary pending\"")
-        require(FocusAppCard.header(bullets: false, quotes: true, pending: false) == "What you wrote", "failed: \"What you wrote\"")
+        // claude/notesfix-015 + claude/int-017 (owner 10/06, 0.1.7): "Summary" over the card's own lines; never "Summary pending" or "What you wrote".
+        require(FocusAppCard.header(bullets: false, quotes: true, pending: true) == "Summary", "pending: \"Summary\", never \"Summary pending\"")
+        require(FocusAppCard.header(bullets: false, quotes: true, pending: false) == "Summary", "failed: \"Summary\", never \"What you wrote\"")
         require(FocusAppCard.header(bullets: true, quotes: false, pending: false) == "Summary", "the summary: \"Summary\"")
         require(FocusAppCard.header(bullets: false, quotes: false, pending: false) == nil, "noise only: no header")
     }
@@ -503,11 +506,9 @@ import PrivacyPolicy
         require(column.header == "Summary" && column.codeLines && column.action(0)?.lead == "Asked ChatGPT" && line.hasPrefix("Asked ChatGPT \u{201C}why does the export crash")
                 && line.hasSuffix("\u{2026}\u{201D}.") && !line.contains(":"),
                 "a confirmed ask reads \"Asked ChatGPT “…”.\" (no colon, a period) under \"Summary\" (code's own line)", "\(column.header ?? "nil") \(line)")
-        // Owner 10/6: code's action lines read "Summary" before the note, and Summarize Now stays (greyed, "Summarizing…",
-        // while it runs); the note's bullets then replace them as before.
-        require(FocusAppCard.offersSummarizeNow(column, targets: 1, running: false) && FocusAppCard.offersSummarizeNow(column, targets: 0, running: true)
-                && !FocusAppCard.offersSummarizeNow(column, targets: 0, running: false),
-                "code's action lines under \"Summary\" keep Summarize Now")
+        // Owner 10/6: code's action lines read "Summary". claude/notesfix-015 + claude/int-017 (owner 10/06, 0.1.7): no Summarize Now on a card.
+        require(!FocusAppCard.offersSummarizeNow(column, targets: 1, running: false) && !FocusAppCard.offersSummarizeNow(column, targets: 0, running: true),
+                "code's action lines under \"Summary\": no Summarize Now")
         require(CardSummaryState.pending.label(column.header, codeLines: column.codeLines) == "Summary"
                 && !CardSummaryState.violet(CardSummaryState.pending.label(column.header, codeLines: true))
                 && CardSummaryState.working.label(column.header, codeLines: column.codeLines) == FocusAppCard.summarizingTitle
@@ -516,15 +517,17 @@ import PrivacyPolicy
         let noted = slice("n", at(10, 0), at(10, 5), subject: "ChatGPT", app: "ChatGPT", bundle: "com.openai.chat",
                           bullets: [MomentBullet(text: "Asked ChatGPT why the export crashes on big files.", actionIDs: ["g-0"])], actionIDs: ["g-0"])
         let after = FocusAppCard.leftColumn([noted], previews: [sent], pending: false, compose: ["g-0": asked])
-        require(after.header == "Summary" && !after.codeLines && after.quotes.isEmpty && after.bullets.count == 1
+        // claude/notesfix-015 + claude/int-017 (owner 10/06, 0.1.7): a stored note never replaces the quotes.
+        require(after.header == "Summary" && after.codeLines && after.quotes.count == 1 && after.bullets.isEmpty
                 && !FocusAppCard.offersSummarizeNow(after, targets: 1, running: false),
-                "once the note arrives: its bullets under Summary, no Summarize Now (as before)")
+                "once a note is stored: the ask line stays under Summary, no Summarize Now")
         // A bare quote beside the ask (a draft never sent) keeps the old header: raw words never sit under "Summary".
         let mixed = FocusAppCard.leftColumn([], previews: [sent, preview("h", ["and maybe the import too"], state: "draft")], pending: true,
                                             compose: ["g-0": asked])
-        require(mixed.quotes.count == 2 && !mixed.codeLines && mixed.header == "Summary pending"
-                && FocusAppCard.offersSummarizeNow(mixed, targets: 1, running: false),
-                "an ask beside a bare draft: \"Summary pending\" as before", "\(mixed.header ?? "nil") \(mixed.quotes)")
+        require(mixed.quotes.count == 2 && !mixed.codeLines && mixed.header == "Summary"
+                && FocusAppCard.summaryLines(mixed).first == "\u{201C}and maybe the import too\u{201D}"
+                && !FocusAppCard.offersSummarizeNow(mixed, targets: 1, running: false),
+                "an ask beside a bare draft: both under Summary, the draft a bare quote (claude/int-017 (owner 10/06, 0.1.7))", "\(mixed.header ?? "nil") \(FocusAppCard.summaryLines(mixed))")
         require(FocusAppCard.askLine(.init(lead: "Asked Claude", sent: true), quote: FocusAppCard.quote("fix the parser")) == "Asked Claude \u{201C}fix the parser\u{201D}.",
                 "the ask line: Asked <App> “…”.")
         // Not confirmed: a gesture alone ("submitted", no compose line) or a draft's compose line is no ask: the bare quote.
@@ -539,14 +542,15 @@ import PrivacyPolicy
         require(CapturedStitch.action(texted) == nil && CapturedStitch.action(asked)?.lead == "Asked ChatGPT", "only an AI ask is an ask")
         // The card and the details page draw it plain (regular, not italic); the collapsed row keeps its quoted ask.
         let expanded = source("Sources/MemoryUI/FocusListExpanded.swift"), detail = source("Sources/MemoryUI/DaydreamKitMoments.swift")
-        let view = expanded.range(of: "struct CapturedQuoteText: View {").map { String(expanded[$0.lowerBound...].prefix(700)) } ?? ""
-        let askBranch = view.range(of: "if let line = FocusAppCard.askLine(").flatMap { r in view.range(of: "} else {", range: r.upperBound..<view.endIndex).map { String(view[r.lowerBound..<$0.lowerBound]) } } ?? ""
-        require(!askBranch.isEmpty && !askBranch.contains("italic") && askBranch.contains("Text(line)")
-                && expanded.contains("action: column.action(index), dimmed:") && detail.contains("action: column.action(index))"),
-                "the card and the details page draw the ask line plain (not italic)", askBranch)
-        require(source("Sources/MemoryUI/FocusAppCard.swift").contains("if let lead = promptMember(members), let line = MomentSubtitle.promptText(lead) { return line }")
-                && PromptLine.text("fix the parser", lead: nil) == "\u{201C}fix the parser\u{201D}",
-                "the collapsed line keeps its quoted ask")
+        // claude/int-017 (owner 10/06, 0.1.7): both draw the card's Summary lines ("Asked ChatGPT “…”." plain, one grey dot: `CardLine`).
+        require(expanded.contains("FocusAppCard.summaryLines(column)") && detail.contains("FocusAppCard.summaryLines(column)")
+                && expanded.contains("CardLine(line, size: 12.5)") && detail.contains("CardLine(line, size: 13)"),
+                "the card and the details page draw the ask line plain (not italic)")
+        require(source("Sources/MemoryUI/FocusAppCard.swift").contains("if let lead = promptMember(members), let line = MomentSubtitle.promptText(lead, asks: cardAsks(members, lead: lead)) { return line }")
+                && PromptLine.text("fix the parser", lead: nil) == "\u{201C}fix the parser\u{201D}"
+                && PromptLine.text("fix the parser", lead: nil, asks: 1) == "Asked \u{201C}fix the parser\u{201D}"
+                && PromptLine.text("fix the parser", lead: nil, asks: 3) == "Asked 3 questions \u{00B7} latest \u{201C}fix the parser\u{201D}",
+                "the collapsed line keeps its quoted ask; a sent one reads \"Asked “…”\" (claude/int-017 (owner 10/06, 0.1.7))")
         xLines()
     }
 
@@ -572,8 +576,9 @@ import PrivacyPolicy
                                     (xLine(.draft), "submitted", "Typed \u{201C}\(words)\u{201D} on X.")] as [(ComposeLine, String, String)] {
             let c = FocusAppCard.leftColumn([], previews: [xPreview("x1", words, state: state)], pending: false, compose: ["x1": line])
             let got = FocusAppCard.askLine(c.action(0), quote: FocusAppCard.quote(c.quotes.first ?? "")) ?? "-"
-            require(got == want && c.header == "Summary" && c.codeLines && FocusAppCard.offersSummarizeNow(c, targets: 1, running: false),
-                    "X with words: \(line.kind) \(state) reads \"\(want)\" under \"Summary\", Summarize Now kept", got)
+            require(got == want && c.header == "Summary" && c.codeLines && !FocusAppCard.offersSummarizeNow(c, targets: 1, running: false)
+                    && FocusAppCard.summaryLines(c) == [want],
+                    "X with words: \(line.kind) \(state) reads \"\(want)\" under \"Summary\", no Summarize Now (claude/int-017 (owner 10/06, 0.1.7))", got)
         }
         // A post the preview calls sent but code never confirmed has no compose "posted" line: no "Posted".
         let unconfirmed = FocusAppCard.leftColumn([], previews: [xPreview("x2", words, state: "submitted")], pending: false, compose: [:])
@@ -625,12 +630,15 @@ import PrivacyPolicy
         let xCard = slice("xc", start, end, subject: "X", app: "Google Chrome", bundle: "com.google.Chrome", actionIDs: ["xa"], sites: ["x.com"])
         let xa = action("xa", start, "app.focus", app: "Google Chrome", bundle: "com.google.Chrome", title: "Home / X")
         let xColumn = FocusAppCard.leftColumn([xCard], previews: [], pending: true, actions: [xa])
-        require(XLines.card([xCard]) && xColumn.header == "Summary" && xColumn.codeLines && xColumn.quotes.isEmpty
-                && FocusAppCard.offersSummarizeNow(xColumn, targets: 1, running: false),
-                "X card's own lines: \"Summary\" (not \"Summary pending\"), Summarize Now kept", xColumn.header ?? "nil")
+        // claude/int-017 (owner 10/06, 0.1.7): the card draws its X lines as What happened sentences under "Summary" (`plainSentences`); the column
+        // itself has no lines, so no header of its own and never "Summary pending"; no Summarize Now.
+        require(XLines.card([xCard]) && xColumn.header == nil && xColumn.codeLines && xColumn.quotes.isEmpty
+                && !FocusAppCard.offersSummarizeNow(xColumn, targets: 1, running: false)
+                && FocusAppCard.plainSentences(said) == said,
+                "X card's own lines: never \"Summary pending\", no Summarize Now, the X sentences kept", xColumn.header ?? "nil")
         let other = slice("tc", start, end, subject: "Terminal", app: "Terminal", bundle: "com.apple.Terminal", actionIDs: ["ta"])
-        require(FocusAppCard.leftColumn([other], previews: [], pending: true, actions: [xa]).header == "Summary pending",
-                "other cards without a note stay \"Summary pending\"")
+        require(FocusAppCard.leftColumn([other], previews: [], pending: true, actions: [xa]).header == nil,
+                "other cards without a note: never \"Summary pending\"")
         // Owner 10/6: the collapsed X row leads with its newest post or reply code confirmed sent, as the expanded card
         // says it ("Replied “…” on X."), the words cut as an AI ask's are (`MomentPromptText.clean`, then before the
         // closing quote); a draft never leads (the prompt pipeline hands X only confirmed sends, `promptLead` set).
@@ -661,7 +669,7 @@ import PrivacyPolicy
                 && MomentPromptText.split("plain ask") == .init(words: "plain ask", lead: nil, at: nil)
                 && PromptLine.text("ok", lead: "Replied") == "Replied \u{201C}ok\u{201D} on X."
                 && source("Sources/MemoryUI/DaydreamTodayData.swift").contains("copy.promptLead = split[m.id]?.lead")
-                && source("Sources/MemoryUI/DaydreamKitMoments.swift").contains("Text(Self.open).fixedSize()\n            Text(prompt).lineLimit(1).truncationMode(.tail)"),
+                && source("Sources/MemoryUI/DaydreamKitMoments.swift").contains("Text(Self.open).fixedSize()\n            Text(lead == nil && asks != nil ? FocusAppCard.shortQuoteWords(prompt) : prompt).lineLimit(1).truncationMode(.tail)"),
                 "the row's value carries the lead; the words cut before the closing quote, as an ask's")
         // The card uses them for X members only; its collapsed line is the time line, never "Worked in X".
         let card = source("Sources/MemoryUI/FocusAppCard.swift")
@@ -837,8 +845,8 @@ import PrivacyPolicy
         }
         let page = source("Sources/MemoryUI/DaydreamKitMoments.swift")
         require(page.contains("let column = Self.capturedColumn(moment, previews: sourcePreviews, phase: phase, queue: queue, compose: composeLines, actions: actions)")
-                && page.contains("header == \"Summary pending\" ? AnyShapeStyle(DaydreamStyle.model)")
-                && page.contains(".italic().foregroundStyle(.secondary)"), "details page: violet \"Summary pending\" over italic quotes")
+                && page.contains("let lines = FocusAppCard.summaryLines(column)") && !page.contains("header == \"Summary pending\""),
+                "details page: \"Summary\" over the card's lines (claude/int-017 (owner 10/06, 0.1.7); was violet \"Summary pending\" over italic quotes)")
     }
 
     // MARK: claude/messages2-1003 (owner 10/3): Texts keep their words; names, folds, the whole card on the details page
@@ -941,8 +949,10 @@ import PrivacyPolicy
         // A card of another app keeps its bullets.
         let term = slice("term", at(6, 0), at(6, 5), subject: "Terminal", app: "Terminal", bundle: "com.apple.Terminal",
                          bullets: [MomentBullet(text: "Ran the tests.", actionIDs: ["t"])], actionIDs: ["t"])
-        require(FocusAppCard.leftColumn([term], previews: r3.previews, pending: false).threads.isEmpty
-                && FocusAppCard.leftColumn([term], previews: r3.previews, pending: false).bullets.map(\.text) == ["Ran the tests."],
+        // claude/notesfix-015: a card's own previews' quotes stand over its lines for good, so the Terminal card is given
+        // none of the Texts card's previews here (a card is only ever given its own).
+        require(FocusAppCard.leftColumn([term], previews: [], pending: false).threads.isEmpty
+                && FocusAppCard.leftColumn([term], previews: [], pending: false).bullets.map(\.text) == ["Ran the tests."],
                 "a Terminal card is unchanged")
 
         // 4. A Messages moment with no typing reads as what it was, never a bare "Worked in Messages".
@@ -974,11 +984,12 @@ import PrivacyPolicy
         var stale = slice("st", at(4, 0), at(4, 1), subject: "Texts", app: "Messages", bundle: sms,
                           bullets: [MomentBullet(text: "Texted Sam.", actionIDs: ["sam0"])], actionIDs: ["sam0"])
         stale.stale = true
-        require(stale.previousSummaryStatus(phase: .on(.local), queue: nil) == "Updating\u{2026}"
+        // claude/notesfix-015 + claude/int-017 (owner 10/06, 0.1.7): never "Updating…" on a card.
+        require(stale.previousSummaryStatus(phase: .on(.local), queue: nil) == nil
                 && stale.previousSummaryStatus(phase: .off, queue: nil) == nil
                 && slice("fresh", at(4, 0), at(4, 1), subject: "Texts", app: "Messages", bundle: sms,
                          bullets: [MomentBullet(text: "Texted Sam.")], actionIDs: ["sam0"]).previousSummaryStatus(phase: .on(.local), queue: nil) == nil,
-                "a previous summary: its bullets, at most a quiet \"Updating…\"")
+                "a previous summary: its bullets, never \"Updating…\"")
         require(!source("Sources/MemoryUI/DaydreamTodayData.swift").contains("Previous summary \u{00B7}")
                 && !source("Sources/MemoryUI/DaydreamTodayData.swift").contains("\"Previous summary"), "never \"Previous summary · …\"")
     }
@@ -1109,18 +1120,18 @@ import PrivacyPolicy
         require(card.contains("HStack(spacing: 8) {\n                ForEach(main) { button($0) }\n                if let extra { extra }\n                Spacer(minLength: 12)\n                ForEach(privacy) { privacyButton($0) }"),
                 "Copy Summary on the left, Forget on the right")
         require(card.contains(".filter { $0.id != .summarizeNow }"), "the footer is Copy Summary and Forget only")
-        // claude/summary-fail-1003 (summary-v2): the quotes are muted (tertiary) only while Summarizing under Reduce Motion.
-        require(card.contains("AnyShapeStyle(DaydreamStyle.model)")
-                && card.contains(".italic().foregroundStyle(state.sweeps && reduceMotion ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.secondary))\n                                .lineLimit(quotesOpen ? 4 : 2)"),
-                "Summary pending in the model's violet; quotes italic grey, 2 lines")
+        // claude/int-017 (owner 10/06, 0.1.7): a grey "Summary" (never the model's violet "Summary pending") over code's lines, one grey dot each.
+        require(!card.contains("CardSummaryState.violet(header)") && card.contains("Text(\"Summary\").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)"),
+                "a grey \"Summary\", never the model's violet \"Summary pending\"")
         let rows = source("Sources/MemoryUI/FocusListRows.swift")
         require(rows.contains("FocusAppCardItem(session: session, context: context)"), "every card is an app card")
         require(rows.contains("Text(line).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)")
                 && rows.contains("Text(range).font(.system(size: 12)).monospacedDigit()") && !rows.contains("chevron.down")
                 && rows.contains("let range = FocusAppCard.latestTime(members, timeZone: context.timeZone)"),
                 "header: title with the summary line under it, the latest time on the right, no chevron")
-        require(card.contains("lineLimit(quotesOpen ? 4 : 2)") && card.contains("withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { quotesOpen.toggle() }"),
-                "a click opens the quotes from 2 lines to 4, animated 0.25 s unless Reduce Motion")
+        // claude/int-017 (owner 10/06, 0.1.7): the Summary shows about 5 lines; "+N more" opens the rest inline ("Show less" closes them).
+        require(card.contains("FocusAppCard.visibleSummary(shown, expanded: quotesOpen)") && card.contains("OverflowToggle(collapsed: FocusAppCard.summaryMore(shown), expanded: $quotesOpen"),
+                "\"+N more\" opens the rest of the Summary inline")
         let detail = source("Sources/MemoryUI/DaydreamKitMoments.swift")
         require(detail.contains("MomentDetailEntries(entries: MomentHistoryCondense.lines(OwnerSourceMomentProjection.history(actions, previews: sourcePreviews),"),
                 "the details page keeps its layout with a condensed What happened")
@@ -1188,13 +1199,14 @@ import PrivacyPolicy
         require(card.contains("perform(.summarizeNow)") && card.contains("(.summarizeNow, m)"), "it runs the existing Summarize Now action")
         require(FocusAppCard.summarizeTitle == "Summarize Now" && FocusAppCard.summarizingTitle == "Summarizing\u{2026}", "titles")
         // When it shows.
-        require(FocusAppCard.offersSummarizeNow(bullets: false, header: "Summary pending", targets: 1, running: false), "pending: shown")
-        require(FocusAppCard.offersSummarizeNow(bullets: false, header: "What you wrote", targets: 2, running: false), "failed: shown")
+        // claude/notesfix-015 + claude/int-017 (owner 10/06, 0.1.7): never on a card.
+        require(!FocusAppCard.offersSummarizeNow(bullets: false, header: "Summary pending", targets: 1, running: false), "pending: not shown")
+        require(!FocusAppCard.offersSummarizeNow(bullets: false, header: "What you wrote", targets: 2, running: false), "failed: not shown")
         require(!FocusAppCard.offersSummarizeNow(bullets: true, header: "Summary", targets: 1, running: false), "a summary exists: hidden")
         require(!FocusAppCard.offersSummarizeNow(bullets: false, header: nil, targets: 1, running: false), "noise-only card (no header): hidden")
         require(!FocusAppCard.offersSummarizeNow(bullets: false, header: "What you wrote", targets: 0, running: false),
                 "nothing the existing Summarize Now could write: hidden")
-        require(FocusAppCard.offersSummarizeNow(bullets: false, header: "Summary pending", targets: 0, running: true), "running: Summarizing… stays")
+        require(!FocusAppCard.offersSummarizeNow(bullets: false, header: "Summary pending", targets: 0, running: true), "running: not shown either")
         // Which members: every one without a summary that the existing action may write.
         let browser = ActivityBrowser(calendar: cal)
         browser.generateCanonicalNote = { _, _, _, _ in }

@@ -170,16 +170,16 @@ private func action(_ evidence: Evidence) -> CanonicalAction {
             bundles: ["com.mitchellh.ghostty"], sites: [], actionIDs: ids, actionCount: 13, clusters: [], summary: .pending, hasCorrection: false)
         let openQueue = SummaryQueue(open: [pendingMoment.id], lookedAt: epoch.addingTimeInterval(1201))
         // claude/messages2-1003 (owner 10/3): no writer schedule. A moment still going has no local line; a previous summary
-        // shows its bullets with at most a quiet "Updating…".
+        // shows its bullets with at most a quiet "Updating…". 0.1.7 (notesfix, owner 10/06): not even that, never "Updating…".
         check(openQueue.line(for: pendingMoment, phase: .on(.local)).isEmpty,
               "local open moment: no status line (the refresh schedule was jargon)")
         check(openQueue.line(for: pendingMoment, phase: .on(.cloud)) == SummaryQueue.cloudOpenLine,
               "cloud open moment status retains its existing closing gate")
         pendingMoment.stale = true
-        check(pendingMoment.previousSummaryStatus(phase: .on(.local), queue: openQueue) == MomentSlice.updatingLine &&
-              pendingMoment.previousSummaryStatus(phase: .on(.cloud), queue: openQueue) == MomentSlice.updatingLine &&
+        check(pendingMoment.previousSummaryStatus(phase: .on(.local), queue: openQueue) == nil &&
+              pendingMoment.previousSummaryStatus(phase: .on(.cloud), queue: openQueue) == nil &&
               pendingMoment.previousSummaryStatus(phase: .off, queue: openQueue) == nil,
-              "previous summary: at most a quiet \"Updating…\", never the writer's schedule")
+              "previous summary: no status line at all, never \"Updating…\" or the writer's schedule (0.1.7)")
         print("\(passed) passed, \(failed) failed")
         if failed > 0 { exit(1) }
     }

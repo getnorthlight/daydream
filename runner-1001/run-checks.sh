@@ -847,7 +847,7 @@ fi
 # Nothing touches a real AI app, the network, the Keychain or the general pasteboard.
 # Skipped only in trees that don't have the files yet (other tracks).
 if [ -f scripts/connect-config-checks.swift ]; then
-  for name in connect-config connect-diagnostics connect-toml; do
+  for name in connect-config connect-diagnostics connect-toml connect-skill; do
     [ -f "scripts/$name-checks.swift" ] || continue
     step compile-$name swiftc -parse-as-library -module-cache-path "$I/modcache" -I "$B/Modules" -I Sources/CSQLite \
       scripts/$name-checks.swift $(objs MemoryCore HistoryCore PrivacyPolicy) -o "$OUT/$name"
@@ -874,6 +874,7 @@ if [ -f scripts/connect-config-checks.swift ]; then
     [ -f scripts/mcp-tool-hint-checks.py ] && step ${lane}mcp-tool-hints-py env DAYDREAM_TEST_CLI="$CLI_FOR/mac-mem" python3 scripts/mcp-tool-hint-checks.py
   done
   step mcp-skill-py python3 scripts/mcp-skill-checks.py
+  [ -f scripts/agent-skill-embed.py ] && step agent-skill-embed-py python3 scripts/agent-skill-embed.py --check
   CONNHOME=$OUT/connect-home; CONNDD=$OUT/connect-dd; mkdir -p "$CONNHOME/Library/Preferences" "$CONNDD"
   CONNSRC=$OUT/src/connect-app; rm -rf "$CONNSRC"; mkdir -p "$CONNSRC"
   for f in Sources/MacMemApp/*.swift; do python3 "$C/copy-check-source.py" "$f" "$R" > "$CONNSRC/$(basename "$f")"; done

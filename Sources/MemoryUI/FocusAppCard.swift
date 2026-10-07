@@ -156,7 +156,9 @@ public enum FocusAppCard {
     /// line only says how long ("~1 min").
     static func lines(_ m: MomentSlice) -> [MomentBullet] {
         let generated = m.bullets.filter { !$0.correction }
-        let lines = m.summary.isReady && !generated.isEmpty ? generated : m.lines.map { MomentBullet(text: $0) }
+        // claude/int-017 (owner 10/06): "Used the send key in ChatGPT." is never a card's line, collapsed or expanded.
+        let lines = (m.summary.isReady && !generated.isEmpty ? generated : m.lines.map { MomentBullet(text: $0) })
+            .filter { !DisplayWords.sendKeyOnly($0.text) }
         return lines.contains { !MomentSummaryWorth.isFiller($0.text, names: names(m)) } ? lines : []
     }
 
@@ -202,13 +204,20 @@ public enum FocusAppCard {
     /// a line (`MomentSubtitle.shownPrompt`), as the row's ask preview did before cards: an AI or terminal moment still
     /// going (no note yet) showed an older moment's summary, so what was just asked never appeared on the card.
     public static func collapsedLine(_ members: [MomentSlice]) -> String {
-        if let lead = promptMember(members), let line = MomentSubtitle.promptText(lead) { return line }
+        if let lead = promptMember(members), let line = MomentSubtitle.promptText(lead, asks: cardAsks(members, lead: lead)) { return line }
         let lines = bullets(members).map(\.text)
         if let line = lines.first { return peopleLine(lines) ?? line }
         guard let start = members.map(\.start).min(), let end = members.map(\.end).max() else { return "" }
         if let read = readingSentence(members, names: members.compactMap(FocusListLayout.recordedConversation)) { return read }
         if XLines.card(members) { return XLines.timeLine(from: start, to: end) }
         return workedSentence(app: title(members), from: start, to: end)
+    }
+
+    /// claude/int-017 (owner 10/06): the asks a collapsed AI card counts: every member's sent asks when the leading
+    /// prompt is one (`MomentSlice.promptAsks`); nil otherwise (an X send, or an ask code didn't see sent).
+    public static func cardAsks(_ members: [MomentSlice], lead: MomentSlice) -> Int? {
+        guard lead.promptLead == nil, lead.promptAsks != nil else { return nil }
+        return members.reduce(0) { $0 + ($1.promptAsks ?? 0) }
     }
 
     /// The member whose prompt leads the collapsed row: the newest member's ask; on an X card (owner 10/6), the member
@@ -417,10 +426,36 @@ public enum FocusAppCard {
     /// The left column's header (owner 10/2, final): "Summary" over a summary; "Summary pending" (in the model's violet)
     /// while one is queued or running, so the card doesn't jump when it arrives; "What you wrote" over quoted words when
     /// no summary is coming, so raw words are never presented as a summary; nil over a card with neither.
-    public static func header(bullets: Bool, quotes: Bool, pending: Bool) -> String? {
-        if bullets { return "Summary" }
-        if pending { return "Summary pending" }
-        return quotes ? "What you wrote" : nil
+    /// claude/notesfix-015 (owner 10/05, 0.1.6: no model rewrite of a moment card): a card's own lines are final, so it
+    /// never says "Summary pending" (`pending` is kept for callers and ignored).
+    /// claude/int-017 (owner 10/06, 0.1.7): "Summary" over the card's own lines whenever it has any (`summaryLines`:
+    /// code's condensed lines, never a model's rewrite and never filler); never "Summary pending", "What you wrote" or
+    /// "Updating…". nil over a card with none.
+    public static func header(bullets: Bool, quotes: Bool, pending: Bool) -> String? { bullets || quotes ? "Summary" : nil }
+
+    // MARK: Lines that only restate the rows (claude/int-017, owner 10/06)
+
+    /// Code's own lines that only restate what the card's quotes and rows already show: a place or a gesture with no
+    /// who and no what ("Used the send key in ChatGPT.", "Wrote a text in Messages.", "Typed in Notes.", a bare "Asked
+    /// ChatGPT."). On a card they say nothing the quote, the conversation's name or the What happened rows don't, so a
+    /// card never draws them. Lines that add something stay: a person's name ("Texted Sam."), a send seen on X
+    /// ("Posted on X.", "Replied to @ada on X."), time on X ("On X for 25 minutes."), a command's purpose.
+    public static func restatesRows(_ text: String) -> Bool {
+        if SummaryLines.isGeneric(text) || CodeFallbackNote.isFallbackLine(text) { return true }
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: ".!"))
+        let range = NSRange(t.startIndex..., in: t)
+        return restating.contains { $0.firstMatch(in: t, range: range) != nil }
+    }
+    static let restating: [NSRegularExpression] = [
+        // fallback9 / textLine's own place-only words, after `DisplayWords.undraft` ("Drafted a text in Messages").
+        #"^(wrote|drafted|typed) an? (text|message|prompt|reply)( (in|for|on) [^"“”‘’\n]{1,80})?$"#,
+        #"^texted someone( in [^"“”‘’\n]{1,80})?$"#,
+        #"^typed prompts for [^"“”‘’\n]{1,80} and (used the send key|hit send)$"#,
+        #"^(wrote|typed) (a )?prompts? for [^"“”‘’\n]{1,80}$"#,
+    ].compactMap { try? NSRegularExpression(pattern: $0, options: [.caseInsensitive]) }
+    /// A card's lines without those that only restate its rows (`restatesRows`); a correction always stays.
+    public static func cardLines(_ lines: [MomentBullet]) -> [MomentBullet] {
+        lines.filter { $0.correction || !restatesRows($0.text) }
     }
     /// The left column before and after the summary (owner 10/3): a written note's bullets under "Summary"; until one
     /// exists, the stitched quotes (`CapturedStitch`) under "Summary pending" (violet) while one is on its way, else
@@ -449,26 +484,102 @@ public enum FocusAppCard {
         if isTexts(members) {
             var threads = textThreads(previews: previews, compose: compose, actions: actions)
             if !threads.isEmpty {
-                let all = bullets(members, writingIDs: writingIDs)
+                let all = cardLines(bullets(members, writingIDs: writingIDs))
                 let covered = Set(threads.flatMap(\.actionIDs))
                 for i in threads.indices where threads[i].more > 0 {
                     threads[i].gist = all.first { !Set($0.actionIDs).isDisjoint(with: threads[i].actionIDs) }?.text
                 }
                 let typedIDs = Set(actions.filter { $0.kind == "keyboard.text_input" }.map(\.id))
+                // claude/int-017 (owner 10/06): no "Wrote a text in Messages." under the conversations (`cardLines`).
                 let rest = all.filter { b in b.actionIDs.contains { typedIDs.contains($0) && !covered.contains($0) } }
                 return LeftColumn(header: "Summary", bullets: rest, quotes: [], threads: threads)
             }
         }
-        let noted = members.contains { $0.summary.isReady && $0.bullets.contains { !$0.correction } } && !bullets(members, writingIDs: writingIDs).isEmpty
-        let stitched = noted ? [] : CapturedStitch.quotes(CapturedStitch.fragments(previews, compose: compose))
+        // claude/notesfix-015 (owner 10/05: the written note of an X reply said only "Replied to @… on X", less than the
+        // quotes it replaced): what was written stays on the card for good; a stored note never replaces it.
+        let stitched = CapturedStitch.quotes(CapturedStitch.fragments(previews, compose: compose))
         let quotes = stitched.map(\.text)
-        let shown = quotes.isEmpty ? bullets(members, writingIDs: writingIDs) : []
+        // claude/int-017 (owner 10/06): code's lines only when nothing is quoted, and never one that only restates the
+        // rows ("Used the send key in ChatGPT."): with none left the card draws What happened as sentences.
+        let shown = quotes.isEmpty ? cardLines(bullets(members, writingIDs: writingIDs)) : []
         // Owner 10/6: every quote drawn as code's action line, or an X card's own sentences (no quotes, no note).
         let codeLines = shown.isEmpty && (quotes.isEmpty ? XLines.card(members) && !actions.isEmpty : stitched.allSatisfy { $0.action != nil })
-        return LeftColumn(header: codeLines ? "Summary" : header(bullets: !shown.isEmpty, quotes: !quotes.isEmpty, pending: pending),
+        return LeftColumn(header: header(bullets: !shown.isEmpty, quotes: !quotes.isEmpty, pending: pending),
                           bullets: shown, quotes: quotes,
                           actions: stitched.contains { $0.action != nil } ? stitched.map(\.action) : [], codeLines: codeLines)
     }
+
+    // MARK: The Summary lines (claude/int-017, owner 10/06)
+
+    /// About this many Summary lines show; the rest are "+N more" (`summaryMore`), opened inline.
+    public static let summaryCap = 5
+    /// A quote shortened for a Summary line or a collapsed row: its first sentence when that is short enough (its end
+    /// mark kept, a closing period dropped), else cut at a word near `limit` with "…". Whitespace collapsed.
+    public static func shortQuoteWords(_ text: String, limit: Int = 80) -> String {
+        let t = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        if let end = t.firstIndex(where: { ".?!".contains($0) }), t.index(after: end) == t.endIndex || t[t.index(after: end)] == " " {
+            var first = String(t[...end])
+            if first.count <= limit, first.split(separator: " ").count >= 2 || t.index(after: end) == t.endIndex {
+                if first.hasSuffix(".") { first.removeLast() }
+                return first
+            }
+        }
+        guard t.count > limit else { return t }
+        var cut = String(t.prefix(limit))
+        if let space = cut.lastIndex(of: " "), cut.distance(from: cut.startIndex, to: space) > limit / 2 { cut = String(cut[..<space]) }
+        while let last = cut.unicodeScalars.last, CharacterSet(charactersIn: " ,;:-–—.").contains(last) { cut = String(cut.unicodeScalars.dropLast()) }
+        return cut + "\u{2026}"
+    }
+    /// The same in curly quotes.
+    public static func shortQuote(_ text: String, limit: Int = 80) -> String { "\u{201C}" + shortQuoteWords(text, limit: limit) + "\u{201D}" }
+    /// Two asks that say the same thing ("status of everything?" twice, or nearly the same words) are one line.
+    static func sameAsk(_ a: String, _ b: String) -> Bool {
+        func words(_ t: String) -> [String] { t.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init) }
+        let x = words(a), y = words(b)
+        if x == y { return true }
+        let sx = Set(x), sy = Set(y)
+        guard sx.count >= 3, sy.count >= 3 else { return false }
+        return Double(sx.intersection(sy).count) / Double(sx.union(sy).count) >= 0.8
+    }
+    /// The card's Summary lines, all code's, condensed from what the rows hold, newest first, one grey dot each:
+    /// - an AI app: one line per question, "Asked ChatGPT “<first sentence or about 80 characters>”.", the same question
+    ///   asked again merged ("… (2×)."); an X send "Posted/Replied/Typed “…” on X." (patch 4); other quoted words bare;
+    /// - Messages: one line per person, their latest text: "Texted Sam: “…”" when code saw it sent (the signal that makes
+    ///   the collapsed row's "Texted Sam.", `MessagesTypedFold.Line.sent`), else "Wrote to Sam: “…”" (never "draft");
+    ///   "Other texts: “…”" when code read no name;
+    /// - else code's own lines that say something (`cardLines`: never "Used the send key in ChatGPT.", "Typed in
+    ///   ChatGPT." or a line that only names the app, key or action).
+    public static func summaryLines(_ column: LeftColumn) -> [String] {
+        var out: [String] = []
+        for t in column.threads {
+            guard let latest = t.texts.first else { continue }
+            out.append((t.name.map { (t.sent ? "Texted " : "Wrote to ") + $0 } ?? otherTexts) + ": " + shortQuote(latest))
+        }
+        struct Ask { var lead: String?; var tail: String; var words: String; var count: Int }
+        var asks: [Ask] = []
+        for (i, q) in column.quotes.enumerated() {
+            let action = column.action(i), words = shortQuoteWords(q)
+            if let j = asks.firstIndex(where: { $0.lead == action?.lead && $0.tail == (action?.tail ?? "") && sameAsk($0.words, words) }) {
+                asks[j].count += 1
+            } else { asks.append(Ask(lead: action?.lead, tail: action?.tail ?? "", words: words, count: 1)) }
+        }
+        for a in asks {
+            let times = a.count > 1 ? " (\(a.count)\u{00D7})" : ""
+            let quote = "\u{201C}" + a.words + "\u{201D}"
+            out.append(a.lead.map { $0 + " " + quote + a.tail + times + "." } ?? quote + times)
+        }
+        out += column.bullets.map(\.text).filter { !restatesRows($0) && !DisplayWords.sendKeyOnly($0) && !DisplayWords.saysSendKey($0) }
+        return out
+    }
+    /// The Summary lines drawn: the first `summaryCap`, every one once "+N more" is opened.
+    public static func visibleSummary(_ lines: [String], expanded: Bool) -> [String] { expanded ? lines : Array(lines.prefix(summaryCap)) }
+    /// "+N more" past `summaryCap`; nil when nothing is hidden.
+    public static func summaryMore(_ lines: [String]) -> String? { moreLine(lines.count - summaryCap) }
+    /// What happened as sentences, for a card with no Summary lines, without any that only restate the rows.
+    public static func plainSentences(_ lines: [String]) -> [String] {
+        lines.filter { !restatesRows($0) && !DisplayWords.sendKeyOnly($0) && !DisplayWords.saysSendKey($0) }
+    }
+
     // MARK: Texts keep their words (claude/messages2-1003, owner 10/3)
 
     /// One conversation on a Texts card.
@@ -484,8 +595,11 @@ public enum FocusAppCard {
         public let latest: String
         /// A short model line, only over a conversation with more texts than shown.
         public var gist: String?
-        public init(name: String?, texts: [String], actionIDs: [String], latest: String, gist: String? = nil) {
-            self.name = name; self.texts = texts; self.actionIDs = actionIDs; self.latest = latest; self.gist = gist
+        /// claude/rel-017c (owner 10/06): code saw the newest text sent (its compose line's `sent`, the signal behind the
+        /// collapsed row's "Texted Sam."): its Summary line says "Texted", else "Wrote to".
+        public var sent: Bool
+        public init(name: String?, texts: [String], actionIDs: [String], latest: String, gist: String? = nil, sent: Bool = false) {
+            self.name = name; self.texts = texts; self.actionIDs = actionIDs; self.latest = latest; self.gist = gist; self.sent = sent
         }
         public var title: String { name ?? FocusAppCard.otherTexts }
         public var shown: [String] { Array(texts.prefix(FocusAppCard.threadLimit)) }
@@ -514,7 +628,7 @@ public enum FocusAppCard {
     /// its own line: two texts never join.
     public static func textThreads(previews: [OwnerSourcePreview], compose: [String: ComposeLine], actions: [CanonicalAction]) -> [TextThread] {
         let byID = Dictionary(actions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        struct Open { var name: String?; var texts: [(at: String, text: String)] = []; var ids: [String] = []; var pending = ""; var pendingAt = "" }
+        struct Open { var name: String?; var texts: [(at: String, text: String, seen: Bool)] = []; var ids: [String] = []; var pending = ""; var pendingAt = "" }
         var open: [String: Open] = [:], order: [String] = []
         for p in previews.sorted(by: { ($0.at, $0.id) < ($1.at, $1.id) }) where !p.parts.isEmpty && !p.isWithheld {
             guard let last = p.actionIDs.last else { continue }
@@ -538,14 +652,15 @@ public enum FocusAppCard {
             let whole = MessagesTypedFold.stitch(open[key]!.pending, words)
             if sent {
                 let text = whole.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-                if !text.isEmpty { open[key]!.texts.append((p.at, text)) }
+                // Seen sent: the compose line's own send signal, as the collapsed row's "Texted Sam." (a Return alone isn't).
+                if !text.isEmpty { open[key]!.texts.append((p.at, text, line?.sent == true)) }
                 open[key]!.pending = ""
             } else { open[key]!.pending = whole }
         }
         return order.compactMap { k -> TextThread? in
             let o = open[k]!
             guard let newest = o.texts.last else { return nil }
-            return TextThread(name: o.name, texts: o.texts.reversed().map(\.text), actionIDs: o.ids, latest: newest.at)
+            return TextThread(name: o.name, texts: o.texts.reversed().map(\.text), actionIDs: o.ids, latest: newest.at, sent: newest.seen)
         }.sorted { ($0.latest, $0.name == nil ? 0 : 1) > ($1.latest, $1.name == nil ? 0 : 1) }
     }
 
@@ -590,11 +705,11 @@ public enum FocusAppCard {
     }
     /// Shown while the left column is "Summary pending" or "What you wrote" and a member can be written; "Summarizing…"
     /// while one is being written; never over a summary. `bullets` and `header` are the left column's as drawn
-    /// (`leftColumn`): quotes stand in for code's lines there, so code's lines alone never hide the button. Owner 10/6:
-    /// also over code's action lines (`LeftColumn.codeLines`), whose header reads "Summary" before any note.
+    /// (`leftColumn`): quotes stand in for code's lines there, so code's lines alone never hide the button.
+    /// claude/notesfix-015 (owner 10/05, 0.1.6): never. A moment card's lines are final (no model writes a moment), so
+    /// the card has nothing for Summarize Now to bring; the day's summary at the top of the page is the only one.
     public static func offersSummarizeNow(bullets: Bool, header: String?, targets: Int, running: Bool, codeLines: Bool = false) -> Bool {
-        guard !bullets, codeLines || header == "Summary pending" || header == "What you wrote" else { return false }
-        return running || targets > 0
+        false
     }
     /// The same, from the left column the card draws.
     public static func offersSummarizeNow(_ column: LeftColumn, targets: Int, running: Bool) -> Bool {

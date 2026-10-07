@@ -23,6 +23,11 @@ public enum DisplayWords {
         (#"\b([Tt]he|[Yy]our|[Mm]y) draft\b"#, "$1 text"),
         (#"\b([Aa]) draft\b"#, "$1 message"),
         (#"\b([Tt]he|[Yy]our|[Mm]y|[Tt]wo|[Tt]hree|[Ss]everal|[Ss]ome|[Ff]ew|\d+) drafts\b"#, "$1 messages"),
+        // claude/int-017 (owner 10/06: "Used the send key in ChatGPT." must never appear anywhere): no key gesture on
+        // screen. "Typed in Notes, then used its send key (a sentence)." is "Typed in Notes (a sentence).", "Typed in X
+        // and used the send key." is "Typed in X."; a line that is only the gesture goes (`sendKeyOnly`).
+        (#",? then used its send key\b"#, ""),
+        (#",? and used the send key\b"#, ""),
     ].map { (try! NSRegularExpression(pattern: $0.0), $0.1) }
     /// Only draft words in a line's own grammar change (a lead, an article's noun, a hedge); a title's own word stays
     /// ("Read Lab Report Draft.", "Read PR #12: Fix Messages drafts on GitHub.", Gmail's Drafts).
@@ -32,7 +37,7 @@ public enum DisplayWords {
     /// `text` with no draft, unsent or not-sent wording outside quotes: "Typed a draft in Notes (a sentence)." is
     /// "Typed in Notes (a sentence).", "Drafted a text to Sam" is "Wrote a text to Sam", "…; sending isn't confirmed." goes.
     public static func undraft(_ text: String) -> String {
-        guard text.range(of: #"(?i)draft|unsent|not sent|never sent|no send seen|confirmed|verified"#, options: .regularExpression) != nil else { return text }
+        guard text.range(of: #"(?i)draft|unsent|not sent|never sent|no send seen|confirmed|verified|send key"#, options: .regularExpression) != nil else { return text }
         let ns = text as NSString
         var out = "", last = 0
         func plain(_ part: String) -> String {
@@ -46,6 +51,21 @@ public enum DisplayWords {
         }
         out += plain(ns.substring(from: last))
         return out.replacingOccurrences(of: "  ", with: " ").replacingOccurrences(of: " .", with: ".")
+    }
+    /// claude/int-017 (owner 10/06): a line that is only a key or send gesture and a place ("Used the send key in
+    /// ChatGPT.", "Hit send in X."): never shown on a card, collapsed or expanded, for any app.
+    public static func sendKeyOnly(_ text: String) -> Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .range(of: #"(?i)^(used (the|its) send key|hit send|pressed (the )?send( key)?)( (in|on) [^"“”‘’\n]{1,80})?\.?$"#, options: .regularExpression) != nil
+    }
+    /// True when `text` names the send key outside quotes (the checks' grep).
+    public static func saysSendKey(_ text: String) -> Bool {
+        let ns = text as NSString
+        var outside = text
+        for m in quoted.matches(in: text, range: NSRange(location: 0, length: ns.length)).reversed() {
+            outside = (outside as NSString).replacingCharacters(in: m.range, with: "\"\"")
+        }
+        return outside.range(of: #"(?i)send key"#, options: .regularExpression) != nil
     }
     /// True when `text` still has draft wording outside quotes (the checks' grep).
     public static func saysDraft(_ text: String) -> Bool {

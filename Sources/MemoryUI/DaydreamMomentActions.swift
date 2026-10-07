@@ -95,7 +95,9 @@ public enum MomentActions {
 
         // fix/resummarize (owner, test 7): Summarize Now on any moment the writer can write, a written one too (its note
         // is written afresh from everything in the moment now), next to Copy Summary.
-        let summarize = canSummarizeNow(m, caps: caps)
+        // claude/notesfix-015 (owner 10/05, 0.1.6): no model writes a moment, so no menu offers Summarize Now
+        // (`offersSummarizeNow`); Copy Summary stays.
+        let summarize = Self.momentSummarizeNow && canSummarizeNow(m, caps: caps)
         if m.hasSummary || !summarize {
             items.append(MomentActionItem(id: .copySummary, title: "Copy Summary", symbol: "doc.on.doc",
                                           keys: inRecall ? "⇧⌘C" : "⌘C", enabled: m.hasSummary, reason: summaryReason(m)))
@@ -153,6 +155,9 @@ public enum MomentActions {
         return nil
     }
 
+    /// claude/notesfix-015 (owner 10/05, 0.1.6): false. A moment's lines are final; the day's summary is the only one.
+    public static let momentSummarizeNow = false
+
     /// Whether Summarize Now can run for the moment: summaries on and not busy, and a moment the running writer can write
     /// (pending, or written: never one too long, on a partial day, or before cloud summaries were turned on).
     public static func canSummarizeNow(_ m: MomentSlice, caps: Capabilities) -> Bool {
@@ -170,7 +175,7 @@ public enum MomentActions {
     private static func summaryReason(_ m: MomentSlice) -> String? {
         switch m.summary {
         case .ready: return nil
-        case .pending: return "Summary pending"
+        case .pending: return nil
         case .summariesOff: return "Summaries are off"
         case .tooLong: return "Too long to summarize"
         case .incomplete: return "Partial day · summary unavailable"

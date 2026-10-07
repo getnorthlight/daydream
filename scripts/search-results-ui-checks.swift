@@ -473,9 +473,10 @@ import Foundation
         check(threads.contains("Text(thread.title).font(.system(size: size))"), "Texts summary: the heading is a plain line")
         check(threads.contains("OverflowToggle(collapsed: FocusAppCard.moreLine(thread.more)") && threads.contains("thread.visible(expanded: expanded)")
               && !threads.contains("Text(more)"), "Texts summary: +N more is a link that opens the conversation's texts")
-        check(expanded.contains("OverflowToggle(collapsed: FocusAppCard.earlierLine(messages.count), expanded: $quotesOpen")
-              && expanded.contains("FocusAppCard.visibleMessages(messages, expanded: quotesOpen)") && !expanded.contains("Text(earlier)"),
-              "card quotes: +N earlier messages is a link that opens them")
+        // claude/int-017 (owner 10/06): the card's quotes are Summary lines now; past about five, "+N more" opens them inline.
+        check(expanded.contains("OverflowToggle(collapsed: FocusAppCard.summaryMore(shown), expanded: $quotesOpen")
+              && expanded.contains("FocusAppCard.visibleSummary(shown, expanded: quotesOpen)") && !expanded.contains("Text(earlier)"),
+              "card Summary: +N more is a link that opens the rest (0.1.7)")
         check(toggle.contains("Button {") && toggle.contains(".buttonStyle(FocusLinkButtonStyle())") && !toggle.contains("weight:")
               && toggle.contains(".accessibilityValue(expanded ? \"Expanded\" : \"Collapsed\")"),
               "the overflow link is a Button (keyboard and VoiceOver), in the accent link style, never bold")

@@ -168,9 +168,18 @@ class ConnectCLI(unittest.TestCase):
                            {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call', 'params': {'name': 'status', 'arguments': {}}})
         self.assertEqual(replies[0]['result']['serverInfo']['name'], 'DayDream')
         self.assertIn('result', replies[1])
-        self.assertEqual(json.loads(self.run_cli('connect', 'chatgpt', '--yes', '--json').stdout)['outcome'], 'alreadyConnected')
+        # claude/rel-017c: ChatGPT also gets DayDream's skill, the repo's skills/daydream byte for byte.
+        self.assertEqual(json.loads(done.stdout)['skill'], 'installed')
+        skill = folder / 'skills' / 'daydream'
+        repo = Path(__file__).resolve().parent.parent / 'skills' / 'daydream'
+        for path in [p for p in repo.rglob('*') if p.is_file()]:
+            self.assertEqual((skill / path.relative_to(repo)).read_bytes(), path.read_bytes(), path.name)
+        again = json.loads(self.run_cli('connect', 'chatgpt', '--yes', '--json').stdout)
+        self.assertEqual((again['outcome'], again['skill']), ('alreadyConnected', 'current'))
         gone = self.run_cli('disconnect', 'chatgpt', '--yes', '--json')
         self.assertEqual(gone.returncode, 0, gone.stderr)
+        self.assertEqual(json.loads(gone.stdout)['skill'], 'removed')
+        self.assertFalse(skill.exists())
         self.assertEqual(config.read_text(), original)
         denied = self.mcp(entry, {'jsonrpc': '2.0', 'id': 3, 'method': 'tools/call', 'params': {'name': 'search', 'arguments': {'query': 'fixture'}}})
         self.assertTrue(denied[0].get('result', {}).get('isError'), denied[0])

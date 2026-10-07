@@ -912,8 +912,9 @@ import WriterBackend
                     await withCheckedContinuation { continuation in
                         DispatchQueue.global(qos:.utility).async {
                             var prompts=[String:String]()
-                            if store.typingUnlocked,let asks=try? MemoryStore(home:memoryHome).momentPromptRows(requests),!asks.isEmpty {
-                                prompts=(try? StoreWait.lettingMainIn {try store.ownerMomentPrompts(asks)}) ?? [:]
+                            // claude/int-017: with each moment's count of sent asks ("Asked 5 questions · latest “…”").
+                            if store.typingUnlocked,let asks=try? MemoryStore(home:memoryHome).momentPromptCandidates(requests),!asks.rows.isEmpty {
+                                prompts=(try? StoreWait.lettingMainIn {try store.ownerMomentPrompts(asks.rows,asks:asks)}) ?? [:]
                             }
                             continuation.resume(returning:prompts)
                         }
@@ -984,6 +985,10 @@ import WriterBackend
             refreshAtLaunch()
             scheduleLegacySummaries()
             refreshBundleNames()
+            #if !DEVELOPMENT_SOURCE_CHECKS
+            // claude/rel-017c: a connected ChatGPT gets this DayDream's skill (an update's newer one too); see AgentSkill.
+            if development == nil && !recordingTrial { Task.detached(priority:.utility) { AgentSkill.refresh(.live) } }
+            #endif
             // A copy that waited for the history (another copy had it, or the file was busy): its first look now.
             if reopened {
                 if development == nil && !recordingTrial {updates.start()}

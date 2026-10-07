@@ -7,7 +7,7 @@ Short answers to the questions people ask first. The [README](../README.md) and 
 Only while typed text is on. It uses the same macOS permissions a keylogger would, and once typed text is on it saves what you type in the places below.
 
 - Setup shows typed text switched on, with one line. One click turns it off, then or any time in Settings. Nothing is recorded before you press Start Recording. While it's off, DayDream ignores key presses completely.
-- While it's on, DayDream saves what you type **only** in the apps on a fixed list (Notes, TextEdit, Pages, Obsidian, Spotlight, Claude, ChatGPT, Terminal, Ghostty, Xcode and Cursor, plus Messages, Mail and WhatsApp while Messages and email is on, which it is unless you turn it off) and on websites in Google Chrome. In apps, it also notes that you pressed Return or a keyboard shortcut, but not which one. The README's [Typed text](../README.md#typed-text) section has the full list.
+- While it's on, DayDream saves what you type **only** in the apps on a fixed list (Notes, TextEdit, Pages, Obsidian, Spotlight, Claude, ChatGPT, Terminal, Ghostty, Xcode and Cursor, plus Messages, Mail and WhatsApp while Messages and email is on, which it is unless you turn it off) and on websites in Google Chrome. In apps, it also notes that you pressed Return or a keyboard shortcut, but not which one. The README's [Typed text](README-details.md#typed-text) section has the full list.
 - Websites need two switches: typed text and Web pages in Chrome. Nothing is saved from Chrome while any Incognito or Guest window is open, or on blocked sites such as banking, sign-in and payment pages.
 - It never reads password fields, and it drops typed text that looks like a key, a card number or a one-time code.
 - What you type is encrypted on your Mac. DayDream deletes the exact words after 7 days, unless you choose another time, and keeps a short note of where you typed.
@@ -28,11 +28,11 @@ Only what you choose, plus a check for updates and anonymous usage counts (below
 - **A backup** you save to iCloud Drive or another synced folder is uploaded by that service.
 - **"Open Original"** on a web link sends one request to that website to check the page still exists.
 
-DayDream also checks its website for updates and downloads them from GitHub, unless you turn that off, and sends anonymous usage counts to PostHog about once an hour, unless you turn them off in Settings › Advanced. Those requests carry no history. Summaries on this Mac send no history either: choosing them downloads the model from Hugging Face, and pressing Download or Turn on may check DayDream's signing certificate with Apple. The full list is in the README's [Network connections](../README.md#network-connections).
+DayDream also checks its website for updates and downloads them from GitHub, unless you turn that off, and sends anonymous usage counts to PostHog about once an hour, unless you turn them off in Settings › Advanced. Those requests carry no history. Summaries on this Mac send no history either: choosing them downloads the model from Hugging Face, and pressing Download or Turn on may check DayDream's signing certificate with Apple. The full list is in the README's [Network connections](README-details.md#network-connections).
 
 ## Do you (the developers) see my data?
 
-No. Your activity is stored on your Mac, and we never receive your history, typed words, titles, sites or searches. DayDream has no account and no crash reporting. It does send anonymous usage counts to PostHog, like how often DayDream is opened or used by AI apps and which settings are on, with a random ID made for your copy of DayDream. Turn them off in Settings › Advanced › **Share anonymous usage counts**; **See what's sent** there shows exactly what goes. The full list is in the README's [Usage counts](../README.md#usage-counts). If you open a GitHub issue, what you write there is public, so never paste your history into one.
+No. Your activity is stored on your Mac, and we never receive your history, typed words, titles, sites or searches. DayDream has no account and no crash reporting. It does send anonymous usage counts to PostHog, like how often DayDream is opened or used by AI apps and which settings are on, with a random ID made for your copy of DayDream. Turn them off in Settings › Advanced › **Share anonymous usage counts**; **See what's sent** there shows exactly what goes. The full list is in the README's [Usage counts](README-details.md#usage-counts). If you open a GitHub issue, what you write there is public, so never paste your history into one.
 
 ## Does it take screenshots or record my screen?
 
@@ -99,7 +99,7 @@ The app is signed with its developer's Apple Developer ID and notarized by Apple
 
 ## Is it open source?
 
-Yes. The code is at [github.com/getnorthlight/daydream](https://github.com/getnorthlight/daydream) under the MIT License. You can read it, and [build it yourself](../README.md#build-from-source).
+Yes. The code is at [github.com/getnorthlight/daydream](https://github.com/getnorthlight/daydream) under the MIT License. You can read it, and [build it yourself](README-details.md#build-from-source).
 
 ## How do I report a security problem?
 

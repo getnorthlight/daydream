@@ -72,14 +72,22 @@ public enum MomentPromptText {
     /// with `split`). The mark never appears in typed words (`clean` turns control characters into spaces).
     static let sentMark = "\u{1E}"
     public static func sent(lead: String, at: String, words: String) -> String { sentMark + lead + sentMark + at + sentMark + words }
-    /// A row's prompt value: its words, and for an X send its lead ("Posted", "Replied") and time.
+    /// claude/int-017 (owner 10/06): an AI ask code saw sent, with how many asks the moment sent: the collapsed row
+    /// reads "Asked “…”" or "Asked 5 questions · latest “…”". Carried in the one value as `sent` does.
+    public static func asked(count: Int, words: String) -> String { sentMark + sentMark + sentMark + words + sentMark + String(max(1, count)) }
+    /// A row's prompt value: its words, for an X send its lead ("Posted", "Replied") and time, and for an AI ask code
+    /// saw sent (claude/int-017) how many asks the moment sent (nil: not a confirmed ask, the bare quote as before).
     public struct Value: Equatable, Sendable {
         public let words: String
         public let lead: String?
         public let at: String?
+        public var asks: Int? = nil
     }
     public static func split(_ value: String) -> Value {
         let parts = value.components(separatedBy: sentMark)
+        if value.hasPrefix(sentMark), parts.count == 5, parts[1].isEmpty, let n = Int(parts[4]) {
+            return Value(words: parts[3], lead: nil, at: nil, asks: n)
+        }
         guard value.hasPrefix(sentMark), parts.count == 4 else { return Value(words: value, lead: nil, at: nil) }
         return Value(words: parts[3], lead: parts[1], at: parts[2])
     }
@@ -91,8 +99,20 @@ extension MemoryStore {
     /// A moment qualifies only when the ask was typed in the moment's main app (and, for a website, on its first
     /// site). A typed row flagged secure is never a candidate.
     public func momentPromptRows(_ requests: [MomentPromptRequest]) throws -> [String: [String]] {
+        try momentPromptCandidates(requests).rows
+    }
+    /// claude/int-017: the same rows, with each moment's count of AI asks code saw sent (one per typing run with a
+    /// detected send) and the candidate rows that start such a run. Metadata only.
+    public struct MomentPromptCandidates: Equatable, Sendable {
+        public var rows: [String: [String]] = [:]
+        public var sentAsks: [String: Int] = [:]
+        public var sentIDs: Set<String> = []
+        public init() {}
+    }
+    public func momentPromptCandidates(_ requests: [MomentPromptRequest]) throws -> MomentPromptCandidates {
+        var result = MomentPromptCandidates()
         let wanted = requests.filter { !$0.actionIDs.isEmpty }
-        guard !wanted.isEmpty, try hasTypedTables() else { return [:] }
+        guard !wanted.isEmpty, try hasTypedTables() else { return result }
         let ids = Array(Set(wanted.flatMap(\.actionIDs)))
         // Only rows with sealed words (typed_text, a small table) are read; the day's other actions cost a lookup each.
         let found = try rows("""
@@ -116,7 +136,7 @@ extension MemoryStore {
         }
         // Owner 10/6: on X, only rows code confirmed sent as a post or reply (metadata: `composeOutcomes`, never words).
         let xSent = onX.isEmpty ? [:] : try composeOutcomes(Array(onX.keys)).filter { MomentPromptText.xLead($0.value) != nil }
-        guard !byID.isEmpty || !xSent.isEmpty else { return [:] }
+        guard !byID.isEmpty || !xSent.isEmpty else { return result }
         var out = [String: [String]]()
         for request in wanted {
             let site = Self.promptHost(request.site ?? "")
@@ -147,8 +167,11 @@ extension MemoryStore {
             let byTime = request.newestFirst ? Array(runs.reversed()) : runs
             let ordered = byTime.filter(sent.contains) + byTime.filter { !sent.contains($0) }
             out[request.momentID] = Array(ordered.compactMap { firstPart[$0]?.id }.prefix(MomentPromptText.candidatesPerMoment))
+            if !sent.isEmpty { result.sentAsks[request.momentID] = sent.count }
+            for run in sent { if let id = firstPart[run]?.id { result.sentIDs.insert(id) } }
         }
-        return out
+        result.rows = out
+        return result
     }
 
     /// The DayDream window on this Mac only: each moment's ask, opened with the owner disclosure (`hydrateTypedText`:
@@ -156,6 +179,11 @@ extension MemoryStore {
     /// (`MomentPromptText.clean`). Empty in a process without a ready key (every MCP and CLI process) and while typing
     /// is off. Read only: it writes nothing.
     public func ownerMomentPrompts(_ candidates: [String: [String]], now: Date = Date()) throws -> [String: String] {
+        try ownerMomentPrompts(candidates, asks: MomentPromptCandidates(), now: now)
+    }
+    /// claude/int-017: the same, with `asks` (`momentPromptCandidates`): an opened row that starts a sent ask carries the
+    /// moment's count of sent asks (`MomentPromptText.asked`), so the row can say "Asked “…”" without guessing a send.
+    public func ownerMomentPrompts(_ candidates: [String: [String]], asks: MomentPromptCandidates, now: Date = Date()) throws -> [String: String] {
         guard !candidates.isEmpty, typedVaultState == .ready, try policy().captureText else { return [:] }
         // Owner 10/6: a confirmed X post or reply carries its lead ("Posted", "Replied": `MomentPromptText.sent`).
         let outcomes = try composeOutcomes(Array(Set(candidates.values.flatMap { $0 })), now: now)
@@ -166,7 +194,9 @@ extension MemoryStore {
                 let line = MomentPromptText.clean(words)
                 guard !line.isEmpty else { continue }
                 let at = try rows("SELECT coalesce(json_extract(body,'$.at'),'') FROM records WHERE id=?", [id]).first?.first ?? ""
-                out[moment] = outcomes[id].flatMap(MomentPromptText.xLead).map { MomentPromptText.sent(lead: $0, at: at, words: line) } ?? line
+                if let lead = outcomes[id].flatMap(MomentPromptText.xLead) { out[moment] = MomentPromptText.sent(lead: lead, at: at, words: line) }
+                else if asks.sentIDs.contains(id), let n = asks.sentAsks[moment] { out[moment] = MomentPromptText.asked(count: n, words: line) }
+                else { out[moment] = line }
                 break
             }
         }
