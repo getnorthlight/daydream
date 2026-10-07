@@ -8,7 +8,7 @@ your Mac, so you can find anything again, and AI apps you connect can check it w
 <p align="center"><img src="docs/images/menu-bar.png" width="320" alt="DayDream's menu bar panel while recording: Recording since 8:38 AM with the switch on, Pause, 4 moments remembered today, Search, Open DayDream, Settings and Quit."></p>
 
 > [!IMPORTANT]
-> DayDream is beta software. Expect bugs. Your history isn't encrypted yet (only what you type is), so turn on FileVault.
+> DayDream is beta software. Expect bugs.
 
 ## Install
 
