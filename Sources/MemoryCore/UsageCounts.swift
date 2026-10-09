@@ -6,7 +6,7 @@ import Foundation
 /// below, never a title, a typed word, a site, a search, a path, a name or anything else from the person's history.
 /// Nothing in this file touches the network.
 public enum UsageCounts {
-    public static let events: Set<String> = ["installed", "setup_step", "daily_check", "summaries_result", "ai_used", "app_opened", "app_search"]
+    public static let events: Set<String> = ["installed", "setup_step", "daily_check", "summaries_result", "ai_used", "app_opened", "app_search", "app_updated"]
     /// Added to every event by the sender.
     public static let commonKeys: Set<String> = ["$geoip_disable", "$ip", "$lib", "app_version"]
     /// summaries_result's counts: `<mode>_<outcome>`, plus `problem` (the summaries state's problem, if any).
@@ -22,6 +22,7 @@ public enum UsageCounts {
         "ai_used": ["ai_app", "tool", "result_count", "empty", "latency_ms"],
         "app_opened": ["how"],
         "app_search": ["result_count"],
+        "app_updated": ["from_version", "to_version"],
     ]
     /// The only text values a property may hold (keys missing here hold numbers or booleans only).
     public static let words: [String: Set<String>] = [
@@ -37,6 +38,9 @@ public enum UsageCounts {
         "problem": ["none", "key", "credits", "offline", "host", "other"],
         // macOS's own version number ("15.6.1"), checked by shape in `allowed`.
         "macos_version": [],
+        // DayDream's own version and build ("0.1.8 Beta (20261008120000)"), checked by shape in `allowed` (`UsageLaunch.versionShape`).
+        "from_version": [],
+        "to_version": [],
     ]
     public static let aiApps = ["claude", "claude_code", "cursor", "chatgpt", "windsurf", "other"]
     /// DayDream's MCP tool names (`current-context` is sent as current_context; v2's timeline and details are listed too).
@@ -78,11 +82,78 @@ public enum UsageCounts {
             case .int(let n): guard n >= 0 else { return false }
             case .text(let text):
                 if key == "macos_version" { guard text.range(of: #"^\d{1,3}(\.\d{1,3}){0,2}$"#, options: .regularExpression) != nil else { return false }; continue }
+                if key == "from_version" || key == "to_version" { guard UsageLaunch.isVersion(text) else { return false }; continue }
                 guard words[key]?.contains(text) == true else { return false }
             case .list(let list): guard let ok = words[key], list.allSatisfy(ok.contains) else { return false }
             }
         }
         return true
+    }
+}
+
+/// rel-018: how a launch counts (pure rules; `UsageReport` in the app applies them, the checks drive them directly).
+/// - `app_updated`: the app's version and build differ from the ones it last ran with (kept in DayDream's own
+///   preferences, `lastRunKey`, never in the history). Compared and replaced in one step at launch, so a second launch
+///   of the same build (Quit & Reopen, the automatic Input Monitoring restart) finds nothing new. A first launch on a
+///   Mac (no install ID yet) only stores the version: `installed` covers it. A copy that already had an install ID but
+///   no stored version (it last ran a build before 0.1.8) counts as updated from "unknown".
+/// - `app_opened` at launch: only a launch the person asked for. macOS's open event (kAEOpenApplication) is there when
+///   Finder, Launchpad, the Dock, Spotlight or `open` starts DayDream; a login item's open event carries
+///   keyAELaunchedAsLogInItem (SMAppService.mainApp included). No open event at all counts as nothing. DayDream's own
+///   restarts (Quit & Reopen, the automatic Input Monitoring restart, Sparkle's relaunch after an update) leave
+///   `selfRelaunchKey` just before they quit, and the next launch within `selfRelaunchWindow` takes it and counts nothing.
+public enum UsageLaunch {
+    public static let lastRunKey = "DaydreamUsageLastRunVersion"
+    public static let selfRelaunchKey = "DaydreamUsageSelfRelaunchAt"
+    public static let selfRelaunchWindow: TimeInterval = 120
+    public static let unknownVersion = "unknown"
+    /// The short version as release builds carry it (numeric, then " Beta" while DayDream is in beta: developer-id-release.py
+    /// `release_info`) and the build (RELEASE.md stamps a 14-digit date; stage takes any UInt64, up to 20 digits).
+    static let versionShape = #"^[0-9]{1,4}(\.[0-9]{1,4}){0,3}( Beta)? \([0-9]{1,20}(\.[0-9]{1,9}){0,2}\)$"#
+
+    /// "0.1.8 Beta (20261008120000)" or "0.1.8 (12)": the short version and the build. Anything else is "unknown"
+    /// (never free text).
+    public static func version(short: String?, build: String?) -> String {
+        let text = "\(short ?? "") (\(build ?? ""))"
+        return isVersion(text) ? text : unknownVersion
+    }
+    public static func isVersion(_ text: String) -> Bool {
+        text == unknownVersion || text.range(of: versionShape, options: .regularExpression) != nil
+    }
+
+    /// Compares this launch's version with the one stored, stores this one, and returns the update to count (or nil).
+    /// `newInstall`: the install ID was made at this launch.
+    public static func takeUpdate(_ defaults: UserDefaults, current: String, newInstall: Bool) -> (from: String, to: String)? {
+        let last = defaults.string(forKey: lastRunKey)
+        defaults.set(current, forKey: lastRunKey)
+        guard last != current else { return nil }
+        guard let last else { return newInstall ? nil : (unknownVersion, current) }
+        return (isVersion(last) ? last : unknownVersion, current)
+    }
+
+    public enum Kind: Equatable, Sendable { case opened, atLogin, noOpenEvent }
+    /// What macOS's launch event says. `openEvent`: the current Apple event is kAEOpenApplication; `loginItem`: its
+    /// keyAEPropData is keyAELaunchedAsLogInItem.
+    public static func kind(openEvent: Bool, loginItem: Bool) -> Kind {
+        guard openEvent else { return .noOpenEvent }
+        return loginItem ? .atLogin : .opened
+    }
+    /// The app is about to restart itself.
+    public static func markSelfRelaunch(_ defaults: UserDefaults, now: Date = Date()) {
+        defaults.set(now.timeIntervalSince1970, forKey: selfRelaunchKey)
+    }
+    public static func clearSelfRelaunch(_ defaults: UserDefaults) { defaults.removeObject(forKey: selfRelaunchKey) }
+    /// Reads and removes the mark: whether this launch is DayDream's own restart.
+    public static func takeSelfRelaunch(_ defaults: UserDefaults, now: Date = Date()) -> Bool {
+        let at = defaults.object(forKey: selfRelaunchKey) as? Double
+        defaults.removeObject(forKey: selfRelaunchKey)
+        guard let at else { return false }
+        let age = now.timeIntervalSince1970 - at
+        return age >= -5 && age <= selfRelaunchWindow
+    }
+    /// The `app_opened` "how" a launch counts as, or nil (nothing is counted).
+    public static func launchOpen(_ kind: Kind, selfRelaunch: Bool) -> String? {
+        kind == .opened && !selfRelaunch ? "other" : nil
     }
 }
 

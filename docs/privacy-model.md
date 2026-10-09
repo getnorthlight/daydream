@@ -90,7 +90,7 @@ Three more connections carry no history: update checks, which fetch the list of 
 
 **Summaries on this Mac** send no history: notes are written on your Mac. If typed text is on, they can use the words DayDream saves from your typing, and nothing leaves your Mac to write them. They go online only in two ways, and only after you choose On this Mac:
 
-- **The model download.** The 2.74 GB model is downloaded from Hugging Face when you turn on Summaries on this Mac (in setup, Continue with it on), and never before. A download you started that a quit interrupted finishes after DayDream opens again. The runtime that runs it is already inside the app.
+- **The model download.** The 2.74 GB model is downloaded from Hugging Face when Summaries on this Mac turn on: by themselves during a new install's setup, once the permissions page is done (on a Mac that can run them with at least 5 GB free), or when you turn them on in Settings › Summarizer. Never otherwise. A download you started that a quit interrupted finishes after DayDream opens again. The runtime that runs it is already inside the app.
 - **The signature check with Apple.** Before loading that runtime, DayDream checks its signature with the certificate status macOS has already saved. Only if that has run out does DayDream ask Apple about its signing certificate, and only when you turn On this Mac on, or when a download you started finishes after a quit. It doesn't do this when summaries on this Mac turn back on after a restart. Nothing from your history is sent.
 
 See [summaries](summaries.md#on-this-mac).

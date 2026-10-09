@@ -29,6 +29,8 @@ APPROVED = {
     "ai_used": {"ai_app", "tool", "result_count", "empty", "latency_ms"},
     "app_opened": {"how"},
     "app_search": {"result_count"},
+    # rel-018 (owner, 2026-10-07): once per update, the version and build it ran before and now ("0.1.8 (12)").
+    "app_updated": {"from_version", "to_version"},
 }
 SUMMARY_MODES = {"local", "openrouter"}
 COMMON = {"$geoip_disable", "$ip", "$lib", "app_version"}
@@ -82,6 +84,16 @@ class Vocabulary(unittest.TestCase):
         # Every text property is checked against a word list (macos_version by its version-number shape).
         self.assertIn('guard words[key]?.contains(text) == true else { return false }', self.text)
         self.assertIn(r'^\d{1,3}(\.\d{1,3}){0,2}$', self.text)
+        # rel-018: app_updated's versions by their release shape ("0.1.8 Beta (20261008120000)", "0.1.8 (12)"), or "unknown".
+        self.assertIn('if key == "from_version" || key == "to_version" { guard UsageLaunch.isVersion(text) else { return false }; continue }', self.text)
+        shape = r'^[0-9]{1,4}(\.[0-9]{1,4}){0,3}( Beta)? \([0-9]{1,20}(\.[0-9]{1,9}){0,2}\)$'
+        self.assertIn('#"' + shape + '"#', self.text)
+        # What real builds carry (developer-id-release.py: "x.y.z Beta"; RELEASE.md: a 14-digit date build) fits;
+        # free text does not.
+        for ok in ("0.1.8 Beta (20261008120000)", "0.1.7 Beta (20261006231255)", "0.1.8 (12)", "0.1.8 Beta (18446744073709551615)"):
+            self.assertRegex(ok, shape)
+        for bad in ("0.1.8 Beta", "0.1.8 beta (1)", "0.1.8 Alpha (1)", "0.1.8 Beta (123456789012345678901)", "/Users/x (1)", "Sam's build (1)"):
+            self.assertNotRegex(bad, shape)
 
 
 class Sender(unittest.TestCase):

@@ -4,7 +4,7 @@ Owner laptop 10/04 (public 0.1.4, macOS 15.7.2): DayDream quit with EXC_BREAKPOI
 under `TSMTranslateKeyEvent` / `-[NSEvent characters]` on the input tap thread. Text Input Sources, TSM and AppKit's key
 translation assert the main QUEUE; macOS 26 doesn't trap, so nothing tested on the mini saw it (fixed in 761fe57). This
 lint keeps that kind of call where it can only run on the main queue, over the code of every Swift file of the app's
-targets and the local packages it links (comments and string literal text blanked, as scripts/check_macos13_api.py):
+targets and the local packages it links (comments and string literal text blanked, with scripts/check_state_vocabulary.py's scanner):
 
 1. Queue-asserting APIs (Text Input Sources `TIS*`, `TSM*`, `UCKeyTranslate`, `LMGetKbdType`, `KBGetLayoutType`,
    `NSEvent` character reads and `NSEvent(cgEvent:)`, Carbon hot keys and event handlers) appear only inside the

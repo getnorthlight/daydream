@@ -22,6 +22,10 @@ private final class FixtureTransport:TypesenseTransport {
  }
 }
 func tryRowCount(_ store:MemoryStore,_ sql:String)->Int {try! Int(store.rows(sql).first!.first!)!}
+// Collect, then report: each case's outcome is a PASS or FAIL line and every case runs (a precondition stopped the run at
+// the first broken case, hiding the 19 after it). Setup guards stay preconditions: past them a case's fixture is wrong.
+var failures=0
+func expect(_ ok:Bool,_ label:String) {if ok {print("PASS "+label)} else {failures+=1;print("FAIL "+label)}}
 @main enum Checks {
  static func main() throws {
   let root=URL(fileURLWithPath:CommandLine.arguments[1]),output=URL(fileURLWithPath:CommandLine.arguments[2]);var results=[[String:Any]]()
@@ -84,24 +88,25 @@ func tryRowCount(_ store:MemoryStore,_ sql:String)->Int {try! Int(store.rows(sql
    let secondSaved=try store.ingest(second,now:now,expectedPolicyRevision:(try store.policy()).revision,requireRecording:true)
    let kept=secondSaved ? try store.hydrateTypedText(second.id,disclosure:.owner,now:now):nil
    let positive=["originating","originating-repeat","originating-deletion"].contains(kind)
-   precondition(positive ? kept==text : kept != text,"search boundary changed "+kind)
-   if kind == "strong-secret" {precondition(kept?.contains("FictionalToken99!") != true)}
-   if positive {precondition(sync?.status == "synced" && transport.imports==(kind == "originating-deletion" ? 2:1) && !failed && lockFree)}
-   if ["get-failure","import-failure","ack-failure","failing-trigger","config-change","policy-change","delete-failure"].contains(kind) {precondition(failed,"real failure effect required")}
-   if kind == "originating-deletion" {precondition(sync?.deleted==1 && transport.deletions==1 && tryRowCount(store,"SELECT count(*) FROM search_index_state WHERE id='old-fictional'")==0)}
-   if kind == "delete-failure" {precondition(tryRowCount(store,"SELECT count(*) FROM search_index_state WHERE id='old-fictional'")==1,"failed remote deletion retains ledger")}
-   precondition(transport.projectionsBodyFree,"index projection must exclude typed body")
+   expect(positive ? kept==text : kept != text,kind+": the next typed part is "+(positive ? "kept (the sync keeps the certified carry)":"withheld (the boundary holds)"))
+   if kind == "strong-secret" {expect(kept?.contains("FictionalToken99!") != true,kind+": the secret is never kept")}
+   if positive {expect(sync?.status == "synced" && transport.imports==(kind == "originating-deletion" ? 2:1) && !failed && lockFree,kind+": synced with the expected imports, no failure, the store lock free during HTTP")}
+   if ["get-failure","import-failure","ack-failure","failing-trigger","config-change","policy-change","delete-failure"].contains(kind) {expect(failed,kind+": the injected failure fails the sync")}
+   if kind == "originating-deletion" {expect(sync?.deleted==1 && transport.deletions==1 && tryRowCount(store,"SELECT count(*) FROM search_index_state WHERE id='old-fictional'")==0,kind+": the acknowledged deletion clears the ledger")}
+   if kind == "delete-failure" {expect(tryRowCount(store,"SELECT count(*) FROM search_index_state WHERE id='old-fictional'")==1,kind+": a failed remote deletion keeps the ledger")}
+   expect(transport.projectionsBodyFree,kind+": the index projection holds no typed body")
    results.append(["case":kind,"positive":positive,"firstExact":firstExact,"secondWritten":secondSaved,"secondExact":kept==text,"marker":kept?.contains("[withheld]")==true,"failed":failed,"lockFree":lockFree,"imports":transport.imports,"indexBodyFree":transport.projectionsBodyFree,"status":sync?.status ?? "failed"])
   }
   var owned:MemoryStore?=try MemoryStore(home:root.appendingPathComponent("lifetime"),writable:true,automaticallySyncSearch:false)
-  let holder=OriginatingSearchStore(owned!),otherHolder=OriginatingSearchStore(owned!);precondition(holder.token != otherHolder.token)
-  owned=nil;precondition(holder.store==nil && otherHolder.store==nil,"queued holder must not keep store alive")
+  let holder=OriginatingSearchStore(owned!),otherHolder=OriginatingSearchStore(owned!);expect(holder.token != otherHolder.token,"lifetime: two holders have distinct tokens")
+  owned=nil;expect(holder.store==nil && otherHolder.store==nil,"lifetime: a queued holder does not keep the store alive")
   let scope=TypedNarrativeMaintenanceScope.search,statement="INSERT OR REPLACE INTO metadata VALUES('search_cursor',?)"
-  precondition(scope.permits(action:SQLITE_INSERT,first:"metadata",second:nil,database:"main",source:nil,statement:statement))
-  for table in ["records","typed_text","note_requests","generated_notes","tombstones"] {precondition(!scope.permits(action:SQLITE_INSERT,first:table,second:nil,database:"main",source:nil,statement:statement))}
-  for source in ["fictional-trigger","summary_queue_record_update"] {precondition(!scope.permits(action:SQLITE_INSERT,first:"metadata",second:nil,database:"main",source:source,statement:statement))}
-  for sql in ["INSERT OR REPLACE INTO metadata VALUES('policy',?)","INSERT OR REPLACE INTO metadata VALUES(?,?)","DELETE FROM metadata","DELETE FROM records"] {precondition(!scope.permits(action:SQLITE_INSERT,first:"metadata",second:nil,database:"main",source:nil,statement:sql))}
+  expect(scope.permits(action:SQLITE_INSERT,first:"metadata",second:nil,database:"main",source:nil,statement:statement),"classifier: the search scope permits its own cursor write")
+  for table in ["records","typed_text","note_requests","generated_notes","tombstones"] {expect(!scope.permits(action:SQLITE_INSERT,first:table,second:nil,database:"main",source:nil,statement:statement),"classifier: the search scope refuses a write to "+table)}
+  for source in ["fictional-trigger","summary_queue_record_update"] {expect(!scope.permits(action:SQLITE_INSERT,first:"metadata",second:nil,database:"main",source:source,statement:statement),"classifier: the search scope refuses a write from trigger "+source)}
+  for sql in ["INSERT OR REPLACE INTO metadata VALUES('policy',?)","INSERT OR REPLACE INTO metadata VALUES(?,?)","DELETE FROM metadata","DELETE FROM records"] {expect(!scope.permits(action:SQLITE_INSERT,first:"metadata",second:nil,database:"main",source:nil,statement:sql),"classifier: the search scope refuses "+sql)}
   try JSONSerialization.data(withJSONObject:["schema":"sig-originating-indexer-controls-v1","cases":results,"GUI":false,"realNetwork":false,"inference":false],options:[.prettyPrinted,.sortedKeys]).write(to:output)
+  if failures > 0 {print("sig-indexer-maintenance: \(failures) failed; no network/GUI/model");exit(1)}
   print("ORIGINATING INDEXER 20 STORE CONTROLS +14 CLASSIFIER/LIFETIME CONTROLS PASS; no network/GUI/model")
  }
 }

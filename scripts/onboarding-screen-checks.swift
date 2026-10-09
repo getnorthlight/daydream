@@ -10,11 +10,31 @@ import AppKit
 import SwiftUI
 import MemoryCore
 import MemoryUI
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
+
+/// The path with every symlink resolved, also for a tail that doesn't exist yet (/var/tmp/x and /private/var/tmp/x
+/// are one folder), so a scratch HOME is accepted whichever spelling the work folder was given.
+func resolvedPath(_ path: String) -> String {
+    var url = URL(fileURLWithPath: path).standardizedFileURL
+    var rest: [String] = []
+    while access(url.path, F_OK) != 0, url.path != "/" { rest.insert(url.lastPathComponent, at: 0); url.deleteLastPathComponent() }
+    guard let real = realpath(url.path, nil) else { return path }
+    defer { free(real) }
+    let head = String(cString: real)
+    return rest.isEmpty ? head : (head == "/" ? "" : head) + "/" + rest.joined(separator: "/")
+}
 
 func fail(_ m: String) -> Never { fflush(stdout); FileHandle.standardError.write(Data("FAIL: \(m)\n".utf8)); exit(1) }
 var passed = 0
 @MainActor func check(_ ok: Bool, _ label: String, _ detail: @autoclosure () -> String = "") {
-    if ok { passed += 1; print("PASS: \(label)") } else { fail("\(label) \(detail())") }
+    if ok { passed += 1; print("PASS: \(label)") } else { ddFail("\(label) \(detail())") }
 }
 @MainActor func pump(_ s: Double = 0.1) { RunLoop.main.run(until: Date().addingTimeInterval(s)) }
 @MainActor @discardableResult func wait(_ t: Double, _ done: () -> Bool) -> Bool {
@@ -23,10 +43,33 @@ var passed = 0
 @MainActor func views<T: NSView>(_ type: T.Type, in view: NSView) -> [T] {
     ((view as? T).map { [$0] } ?? []) + view.subviews.flatMap { views(type, in: $0) }
 }
+@MainActor func labels(_ root: Any, depth: Int = 0, into out: inout [String]) {
+    guard depth < 48, let element = root as? NSAccessibilityProtocol else { return }
+    if let l = element.accessibilityLabel(), !l.isEmpty {
+        let v = (element.accessibilityValue() as? CustomStringConvertible)?.description ?? ""
+        out.append(l + (v.isEmpty ? "" : " = " + v))
+    }
+    for child in (element.accessibilityChildren() ?? []) { labels(child, depth: depth + 1, into: &out) }
+}
+@MainActor func texts(_ root: NSView) -> [String] { var out: [String] = []; labels(root, into: &out); return out }
+/// The page's pixels (offscreen SwiftUI text has no accessibility tree): equal pixels across summary states means the
+/// page draws nothing that depends on them.
+@MainActor func pixels(_ view: NSView) -> Data? {
+    view.layoutSubtreeIfNeeded()
+    guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
+    view.cacheDisplay(in: view.bounds, to: rep)
+    return rep.bitmapData.map { Data(bytes: $0, count: rep.bytesPerPlane * max(rep.numberOfPlanes, 1)) }
+}
 
 /// Drawn as the front window, 4000 points off every screen (as dd-recall-checks' window).
 final class KeyWindow: NSWindow {
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
+    /// rc-018 RC3: macOS 26 already moves a window made at -4000 onto the screen in `init` (480,160 on the owner's Mac,
+    /// probe 10/9), before `constrainFrameRect` is ever asked: put it straight back where it was asked for.
+    override init(contentRect: NSRect, styleMask: NSWindow.StyleMask, backing: NSWindow.BackingStoreType, defer flag: Bool) {
+        super.init(contentRect: contentRect, styleMask: styleMask, backing: backing, defer: flag)
+        setFrameOrigin(contentRect.minX <= -1000 && contentRect.minY <= -1000 ? contentRect.origin : NSPoint(x: -5000, y: -5000))
+    }
     override var isKeyWindow: Bool { true }
     override var isMainWindow: Bool { true }
     override var canBecomeKey: Bool { true }
@@ -45,14 +88,21 @@ final class Box<T> { var value: T; init(_ value: T) { self.value = value } }
     static var rendered = 0
 
     @MainActor static func main() async throws {
+        ddReportAtExit()
         setbuf(stdout, nil)
         let env = ProcessInfo.processInfo.environment
         guard let out = env["DD_CHECK_OUT"], !out.hasPrefix("/private/tmp/daydream-"), !out.hasPrefix("/tmp/") else { fail("DD_CHECK_OUT must be a scratch folder") }
-        guard let home = env["CFFIXED_USER_HOME"], env["HOME"] == home, !home.hasPrefix("/Users/") else {
-            fail("HOME and CFFIXED_USER_HOME must be the same scratch folder")
+        // Any scratch HOME but the person's real one, a folder above it or its Library. The runner keeps it in the work
+        // folder, which lives under ~/DaydreamReleases (uninstall-plan refuses /var and /tmp), so not "/Users/" in general.
+        let realHome = URL(fileURLWithPath: getpwuid(getuid()).map { String(cString: $0.pointee.pw_dir) } ?? "/Users/" + NSUserName()).resolvingSymlinksInPath().path
+        guard let home = env["CFFIXED_USER_HOME"], env["HOME"] == home, home.hasPrefix("/"),
+              case let scratch = URL(fileURLWithPath: home).resolvingSymlinksInPath().path, scratch != "/",
+              !(realHome + "/").hasPrefix(scratch + "/"), !(scratch + "/").hasPrefix(realHome + "/Library/") else {
+            fail("HOME and CFFIXED_USER_HOME must be the same scratch folder, not your own home")
         }
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].path
-        guard appSupport.hasPrefix(home) else { fail("REFUSING: Application Support resolves to \(appSupport)") }
+        // Resolved on both sides: FileManager spells /private/var/tmp/... as /var/tmp/...; either is the same scratch HOME.
+        guard resolvedPath(appSupport).hasPrefix(resolvedPath(home) + "/") else { fail("REFUSING: Application Support resolves to \(appSupport)") }
         DispatchQueue.global().asyncAfter(deadline: .now() + 400) { fail("timed out") }
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.prohibited)
@@ -114,6 +164,7 @@ final class Box<T> { var value: T; init(_ value: T) { self.value = value } }
             host.frame = NSRect(x: 0, y: 0, width: 660, height: 600)
             window.contentView = host
             window.orderFrontRegardless()
+            if NSScreen.screens.contains(where: { $0.frame.intersects(window.frame) }) { ddFail("rc-018 RC3: the check's window stays off every screen \(window.frame)") }
             settle(1.2)
         }
         func settle(_ s: Double = 0.6) { pump(s); host.layoutSubtreeIfNeeded(); pump(0.15) }
@@ -163,53 +214,45 @@ final class Box<T> { var value: T; init(_ value: T) { self.value = value } }
         DaydreamOnboarding.dragHintForChecks = nil
         DaydreamOnboarding.readPermissions = { (true, true) }
 
-        // Summaries on a Mac that runs the model; then while it downloads; then a Mac that can't (OpenRouter by default).
+        // claude/setup-local-summaries (owner 10/7): no summaries page. With both allowed, setup opens on Apps; then the last
+        // page (Connect your AI) has no Summaries row in any state: summaries live in Settings › Summaries.
         DaydreamOnboarding.qualifiesForChecks = true
-        let summaries = Page(model, dark: dark)
-        check(summaries.drawn?.page == .summaries, "with both allowed, setup opens on Summaries")
-        summaries.shoot("summaries", dark: dark)
-        summaries.close()
-        setPhase(model, downloading)
-        let download = Page(model, dark: dark)
-        check(download.drawn?.localLine == "Downloading 1.2 of 2.7 GB", "the local row says the download itself", download.drawn?.localLine ?? "-")
-        download.shoot("summaries-download", dark: dark)
-        download.close()
-        setPhase(model, nil)
-        DaydreamOnboarding.qualifiesForChecks = false
-        let cloud = Page(model, dark: dark)
-        cloud.shoot("summaries-cloud", dark: dark)
-        DaydreamOnboarding.qualifiesForChecks = true
-        cloud.close()
-
-        // Apps, then the last page (downloading: all set; Off: almost ready, Add Key / Turn On).
         let flow = Page(model, dark: dark)
-        flow.pressReturn()
         _ = wait(20) { flow.drawn?.page == .apps && views(NSSwitch.self, in: flow.host).count == 2 }
+        check(flow.drawn?.page == .apps && flow.drawn?.title == "Apps to remember", "with both allowed, setup opens on Apps (no summaries page)")
+        check(SummaryControls.calls == ["default-local"], "past Permissions, setup asks for summaries on this Mac by default (silently)", "\(SummaryControls.calls)")
         flow.shoot("apps", dark: dark)
         setPhase(model, downloading)
         flow.pressReturn()
         _ = wait(10) { flow.drawn?.page == .review }
-        check(flow.drawn?.title == DaydreamOnboarding.connectTitle && flow.drawn?.rows.first?.title == "Summaries",
-              "the last page: Connect your AI, with the summaries download as its status row",
+        check(flow.drawn?.title == DaydreamOnboarding.connectTitle, "the last page: Connect your AI",
               "\(flow.drawn.map { "\($0.page) | \($0.title) | \($0.error ?? "no line")" } ?? "-")")
-        flow.shoot("review", dark: dark)
-        setPhase(model, .off)
-        flow.settle(0.4)
-        check(flow.drawn?.title == DaydreamOnboarding.connectTitle && flow.drawn?.rows.first?.value == "Off",
-              "the last page: Connect your AI, with Summaries Off as its status row")
-        flow.shoot("review-summaries-off", dark: dark)
-        setPhase(model, .failed(.downloadStopped))
-        flow.settle(0.4)
-        flow.shoot("review-download-stopped", dark: dark)
+        let downloadingPixels = pixels(flow.host)
+        for (name, phase, qualifies) in [("downloading", downloading, true), ("on", SummaryPhase.on(.local), true), ("off", SummaryPhase.off, true),
+                                         ("off, can't run the model", SummaryPhase.off, false), ("problem", SummaryPhase.failed(.downloadStopped), true)] {
+            DaydreamOnboarding.qualifiesForChecks = qualifies
+            setPhase(model, phase)
+            flow.settle(0.4)
+            let shown = texts(flow.host)
+            check(flow.drawn?.page == .review && downloadingPixels != nil && pixels(flow.host) == downloadingPixels
+                  && !shown.contains { $0.hasPrefix("Summaries") || $0.contains("Turn On") || $0.contains("Add Key") || $0.contains("Downloading") },
+                  "the last page (\(name)): the same page as while downloading, no Summaries row", shown.joined(separator: " | "))
+            if name == "downloading" { flow.shoot("review", dark: dark) }
+        }
+        DaydreamOnboarding.qualifiesForChecks = true
         setPhase(model, nil)
         flow.close()
 
         // What's-new while recording (setup finished in an older build).
         UserDefaults.standard.set(true, forKey: MemoryViewModel.setupCompletedKey)
         model.recordingForChecks = true
+        SummaryControls.calls = []
         let whatsNew = Page(model, dark: dark)
-        check(whatsNew.drawn?.title == DaydreamOnboarding.whatsNewTitle && whatsNew.drawn?.back == false, "what's-new: its own title, no Back")
-        whatsNew.shoot("whatsnew-summaries", dark: dark)
+        _ = wait(20) { whatsNew.drawn?.page == .apps && views(NSSwitch.self, in: whatsNew.host).count == 2 }
+        check(whatsNew.drawn?.page == .apps && whatsNew.drawn?.title == DaydreamOnboarding.whatsNewTitle && whatsNew.drawn?.back == false,
+              "what's-new: opens on Apps, its own title, no Back")
+        check(SummaryControls.calls.isEmpty, "what's-new: summaries are never changed", "\(SummaryControls.calls)")
+        whatsNew.shoot("whatsnew-apps", dark: dark)
         whatsNew.close()
         model.recordingForChecks = nil
         UserDefaults.standard.removeObject(forKey: MemoryViewModel.setupCompletedKey)
@@ -314,7 +357,6 @@ final class Box<T> { var value: T; init(_ value: T) { self.value = value } }
         defer { DaydreamOnboarding.qualifiesForChecks = nil }
         check(refusing != nil && !model.typing.setUp, "keychain: the check's history has the refusing in-memory key store and no typing key yet")
         let page = Page(model, dark: false)
-        page.pressReturn()
         check(wait(20) { page.drawn?.page == .apps && views(NSSwitch.self, in: page.host).count == 2 }, "keychain: on the Apps page")
         check(page.drawn?.typedText == true && views(NSSwitch.self, in: page.host).first?.state == .on, "keychain: the typing switch starts on")
         page.pressReturn()
@@ -327,7 +369,7 @@ final class Box<T> { var value: T; init(_ value: T) { self.value = value } }
         page.pressReturn()
         check(wait(10) { page.drawn?.page == .review }, "keychain: Continue again moves on")
         // Owner 10/5: the last page has no Typed text row; the switch it carries forward is off, and so is typing.
-        check(page.drawn?.typedText == false && !page.drawn!.rows.contains { $0.title == "Typed text" } && !model.captureText,
+        check(page.drawn?.typedText == false && !texts(page.host).contains { $0.hasPrefix("Typed text") } && !model.captureText,
               "keychain: typing reaches the last page off")
         page.close()
     }
@@ -340,7 +382,6 @@ final class Box<T> { var value: T; init(_ value: T) { self.value = value } }
         DaydreamOnboarding.qualifiesForChecks = true
         defer { DaydreamOnboarding.qualifiesForChecks = nil }
         let page = Page(model, dark: false)
-        page.pressReturn()
         check(wait(20) { page.drawn?.page == .apps && views(NSSwitch.self, in: page.host).count == 2 }, "first Continue: on the Apps page")
         check(page.drawn?.typedText == true && !model.captureText && !model.typing.setUp, "first Continue: a fresh setup, typing switch on, typing not set up yet")
         page.pressReturn()
@@ -397,9 +438,7 @@ final class Box<T> { var value: T; init(_ value: T) { self.value = value } }
         }
         for message in [nil, "Finish the current history, backup, or replacement operation first."] {
             let bottom = Box<CGFloat>(0)
-            let content = DaydreamReviewContent(rows: [
-                DaydreamReviewRow(id: "summaries", title: "Summaries", value: "Off", systemImage: "text.alignleft", button: ("Add Key", {}))
-            ], message: message, fileVaultOff: true, comeBack: true, aiReads: true)
+            let content = DaydreamReviewContent(message: message, fileVaultOff: true, comeBack: true, aiReads: true)
             let host = NSHostingView(rootView: DaydreamOnboardingShell(title: DaydreamOnboarding.connectTitle, subtitle: DaydreamOnboarding.connectSubtitle,
                                                                        back: {}, showsIcon: false, continueAction: {}) {
                 DaydreamNoAIApps(getApp: {}, otherApp: {})
@@ -433,11 +472,32 @@ final class Box<T> { var value: T; init(_ value: T) { self.value = value } }
         check(!onboarding.contains("\"Set up later\"") && !onboarding.contains("\"Cancel download\"") && !onboarding.contains("Wait for summary setup"),
               "setup has no Set up later, no Cancel download and never waits for summaries")
         check(!(onboarding + screens).contains("sparkle"), "setup draws no sparkle")
+        // claude/setup-local-summaries (owner 10/7): no summaries page, no summaries switches or key field in setup.
+        check(!onboarding.contains("case .summaries") && !onboarding.contains("Set up summaries") && !screens.contains("DaydreamSummariesContent")
+              && !screens.contains("DaydreamSummaryChoice") && !onboarding.contains("CloudSummariesSwitch"),
+              "setup has no summaries page (no switches, no key field)")
+        check(onboarding.contains("SummaryControls.current.chooseLocalByDefault(writer, Self.macQualifies)")
+              && onboarding.contains("guard !defaultSummariesAsked, available, !preview, summariesAvailable, !completed, !whatsNew, !chromeCard else { return }"),
+              "setup asks for summaries on this Mac by default once past Permissions, only in a first setup")
         // fix/sx-all round 2: the Chrome switch starts on, so its one line (what it saves, who gets it) sits under it.
         check(screens.contains("line: ChromePagesCard.setupLine"), "setup's Chrome switch carries ChromePagesCard.setupLine")
         // fix/sx-all round 3 (P2): that line is one line; who gets the pages is in Learn more (the card's explanation).
         check(ChromePagesCard.setupLine == "Saves the title and site of the Chrome tab in front. Skips Incognito."
               && ChromePagesCard.explanation.contains { $0.contains("AI apps you connect can read them") && $0.contains("Cloud summaries") },
               "setup's Chrome line is one line; who gets the pages is in Learn more")
+        // Owner 10/7: the permissions page's card lines, its three checkmark lines (setup only), and no AI-reads toggle.
+        let cards = (try? String(contentsOfFile: "Sources/MemoryUI/PermissionSetup.swift", encoding: .utf8)) ?? ""
+        check(cards.contains("static let accessibilityDetail = \"Knows which app you're in.\"")
+              && cards.contains("static let inputMonitoringDetail = \"Remembers what you write. Skips password fields.\"")
+              && PermissionChromeRow.reason == "Knows which page you're on.", "permissions page: the owner's card lines (10/8)")
+        let setupPage = (try? String(contentsOfFile: "Sources/MacMemApp/DaydreamOnboarding.swift", encoding: .utf8)) ?? ""
+        check(setupPage.contains("case .permissions: return \"Turn on DayDream\"") && !setupPage.contains("Grant DayDream Permissions")
+              && !cards.contains("Grant DayDream Permissions"), "permissions page: its title is \"Turn on DayDream\" (owner 10/8)")
+        check(PermissionGrantView.privacyLines == ["Saved only on this Mac", "No account. We never see your history.", "Skip any app or delete anything"]
+              && cards.contains("if sideBySide { privacyStrip }"), "permissions page: the three checkmark lines under setup's cards")
+        let banned = ["never uploaded", "nothing leaves your mac", "draft", "a free memory for your mac"]
+        check(!(PermissionGrantView.privacyLines + [PermissionChromeRow.reason, PermissionChromeRow.primer]).contains { line in
+                  banned.contains { line.lowercased().contains($0) } }, "permissions page: none of the owner's banned words")
+        check(!cards.contains("AIReadsTypedSetting") && !cards.contains("aiReadsCard"), "setup's permissions page has no \"Let AI apps see your typed words\" toggle")
     }
 }

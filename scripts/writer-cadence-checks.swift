@@ -44,7 +44,11 @@ actor FakeModel: LocalInference {
     let clock: SimClock
     var loads: [Date] = [], answers: [Date] = []
     var loaded = false
-    init(clock: SimClock) { self.clock = clock }
+    /// claude/int-016: answer a day-review clause request with a valid clause (`{"clause":""}`, which the clause rules
+    /// call a good answer) instead of a note-shaped answer every clause check refuses (two answers, then the clause is
+    /// asked again an hour later). Only the shipped scenario sets it; every other scenario keeps the old answers.
+    let validClauses: Bool
+    init(clock: SimClock, validClauses: Bool = false) { self.clock = clock; self.validClauses = validClauses }
     func load() async throws { loads.append(clock.now); loaded = true; clock.advance(4) }
     func unload() async { loaded = false }
     func generate(instruction: String, evidence: String, maxTokens: Int) async throws -> Data {
@@ -52,6 +56,7 @@ actor FakeModel: LocalInference {
     }
     func generate(instruction: String, evidence: String, maxTokens: Int, prefill: String) async throws -> Data {
         answers.append(clock.now); clock.advance(5)
+        if validClauses, instruction == DayReviewClauses.activeInstruction, prefill == DayReviewClauses.prefill { return Data(#"{"clause":""}"#.utf8) }
         return Data(#"{"title":"","bullets":[]}"#.utf8)
     }
     func snapshot() -> (loads: [Date], answers: [Date]) { (loads, answers) }
@@ -188,6 +193,8 @@ struct Scenario {
     var hooks: [(at: Date, run: (MemoryStore, Date) throws -> Void)] = []
     /// claude/notesfix-015: false is the shipped app (`WriterEnvironment.app`: no model writes a moment or level note).
     var momentModel = true
+    /// claude/int-016: the fake model writes valid day-review clauses (`FakeModel.validClauses`).
+    var validClauses = false
 }
 struct HourRow: Codable { var hour: String; var runs = 0; var ordinaryRuns = 0; var liveRuns = 0; var serviceRuns = 0; var staleTurns = 0; var finalRuns = 0; var mcpRuns = 0; var catchUpRuns = 0; var ordinaryTimerPasses = 0; var loads = 0; var passes = 0; var timerPasses = 0; var onDemand = 0; var catchUp = 0; var modelSeconds = 0.0 }
 struct Result: Codable {
@@ -518,7 +525,7 @@ func run(_ scenario: Scenario, day rows: [[String: Any]], history: [[String: Any
 
     let clock = SimClock(scenario.start), world = SimWorld()
     world.power = scenario.power(scenario.start)
-    let model = FakeModel(clock: clock)
+    let model = FakeModel(clock: clock, validClauses: scenario.validClauses)
     let suite = "writer-cadence-\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: suite)!
     defer { defaults.removePersistentDomain(forName:suite) }
@@ -930,15 +937,28 @@ func scenario(_ name: String, day: Date) -> Scenario? {
         // (the hidden DayDreamMomentSummaries default, never shipped) is printed, not held to it.
         print("TARGET AC model time with per-moment model notes (hidden default, not shipped): \(Int(ac.modelSeconds)) s")
         var shippedScenario = scenario("ac", day: nine)!; shippedScenario.momentModel = false
+        // claude/int-016: on the shipped day the model writes only the day review's clauses, so the fake answers them as a
+        // model that writes them would; the day where every clause is refused (two answers each, asked again hourly) is
+        // measured too and printed: the worst case, not held to the budget.
+        shippedScenario.validClauses = true
+        var refusedScenario = shippedScenario; refusedScenario.validClauses = false
         // The oracle's own failure (a cadence rule broken on the shipped day) is one FAIL here, so the checks below still run.
         do {
             let shipped = try await run(shippedScenario, day: day, history: [], root: root)
+            print("TARGET AC (shipped) model time: \(Int(shipped.modelSeconds)) s, \(shipped.loads) loads, \(shipped.answers) answers (all day-review clauses)")
             check(shipped.modelSeconds <= 900, "AC: model time <= 900 s a day (shipped: no model for moments)", "\(shipped.modelSeconds)")
+            check(shipped.answers > 0, "AC (shipped): the model still writes the day review's clauses", "\(shipped.answers) answers")
             check(shipped.modelSeconds < ac.modelSeconds || ac.modelSeconds == 0, "AC: the shipped day spends less model time than per-moment model notes",
                   "\(shipped.modelSeconds) vs \(ac.modelSeconds)")
             check(shipped.moments > 0 && shipped.noteRuns >= shipped.moments, "AC (shipped): every closed moment still gets its (code) note", "\(shipped.moments) moments, \(shipped.noteRuns) runs")
         } catch {
             check(false, "AC (shipped): the shipped day passes the cadence oracle", "\(error)")
+        }
+        do {
+            let refused = try await run(refusedScenario, day: day, history: [], root: root)
+            print("TARGET AC (shipped, every clause refused: worst case, not held) model time: \(Int(refused.modelSeconds)) s, \(refused.loads) loads, \(refused.answers) answers")
+        } catch {
+            check(false, "AC (shipped, every clause refused): the day passes the cadence oracle", "\(error)")
         }
         check(ac.maxNonMandatoryRunsPerMoment - 1 <= 5, "AC: at most 5 ordinary rewrites after a first ordinary note; all live/final exceptions independently proved", "ordinary max \(ac.maxNonMandatoryRunsPerMoment), total max \(ac.maxRunsPerMoment)")
         check(ac.dayNoteRuns == 0, "AC: no whole-day note runs", "\(ac.dayNoteRuns)")

@@ -3,12 +3,21 @@ import Foundation
 import WriterBackend
 import PrivacyPolicy
 import BrowserBridge
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 @main struct AdapterChecks {
     static var count=0
-    static func check(_ value:Bool,_ label:String) {precondition(value,label);count+=1;print("PASS "+label)}
+    static func check(_ value:Bool,_ label:String) {if !(value) { ddFail(label); return };count+=1;print("PASS "+label)}
     static func wireAction(_ action:CanonicalAction) throws -> NoteAction {try JSONDecoder().decode(NoteAction.self,from:JSONEncoder().encode(action))}
     static func main() async throws {
+        ddReportAtExit()
         setbuf(stdout,nil)
         let root=FileManager.default.temporaryDirectory.appendingPathComponent("core-adapters-"+UUID().uuidString)
         try FileManager.default.createDirectory(at:root,withIntermediateDirectories:false)
@@ -27,11 +36,11 @@ import BrowserBridge
         // A prompt5 answer (item ids and text); validator7 derives the label from the corrected state.
         let provider=CoreWriterAdapter(core:port,generate:{request,actions in
             let view=try ModelView(request:request,actions:actions)
-            precondition(view.text.contains("YOUR NOTE"),"the correction reaches the writer as the user's note: \(view.text)")
+            if !view.text.contains("YOUR NOTE") {ddFail("the correction reaches the writer as the user's note: \(view.text)")}
             return try CanonicalGrounding.validate(#"{"title":"Research in Notes","bullets":[{"ids":["i1"],"text":"You noted a corrected research topic."}]}"#,request:request,view:view,provider:CanonicalLocalWriter.provider)
         })
         let result=try await provider.process(target,lastActivity:now.addingTimeInterval(-3))
-        if case .committed(let receipt)=result {check(receipt.status=="generated_unverified" && receipt.output.bullets[0].assertion=="reported","actual adapter commits through canonical validator")} else {fatalError("not committed: \(result)")}
+        if case .committed(let receipt)=result {check(receipt.status=="generated_unverified" && receipt.output.bullets[0].assertion=="reported","actual adapter commits through canonical validator")} else {ddFail("actual adapter commits through canonical validator: not committed: \(result)")}
         check(try store.action("first")?.description.contains("Corrected research topic")==true,"regeneration preserves durable correction")
         _=try store.ingest(Evidence(id:"second",at:iso(Date()),kind:"window.changed",app:"Notes",title:"Research",synthetic:true))
         let resumed=try await CoreWriterBinding(store:store).port().prepare(target)
@@ -83,7 +92,7 @@ import BrowserBridge
         proof.generation=try await capture.context().generation
         _=try await capture.append(proof:proof,now:mono,readCharacters:{"Another harmless draft"})
         try store.setCaptureState("paused",reason:"synthetic pause")
-        do {_=try await capture.commitText(id:"paused-draft",proof:proof,now:mono,wallTime:now);fatalError("pause accepted")} catch {check(true,"pause before persistence rejects candidate")}
+        do {_=try await capture.commitText(id:"paused-draft",proof:proof,now:mono,wallTime:now);ddFail("pause before persistence rejects candidate (was accepted)")} catch {check(true,"pause before persistence rejects candidate")}
         check(try store.action("paused-draft")==nil,"paused text never reaches canonical actions")
         try store.setCaptureState("recording",reason:"synthetic fixture")
         proof.generation=try await capture.context().generation
@@ -115,9 +124,9 @@ import BrowserBridge
         check(browserEvidence.browserVerification?.documentID==document && browserEvidence.browserVerification?.sessionID==event.sessionID,"browser provenance survives durable roundtrip")
         check(browserEvidence.text.isEmpty && browserEvidence.title.isEmpty && browserEvidence.url=="https://example.test","browser persistence contains origin only, no field/title/value")
         check(try store.action(browserEvidence.id)?.description.contains("reading is not established")==true,"brief browser observation not discarded or called reading")
-        do {_=try await capture.commitBrowser(event,proof:proof,now:mono+1_000_000_001,wallTime:now);fatalError("stale accepted")} catch {check(true,"stale browser event denied")}
+        do {_=try await capture.commitBrowser(event,proof:proof,now:mono+1_000_000_001,wallTime:now);ddFail("stale browser event denied (was accepted)")} catch {check(true,"stale browser event denied")}
         var wrong=proof;wrong.documentID=UUID().uuidString
-        do {_=try await capture.commitBrowser(event,proof:wrong,now:mono,wallTime:now);fatalError("wrong document accepted")} catch {check(true,"wrong document proof denied")}
+        do {_=try await capture.commitBrowser(event,proof:wrong,now:mono,wallTime:now);ddFail("wrong document proof denied (was accepted)")} catch {check(true,"wrong document proof denied")}
         var charactersRead=false
         let browserDenied=try await capture.append(proof:proof,now:mono,readCharacters:{charactersRead=true;return "not read"})
         check(browserDenied.outcome != .allowed && !charactersRead,"browser typing remains blocked before acquisition")
@@ -276,7 +285,7 @@ import BrowserBridge
         for bundle in TypingCategories.apps.map(\.bundle)+["com.example.Unknown","com.google.Chrome","com.apple.Passwords"] {
             let dot=try store.typingIndicator(frontmostBundle:bundle).showsDot
             let gate=live.policy.typedText && !live.policy.excludedApps.contains(bundle) && CaptureGate.nativeApps.contains(bundle)
-            precondition(dot==gate,"indicator and gate disagree for \(bundle)");agreed+=1
+            if dot != gate {ddFail("indicator and gate disagree for \(bundle)")};agreed+=1
         }
         check(agreed>20,"indicator: the dot shows exactly where the binding lets typing be read (\(agreed) apps)")
         try store.setCaptureState("off",reason:"fixture done")

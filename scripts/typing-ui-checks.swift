@@ -21,6 +21,14 @@ import SwiftUI
 import MemoryCore
 import MemoryUI
 import PrivacyPolicy
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 func fail(_ message: String) -> Never {
     fflush(stdout)
@@ -28,7 +36,7 @@ func fail(_ message: String) -> Never {
     exit(1)
 }
 var checks = 0
-func expect(_ condition: Bool, _ message: @autoclosure () -> String) { checks += 1; if !condition { fail(message()) } }
+func expect(_ condition: Bool, _ message: @autoclosure () -> String) { checks += 1; if !condition { ddFail(message()) } }
 func pass(_ message: String) { print("PASS: \(message)"); fflush(stdout) }
 func source(_ path: String) -> String {
     guard let text = try? String(contentsOfFile: FileManager.default.currentDirectoryPath + "/" + path, encoding: .utf8) else { fail("source: \(path) not readable") }
@@ -59,6 +67,7 @@ final class FakeRegistrar: TypingHotkeyRegistrar {
     static let now = Date(timeIntervalSince1970: 1_790_263_920)
 
     static func main() async throws {
+        ddReportAtExit()
         DispatchQueue.global().asyncAfter(deadline: .now() + 120) {
             FileHandle.standardError.write(Data("FAIL: typing-ui-checks watchdog expired after 120s\n".utf8))
             exit(2)
@@ -789,7 +798,8 @@ final class FakeRegistrar: TypingHotkeyRegistrar {
     /// Hosts `view` in its own ordered-front offscreen window of `size`, lets it settle (and any scroll
     /// animation finish), then sends one Return key equivalent. Returns what ran, and the host.
     static func hosted<V: View>(_ view: V, size: NSSize, fired: @escaping () -> [String]) -> (fired: [String], host: NSView, window: NSWindow) {
-        let w = NSWindow(contentRect: NSRect(origin: NSPoint(x: -5000, y: -5000), size: size), styleMask: [.titled], backing: .buffered, defer: false)
+        // rc-018 RC3: stays offscreen as it is ordered in (AppKit would pull a titled window onto a screen first).
+        let w = TypingOffscreenWindow(contentRect: NSRect(origin: NSPoint(x: -5000, y: -5000), size: size), styleMask: [.titled], backing: .buffered, defer: false)
         let host = NSHostingView(rootView: view.environment(\.daydreamStatic, true))
         w.contentView = host
         w.orderFrontRegardless()
@@ -877,7 +887,7 @@ final class FakeRegistrar: TypingHotkeyRegistrar {
         let model = MemoryViewModel(development: trial)
         for _ in 0..<100 { if !model.history.busy { break }; try await Task.sleep(nanoseconds: 10_000_000) }
         expect(!model.typing.attached && model.typing.hotkey == .notInstalled, "a Development Trial attaches no typing store and registers no shortcut")
-        let bare = DaydreamMenuBarLabel(model: model).body as? DaydreamMenuBarLabelImage
+        let bare = (DaydreamMenuBarLabel(model: model).body as? LiveTestLabel)?.mark
         expect(bare?.badge == DaydreamTypingBadge.none, "no typing: the label has no badge")
 
         // A private typing store attached by hand: the label and the rows follow the model.
@@ -895,7 +905,7 @@ final class FakeRegistrar: TypingHotkeyRegistrar {
         try store.setCaptureState("recording", reason: "synthetic fixture")
         model.typing.refresh()
         expect(model.typing.indicator == .recording(app: "Notes"), "fixture: recording in Notes")
-        let label = DaydreamMenuBarLabel(model: model).body as? DaydreamMenuBarLabelImage
+        let label = (DaydreamMenuBarLabel(model: model).body as? LiveTestLabel)?.mark
         expect(label?.badge == .dot && label?.label.hasSuffix("DayDream is recording what you type") == true, "the live label draws the dot")
         let rows = DaydreamMenuBarPanel.typingRows(model.typing, timeZone: utc)
         expect(rows.line == "Recording what you type in Notes" && rows.menuItem?.title == "Pause Typing for 10 Minutes", "the live menu rows")
@@ -910,7 +920,7 @@ final class FakeRegistrar: TypingHotkeyRegistrar {
                                                                                                     openURL: { _ in }, terminate: { routes.append("terminate") }))
         actions.pause()
         expect(model.typing.snoozed && model.typing.indicator.showsRing, "the menu row pauses typing (the ring)")
-        let ring = DaydreamMenuBarLabel(model: model).body as? DaydreamMenuBarLabelImage
+        let ring = (DaydreamMenuBarLabel(model: model).body as? LiveTestLabel)?.mark
         expect(ring?.badge == .ring, "the live label draws the ring while paused")
         actions.resume()
         expect(!model.typing.snoozed && model.typing.indicator.showsDot, "Record typing again")
@@ -1012,10 +1022,10 @@ final class FakeRegistrar: TypingHotkeyRegistrar {
                    || onboarding.contains("exclusions != baselineExclusions || typedText != seedTypedText || chromePages != seedChromePages || messages != seedMessages"))
                && onboarding.contains("DaydreamOnboardingTyping.initialSwitch(savedConsent: model.captureText, explicitlyOff: choices.typing == .off)"),
                "reloading setup's choices keeps a first setup's switches on, and an untouched first setup has no edits")
-        // ux/v1: each setup Review row shows one value; the typed-text row says only On or Off, so it names no places
-        // and can't name fewer than the build records (typingfix review).
-        expect(onboarding.contains("DaydreamReviewRow(id: \"typing\", title: \"Typed text\", value: typedText ? \"On\" : \"Off\"") && !onboarding.contains("\"Included in "),
-               "the setup Review step's typed-text row is On or Off, with no scope line to fall behind the build (typingfix review)")
+        // Owner 10/5 and 10/7: setup's last page has no rows (no Typed text, no Summaries), so it names no places and can't
+        // name fewer than the build records (typingfix review).
+        expect(!onboarding.contains("DaydreamReviewRow") && !onboarding.contains("\"Included in "),
+               "setup's last page has no typed-text row and no scope line to fall behind the build (typingfix review)")
         // owner/v1 review F2 and F4: both switches read the build's scope strings, and the Typing screen draws where
         // typing works and the re-acceptance notice in setup (the sheet); Settings shows the notice with its one
         // button, the Turn on typing question, whose message is the Typing screen.
@@ -1058,5 +1068,17 @@ final class FakeRegistrar: TypingHotkeyRegistrar {
         expect(source("LICENSE").hasPrefix("MIT License\n") && source("LICENSE").contains("Copyright (c) 2026 The DayDream Authors")
                && !source("LICENSE").contains("Apache"), "the MIT LICENSE backs the open-source claim")
         pass("H sources: Carbon only, no permission or Keychain call, owner-only website strings, no cloud or exact-words choice")
+    }
+}
+
+/// rc-018 RC3: a window that stays where it is put (offscreen), never on the person's screen.
+final class TypingOffscreenWindow: NSWindow {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
+    /// macOS 26 already moves a window made at -4000 onto the screen in `init`, before `constrainFrameRect` is asked
+    /// (package B's probe, 10/9): put it back off screen right away.
+    override init(contentRect: NSRect, styleMask: NSWindow.StyleMask, backing: NSWindow.BackingStoreType, defer flag: Bool) {
+        super.init(contentRect: contentRect, styleMask: styleMask, backing: backing, defer: flag)
+        let off = contentRect.minX <= -1000 && contentRect.minY <= -1000 ? contentRect.origin : NSPoint(x: -5000, y: -5000)
+        setFrameOrigin(off)
     }
 }

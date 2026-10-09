@@ -71,7 +71,8 @@ class SyntheticFallbackQABoundary(unittest.TestCase):
  def test_normal_no_model_uses_existing_preparing_view(self):
   text=(S.parent/'Sources/MacMemApp/MacMemApp.swift').read_text()
   # perf2-1005: the preparing window tells the launch session it appeared (window first; the model is made after).
-  self.assertIn('else {DaydreamPreparingWindow().onAppear {session.windowShown()}}\n        #endif',text)
+  # rc-018 RC3: the content is `content` (a held memory window draws nothing while setup opens first).
+  self.assertIn('else {DaydreamPreparingWindow().onAppear {SetupFocus.shared.revealMemory(activate:false);session.windowShown()}}\n    }',text)
   self.assertIn('#if DAYDREAM_QA_HARNESS && DAYDREAM_OWNER_TYPING\nstruct SyntheticWindow:View',text)
  def test_normal_isolated_selector_is_false(self):
   text=(S.parent/'Sources/MacMemApp/DaydreamLaunchSession.swift').read_text()
@@ -92,12 +93,4 @@ class ActualCodeMarkers(unittest.TestCase):
  def test_synthetic_routes_refuse_normal(self):
   for x in [b'--isolated-interactive-trial',b'Synthetic preview',b'Open synthetic preview']:
    self.assertTrue(dr.qa_harness_problems({},x))
-class PrivateUIReviewRecipe(unittest.TestCase):
- def test_private_render_recipe_explicitly_opts_into_qa_owner(self):
-  text=(S/'check-ui-revision.sh').read_text()
-  commands=[line for line in text.splitlines() if line.startswith('swiftc ')]
-  self.assertEqual(len(commands),2)
-  for command in commands:
-   for flag in ['DAYDREAM_QA_HARNESS','DAYDREAM_OWNER_TYPING','DAYDREAM_CHROME_TYPING']:
-    self.assertIn('-D '+flag,command)
 if __name__=='__main__':unittest.main()

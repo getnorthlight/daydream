@@ -291,7 +291,8 @@ class MigrationTests(unittest.TestCase):
         (self.root/"events").write_text("\n".join(json.dumps(row) for row in rows))
         out,sha=self.snapshot(); self.initialize(captureText=True,typedConsentVersion=1)
         dry=self.dry(out,sha)
-        self.assertEqual(dry["counts"],{"accepted":3,"excluded_legacy_text_scope_unverified":2})
+        # Typed words are never imported (374ba2d, 9/24): the safe AXTextArea draft is excluded too.
+        self.assertEqual(dry["counts"],{"accepted":2,"excluded_legacy_text_scope_unverified":2,"excluded_typed_text_not_imported":1})
 
     def test_schema_mismatch_missing_deletion_review_and_open_segment(self):
         self.events()

@@ -128,11 +128,14 @@ enum DocsPictures {
         }
 
         // 2. Setup, first page: the two permission cards, not yet allowed (fixed answers, never read). Each card's
-        // Open System Settings button and drag are the app's own; nothing here presses them.
+        // Open System Settings button and drag are the app's own; nothing here presses them. Drawn as setup draws it
+        // (DaydreamOnboarding: sideBySide, no relaunch row): the three privacy lines under the cards, no row line and
+        // no recovery steps (rel-018). The drag helper only starts from a press, so nothing beside it runs here.
         try await render("setup-permissions", DaydreamOnboardingShell(
-            title: "Grant DayDream Permissions",
+            title: "Turn on DayDream",
             appURL: appURL, canContinue: false, continueAction: {}) {
-                PermissionGrantView(enabled: true, appURL: appURL, readAccessibility: { false }, readInputMonitoring: { false }, embedded: true)
+                PermissionGrantView(enabled: true, appURL: appURL, readAccessibility: { false }, readInputMonitoring: { false }, embedded: true,
+                                    showsRelaunchRow: false, sideBySide: true)
                     .environment(\.daydreamPermissionRequests, PermissionRequestActions(quitAndReopen: {}))
             })
 
@@ -150,13 +153,13 @@ enum DocsPictures {
         })
 
         // 4. Setup, last page: Connect your AI (owner 10/5). The picture can't show this Mac's AI apps, so it draws the
-        // page as a Mac without one shows it, with summaries on (no status row) and nothing standing in the way.
+        // page as a Mac without one shows it, with no Summaries row (owner 10/7) and nothing standing in the way.
         // FileVault is on in the picture, so its line isn't drawn.
         try await render("setup-review", DaydreamOnboardingShell(
             title: "Connect your AI", subtitle: "DayDream works inside the AI apps you already use.",
             appURL: appURL, back: {}, continueTitle: "Start Recording", showsIcon: false, continueAction: {}) {
                 DaydreamNoAIApps(getApp: {}, otherApp: {})
-                DaydreamReviewContent(rows: [], comeBack: true, aiReads: true)
+                DaydreamReviewContent(comeBack: true, aiReads: true)
             })
 
         // 5. The menu bar panel while recording, with a made-up morning in Apple's own apps (rendered last, below).

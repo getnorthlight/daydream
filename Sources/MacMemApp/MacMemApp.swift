@@ -107,6 +107,9 @@ import WriterBackend
     /// Chrome closed can't ask macOS (it answers only for a running Chrome), so "Chrome pages aren't being saved" keeps
     /// showing until a read of a running Chrome says otherwise.
     private(set) var chromeLastAnswer:ChromeAccessState?=ChromeAccessMemory.saved()
+    /// rc-018 RC3 (A7): macOS answered Chrome's question (or a read said its answer) during this launch. An unfinished
+    /// setup's row keeps such an answer while Chrome is closed; an answer saved before this launch never decides it.
+    private(set) var chromeAnsweredThisLaunch=false
     /// chromeask-1005: a pane opened from a Fix or Open System Settings press: Chrome's status is read every few
     /// seconds (a read, never a question) until it is allowed, so turning the switch on is picked up with no restart.
     private var chromeRecoveryWatch:Timer?
@@ -137,6 +140,8 @@ import WriterBackend
     @Published var chromeCardRequested=false
     /// Opens the setup window (set by the main window; the card waits for it otherwise).
     var openSetupWindow:(()->Void)?
+    /// rc-018 RC3 review (B9): opens the small permissions window (the memory window sets it; the menu bar passes its own).
+    var openPermissionsWindow:(()->Void)?
     /// Setup's Chrome step is opening Google Chrome to ask (one open at a time).
     private var chromeOpeningForSetup=false
     @Published var retention: Int? = nil
@@ -255,6 +260,8 @@ import WriterBackend
     static let permissionComebackFor:TimeInterval=600
     /// Until when a permission stop still starts recording by itself once both read on; nil when none waits.
     private var permissionComebackUntil:Date?
+    /// rc-018 RC3 (A4): a permission comeback waits (recording stays the launch intent meanwhile). The checks read it.
+    var permissionComebackWaiting:Bool {permissionComebackUntil != nil}
     /// gold/int r3 review: the person's timed pause a wake couldn't pick up because a permission read off (the comeback
     /// waiting behind it). Both on again before it ends, the comeback picks the pause up until the same time instead of
     /// recording early; after it ends, it starts recording, as the pause's end would have.
@@ -361,10 +368,46 @@ import WriterBackend
     static let autoRelaunchKey="DaydreamPermissionAutoRelaunchAt"
     /// The restart itself (the permission page's Quit & Reopen); false when DayDream can't reopen itself. The checks
     /// substitute a recorder.
+    /// rc-018 RC3 (A6): it says whether the restart started (`PermissionRequests.quitAndReopen`).
     static var performAutoRelaunch:(MemoryViewModel)->Bool = { model in
-        guard let reopen=model.permissionRequests?.quitAndReopen else {return false}
-        reopen();return true
+        guard model.development == nil else {return false}
+        return PermissionRequests.quitAndReopen(.live)
     }
+    /// rc-018 RC3 (A6): "keys not arriving" restarts in the background (`open -g`): the next launch shows no window.
+    static var performBackgroundRelaunch:(MemoryViewModel)->Bool = { model in
+        guard model.development == nil else {return false}
+        return PermissionRequests.quitAndReopen(.live,background:true)
+    }
+    /// A6: ends the waiting relaunch helper when DayDream's quit didn't happen. The checks stand in a recorder.
+    static var cancelRelaunchHelper:()->Void = { PermissionRequests.cancelHelper() }
+    /// A1/A6: what the restart reads before it goes (System Settings' sheet, a password window, a press or a drag, which
+    /// windows show). The checks stand in quiet reads.
+    static var restartReads=SelfRestartReads.live
+    /// A1: how often a decided restart reads again whether it may go now, and (A6) how long DayDream may still be running
+    /// after it asked to quit before the restart counts as not made.
+    static let restartCheckEvery:TimeInterval=0.25
+    static let restartAliveLimit:TimeInterval=5
+    /// A3: while a decided restart waits (macOS's sheet left up), its context is saved again this often, so macOS's own
+    /// Quit & Reopen pressed minutes later still finds a fresh one (it is read only when younger than a minute).
+    static var restartContextRefresh:TimeInterval=20
+    /// A4/A3: this launch is DayDream's own relaunch (`SetupRelaunchContext`) and recording was wanted then.
+    static var relaunchWantsRecording=false
+    /// rc-018 RC3 (A1): when the restart was decided, whether System Settings showed a sheet since, and which decision
+    /// is current (a new one, or one taken back, ends the older one's reads).
+    private var restartPendingSince:Date?
+    private var restartSheetSeen=false
+    private var restartToken=0
+    private var restartContextSavedAt=Date.distantPast
+    /// A4: recording was wanted when DayDream found it must reopen to use Input Monitoring: the launch intent keeps it, so
+    /// the reopened DayDream records again (its own restart, macOS's Quit & Reopen, or the person's).
+    private var wantedAfterReopen=false { didSet { if wantedAfterReopen != oldValue {saveLaunchIntent()} } }
+    /// Review 10/9 (FIX-PLAN A4): recording was wanted when a permission stopped it. Unlike the 10-minute comeback, this
+    /// lasts until the person's own Stop, Pause or Start (or recording runs again), so a permission turned back on an hour
+    /// later (which needs a reopen) still records after the relaunch. Kept through the launch intent (`saveLaunchIntent`)
+    /// and the relaunch context; the next launch's start that finds the permission still off sets it again.
+    private(set) var wantedThroughPermissionStop=false { didSet { if wantedThroughPermissionStop != oldValue {saveLaunchIntent()} } }
+    /// A2: Chrome's question is in flight (asking, opening Chrome to ask, or clearing the answer to ask again).
+    var chromeQuestionInFlight:Bool {askingChromeAccess || chromeOpeningForSetup || chromeResetting}
     /// Where the last automatic restart's time is kept. The checks substitute an in-memory store.
     static var autoRelaunchDefaults:UserDefaults = .standard
     /// The day data every redesigned surface reads. This model decides when it is stale.
@@ -465,7 +508,8 @@ import WriterBackend
                              reviewChanged:{ [activity] in activity.today.reviewChanged($0) })
         activity.openSettingsSection = { [weak self] in self?.openSettings($0) }
         // Quitting closes the Settings sheet first (AppKit won't quit while a sheet is open).
-        AppQuit.willQuit = { [weak self] in self?.settingsPresented=false }
+        AppQuit.willQuit = { [weak self] in self?.settingsPresented=false;self?.willQuit() }
+        if development == nil {SetupFocus.shared.chromeAsking = { [weak self] in self?.chromeQuestionInFlight ?? false }}
         // The browser follows the system time zone (F0b contract request 3). Set here, synchronously: the day cache
         // handles the same notification on the next main-queue turn and must already see the new zone.
         timeZoneObserver=NotificationCenter.default.addObserver(forName:.NSSystemTimeZoneDidChange,object:nil,queue:.main) { [weak self] _ in
@@ -638,7 +682,10 @@ import WriterBackend
                     // A history opened again after a busy moment keeps the plan read then (`launchPlan`), or the person's
                     // choice since; the update marker is removed now either way (it counts once).
                     let read=Self.readLaunchPlan(intentDefaults)
-                    let plan=launchPlan ?? read
+                    var plan=launchPlan ?? read
+                    // rc-018 RC3 (A4): DayDream's own relaunch, with recording wanted when it quit, records again.
+                    if plan == .none, Self.relaunchWantsRecording {plan = .record}
+                    Self.relaunchWantsRecording=false
                     launchPlan=nil
                     // A timed pause is picked up as it was (`resumeAtLaunch`), not as recording wanted meanwhile; set
                     // before saving starts, so nothing is saved for it.
@@ -649,6 +696,13 @@ import WriterBackend
                     if plan != .none {
                         RecordingLog.note("Recording was on when DayDream last quit; starting again.")
                         DispatchQueue.main.async { [weak self] in MainActor.assumeIsolated { self?.resumeAtLaunch(plan) } }
+                    }
+                    // rc-018 RC3 (A7, state audit #5): a first setup on a fresh history starts from nothing an earlier
+                    // install or test copy left: no saved Chrome answer, no Chrome card shown, no reminder shown.
+                    // Review 10/9: not on DayDream's relaunch in the middle of that same setup (its own restart, or macOS's
+                    // Quit & Reopen): Chrome's answer given before it is this setup's, and the row keeps it (no second Allow).
+                    if !UserDefaults.standard.bool(forKey:Self.setupCompletedKey),onboardingTypingChoicePending {
+                        if SetupFocus.shared.relaunch != nil {keepChromeAnswerAcrossRelaunch()} else {forgetEarlierChromeState()}
                     }
                     // Setup was finished before this version: DayDream opens at login from now on (asked once).
                     if UserDefaults.standard.bool(forKey:Self.setupCompletedKey) {offerOpenAtLogin()}
@@ -1321,27 +1375,107 @@ import WriterBackend
     /// perm-1004: Input Monitoring turned on after launch needs DayDream to reopen. Once both permissions read on,
     /// DayDream restarts itself, once (`PermissionRelaunch.restartsByItself`), after the page's one line has shown for
     /// `autoDelay`; the conditions are read again just before it does.
+    /// rc-018 RC3 (A1, owner 10/9: the restart raced macOS's own "Quit & Reopen / Later" sheet): the restart is decided
+    /// here (setup's button says "Restarting…"), then goes only once System Settings shows no sheet, nothing is pressed or
+    /// dragged and no Chrome question is in flight (`SelfRestartGate`). macOS's own Quit & Reopen, pressed meanwhile, is
+    /// the restart: the relaunch context is saved now, so either way setup comes back in front, on its page.
     private func considerAutoRelaunch(_ read:PermissionSnapshot) {
         guard development == nil,!recordingTrial,!functionalTrial,!permissionAutoRelaunch,autoRelaunchAllowed(read) else {return}
         permissionAutoRelaunch=true
+        restartPendingSince=Date()
+        restartSheetSeen=false
+        restartToken += 1
         RecordingLog.note("Input Monitoring turned on after launch; DayDream restarts itself to use it.")
-        DispatchQueue.main.asyncAfter(deadline:.now()+PermissionRelaunch.autoDelay) { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self else {return}
-                let again=Self.permissionRead?() ?? PermissionSnapshot(accessibility:AXIsProcessTrusted(),inputMonitoring:CGPreflightListenEventAccess())
-                guard self.autoRelaunchAllowed(again) else {self.permissionAutoRelaunch=false;return}
-                Self.autoRelaunchDefaults.set(Date(),forKey:Self.autoRelaunchKey)
-                // A restart that couldn't start leaves the page's Quit & Reopen (the line would be untrue).
-                if !Self.performAutoRelaunch(self) {self.permissionAutoRelaunch=false}
-            }
+        saveRelaunchContext(background:false)
+        scheduleRestartCheck(restartToken)
+    }
+    private func scheduleRestartCheck(_ token:Int) {
+        DispatchQueue.main.asyncAfter(deadline:.now()+Self.restartCheckEvery) { [weak self] in
+            MainActor.assumeIsolated { self?.restartCheck(token) }
         }
     }
+    /// A1/A2: the decided restart, read again: still wanted (the conditions hold), and may it go now.
+    private func restartCheck(_ token:Int) {
+        guard token == restartToken,permissionAutoRelaunch,let since=restartPendingSince else {return}
+        let again=Self.permissionRead?() ?? PermissionSnapshot(accessibility:AXIsProcessTrusted(),inputMonitoring:CGPreflightListenEventAccess())
+        guard autoRelaunchAllowed(again) else {endPendingRestart();return}
+        let reads=Self.restartReads
+        let sheet=reads.sheetUp()
+        if sheet == true {restartSheetSeen=true}
+        let inputs=SelfRestartGate.Inputs(sheetUp:sheet,authOnScreen:reads.authOnScreen(),pressing:reads.pressing(),dragging:reads.dragging(),
+                                          chromeAsking:chromeQuestionInFlight,waited:Date().timeIntervalSince(since),sheetSeen:restartSheetSeen)
+        guard SelfRestartGate.decide(inputs) == .now else {
+            if Date().timeIntervalSince(restartContextSavedAt) >= Self.restartContextRefresh {saveRelaunchContext(background:false)}
+            scheduleRestartCheck(token);return
+        }
+        _=performSelfRestart(background:false)
+    }
+    /// No restart is pending any more (taken back, or it didn't happen).
+    private func endPendingRestart() {
+        permissionAutoRelaunch=false
+        restartPendingSince=nil
+        restartToken += 1
+    }
+    /// A6: the restart itself: counted (cooldown and `SelfRestartBudget`), its context saved, then the helper and the quit.
+    /// A helper that couldn't start, or a DayDream still running `restartAliveLimit` after it asked to quit, leaves Quit &
+    /// Reopen (the "restarts by itself" line would be untrue). True when the quit was asked for.
+    private func performSelfRestart(background:Bool)->Bool {
+        let now=Date()
+        Self.autoRelaunchDefaults.set(now,forKey:Self.autoRelaunchKey)
+        SelfRestartBudget.note(Self.autoRelaunchDefaults,now:now)
+        saveRelaunchContext(background:background)
+        let started=background ? Self.performBackgroundRelaunch(self) : Self.performAutoRelaunch(self)
+        guard started else {restartNotMade(background:background);return false}
+        let token=restartToken
+        DispatchQueue.main.asyncAfter(deadline:.now()+Self.restartAliveLimit) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self,token == self.restartToken,self.permissionAutoRelaunch else {return}
+                RecordingLog.note("DayDream is still open after asking to quit for its restart; Quit & Reopen instead.")
+                Self.cancelRelaunchHelper()
+                self.restartNotMade(background:background)
+            }
+        }
+        return true
+    }
+    private func restartNotMade(background:Bool) {
+        endPendingRestart()
+        SetupRelaunchContext.clear(Self.autoRelaunchDefaults)
+        SetupFocus.shared.quitting=false
+        if background {keysStillNotArriving()} else {refreshCaptureStatus()}
+    }
+    /// A3/A4: what the next launch needs, saved before DayDream quits for a restart (or as macOS's Quit & Reopen may quit
+    /// it): setup's page, frame and screen while setup is open and unfinished, and whether recording was wanted. A
+    /// background restart saves only that (no window opens); a restart from another permission page too (an ordinary
+    /// launch that records again when recording was wanted).
+    private func saveRelaunchContext(background:Bool) {
+        guard development == nil else {return}
+        let wants=recording || recordingWanted || permissionComebackUntil != nil || wantedAfterReopen || wantedThroughPermissionStop
+        let context:SetupRelaunchContext=background
+            ? SetupRelaunchContext(reason:.background,page:nil,frame:nil,screen:nil,recording:wants,savedAt:Date().timeIntervalSince1970)
+            : SetupFocus.shared.setupContext(recording:wants)
+                ?? SetupRelaunchContext(reason:.window,page:nil,frame:nil,screen:nil,recording:wants,savedAt:Date().timeIntervalSince1970)
+        context.save(Self.autoRelaunchDefaults)
+        restartContextSavedAt=Date()
+    }
+    /// Every quit (AppQuit): an open, unfinished setup saves its context, so a relaunch within a minute (macOS's own Quit &
+    /// Reopen from its sheet, at 00:49:31 on 10/9) opens setup directly, in front, where it was. A background restart's
+    /// context is kept as it is.
+    private func willQuit() {
+        SetupFocus.shared.quitting=true
+        guard development == nil,!recordingTrial,!functionalTrial else {return}
+        let wants=recording || recordingWanted || permissionComebackUntil != nil || wantedAfterReopen || wantedThroughPermissionStop
+        SetupFocus.shared.setupContext(recording:wants)?.save(Self.autoRelaunchDefaults)
+    }
+    /// rc-018 RC3 (A6): DayDream restarts itself only within `SelfRestartBudget` (2 in 30 minutes), and only while a
+    /// permission page shows or no window is open (`SelfRestartReads.windowsAllow`); otherwise the page offers Quit &
+    /// Reopen.
     private func autoRelaunchAllowed(_ read:PermissionSnapshot)->Bool {
         PermissionRelaunch.restartsByItself(inputMonitoringAtLaunch:permissionsAtLaunch?.inputMonitoring,
                                             launchReadSettled:launchReadUnconfirmedSince == nil,
                                             accessibility:read.accessibility,inputMonitoring:read.inputMonitoring,
                                             recording:recording,canReopen:Self.canReopen(),
                                             lastAutoRestart:Self.autoRelaunchDefaults.object(forKey:Self.autoRelaunchKey) as? Date,now:Date())
+            && SelfRestartBudget.allowed(Self.autoRelaunchDefaults) && Self.restartReads.windowsAllow(self)
     }
     /// An off read is read again `confirmAfter` later; still off, it counts as off at launch.
     private func noteInputMonitoring(_ read:PermissionSnapshot) {
@@ -1377,13 +1511,21 @@ import WriterBackend
         let now=Date()
         let last=Self.autoRelaunchDefaults.object(forKey:Self.autoRelaunchKey) as? Date
         let cooled=last.map { now < $0 || now.timeIntervalSince($0) >= PermissionRelaunch.autoCooldown } ?? true
-        if cooled,Self.canReopen(),!permissionAutoRelaunch {
+        // rc-018 RC3 (A6): in the background (`open -g`, no window at the next launch), within the restart budget, and
+        // only while a permission page shows or no window is open (never under the person's open window).
+        if cooled,SelfRestartBudget.allowed(Self.autoRelaunchDefaults,now:now),Self.canReopen(),!permissionAutoRelaunch,Self.restartReads.windowsAllow(self) {
             RecordingLog.note("No key reached the input tap; DayDream restarts itself to use Input Monitoring.")
             permissionAutoRelaunch=true
-            Self.autoRelaunchDefaults.set(now,forKey:Self.autoRelaunchKey)
-            if Self.performAutoRelaunch(self) {return}
-            permissionAutoRelaunch=false
+            restartToken += 1
+            _=performSelfRestart(background:true)
+            return
         }
+        keysStillNotArriving()
+    }
+    /// The recorder gets no keys and DayDream doesn't restart: recording stops with the tap's reason, so Start goes to
+    /// setup's Permissions page and its Quit & Reopen.
+    private func keysStillNotArriving() {
+        guard recording else {return}
         RecordingLog.note("No key reached the input tap; recording stopped until DayDream reopens.")
         // EventCapture's own reason for a tap that can't reach the keyboard: "Keyboard and mouse aren't reaching
         // DayDream." in the app, and its "Input event tap" prefix sends Start to Quit & Reopen (`inputNeedsReopen`).
@@ -1799,7 +1941,8 @@ import WriterBackend
         if permission || launchReadUnconfirmedSince == nil,
            PermissionRelaunch.reason(inputMonitoringAtLaunch:permissionsAtLaunch?.inputMonitoring,accessibility:true,inputMonitoring:true) != nil,
            Self.canReopen() {return .permissions}
-        if !UserDefaults.standard.bool(forKey:Self.setupCompletedKey) {return .summaries}
+        // Setup not finished: setup opens (an open setup stays where it is; claude/setup-local-summaries: no summaries page).
+        if !UserDefaults.standard.bool(forKey:Self.setupCompletedKey) {return .apps}
         saveWaitingChoices()
         return preferencesUnresolved ? .apps : nil
     }
@@ -1944,12 +2087,15 @@ import WriterBackend
         guard development == nil,!recording,case .permission=currentStopCause() else {return}
         if permissionComebackUntil == nil {RecordingLog.note("A permission is off; reading it again for a while.")}
         permissionComebackUntil=wakeSystem.now().addingTimeInterval(Self.permissionComebackFor)
+        wantedThroughPermissionStop=true
+        saveLaunchIntent()
         syncPermissionWatch()
     }
     private func endPermissionComeback() {
         comebackPauseUntil=nil
         guard permissionComebackUntil != nil else {return}
         permissionComebackUntil=nil
+        saveLaunchIntent()
         syncPermissionWatch()
     }
     /// The permission reads run while recording is off and a comeback waits or the state says a permission is off.
@@ -2016,6 +2162,8 @@ import WriterBackend
         let permissionOff:Bool = { if case .permission=cause {return true}; return false }()
         if !permissionOff, setupStepForStart() == .permissions, !inputNeedsReopen {
             recordingWanted=false
+            // rc-018 RC3 (A4): recording was wanted; it records again once DayDream reopens (the launch intent keeps it).
+            wantedAfterReopen=true
             notResumed()
             clearStopNotice()
             refreshCaptureStatus()
@@ -2076,7 +2224,10 @@ import WriterBackend
         // A sleep, lock or user switch keeps what it paused: recording, or the timed pause until its end.
         var until=pauseUntil
         if until == nil, case .timedPause(let end)=wake.plan {until=end}
-        if let value=LaunchResume.value(wanted:recordingWanted || wake.plan == .record,pauseUntil:until) {intentDefaults.set(value,forKey:LaunchResume.key)}
+        // rc-018 RC3 (A4): a permission stop still waiting for its comeback, or a reopen Input Monitoring needs, keeps
+        // recording wanted at the next launch: a restart (DayDream's, macOS's Quit & Reopen) never leaves it silently off.
+        let wanted=recordingWanted || wake.plan == .record || permissionComebackUntil != nil || wantedAfterReopen || wantedThroughPermissionStop
+        if let value=LaunchResume.value(wanted:wanted,pauseUntil:until) {intentDefaults.set(value,forKey:LaunchResume.key)}
         else {intentDefaults.removeObject(forKey:LaunchResume.key)}
     }
     /// Another DayDream holds the recorder lock on `home` (flock, released at once when free). A home that can't be
@@ -2185,9 +2336,14 @@ import WriterBackend
     /// Setup's Permissions page while setup isn't finished (it moves on by itself once both are allowed), otherwise
     /// Settings › Permissions (`openMain` brings the main window forward). A permission is never requested.
     /// perm-1004: `kind`, the permission a `Turn on …` press named: the page opens its System Settings pane once.
-    func showPermissionCards(_ kind:PermissionKind?=nil,openSetup:()->Void,openMain:()->Void={}) {
+    /// rc-018 RC3 B9: once setup is finished a `Turn on …` press opens the small permissions window (`openPermissions`,
+    /// where the caller can open it), whose cards sit beside System Settings as setup's do; never Settings' sheet.
+    /// Review 10/9: Allow Permissions with no permission named too (the sheet keeps nothing beside System Settings);
+    /// Settings › Permissions only where no permissions window can open.
+    func showPermissionCards(_ kind:PermissionKind?=nil,openSetup:()->Void,openMain:()->Void={},openPermissions:(()->Void)?=nil) {
         if development == nil, let kind {permissionPaneRequest=kind}
         if development == nil && !UserDefaults.standard.bool(forKey:Self.setupCompletedKey) {setupRequest = .permissions;openSetup();return}
+        if development == nil, let open=openPermissions ?? openPermissionsWindow {settingsPresented=false;open();return}
         openMain();openSettings("Permissions")
     }
 
@@ -2313,6 +2469,8 @@ import WriterBackend
         endPermissionComeback()
         wake.personActed()
         recordingWanted=false
+        wantedAfterReopen=false
+        wantedThroughPermissionStop=false
         resumeAfterSave=false
         startWhenFree=false
         // sat5's update marker (left as Sparkle relaunches) no longer describes what they want: their choice wins.
@@ -2346,6 +2504,8 @@ import WriterBackend
         endPermissionComeback()
         startWhenFree=false
         recordingWanted=true
+        wantedAfterReopen=false
+        wantedThroughPermissionStop=false
         saveLaunchIntent()
         storageRecovered()
         clearStopNotice()
@@ -2633,7 +2793,18 @@ import WriterBackend
         actions.paneRequest=permissionPaneRequest?.rawValue
         actions.paneRequestHandled={ [weak self] in self?.permissionPaneRequest=nil }
         actions.autoRelaunch=permissionAutoRelaunch
+        // Settings › Permissions (a sheet) hands its card presses to the small permissions window (setup's and that
+        // window's own pages are guided and ignore it).
+        if openPermissionsWindow != nil {actions.openInWindow={ [weak self] raw in self?.showPermissionsWindow(for:raw) }}
         return actions
+    }
+    /// rc-018 RC3 review (B9): a card's Open System Settings in Settings › Permissions: the sheet closes, and the small
+    /// permissions window opens that permission's pane beside System Settings (its cards stay in reach there).
+    func showPermissionsWindow(for raw:String?) {
+        guard development == nil,let open=openPermissionsWindow else {return}
+        settingsPresented=false
+        if let raw,let kind=PermissionKind(rawValue:raw) {permissionPaneRequest=kind}
+        open()
     }
     /// Opens the Applications folder; nil unless DayDream runs from the download window.
     var openApplicationsAction:(()->Void)? {
@@ -2706,7 +2877,7 @@ import WriterBackend
         let bundle=bundle.trimmingCharacters(in:.whitespacesAndNewlines)
         guard !PrivacySettings.sensitiveApps.contains(bundle) else {throw MemError.invalid("This app is always private.")}
         // The store's own rule for app identifiers; checked first so a bad value never becomes a stuck draft.
-        guard bundle.utf8.count <= 256,bundle.range(of:"^[A-Za-z0-9][A-Za-z0-9.-]*$",options:.regularExpression) != nil else {
+        guard SkippedAppID.accepts(bundle) else {
             throw MemError.invalid("This app can't be excluded. Nothing was saved.")
         }
         guard !savedPrivacy.blockedApps.contains(bundle) else {return}
@@ -2861,7 +3032,9 @@ import WriterBackend
     /// place setup lets macOS ask; nothing asks after setup or when Chrome next comes forward. Nothing here reads a page.
     func askChromeAccessInSetup() {
         // The row shows before Apps saves Web pages in Chrome: the press asks whatever the switch (a question, nothing read).
-        guard development == nil,ReleaseFeatures.chromePageHistory,!chromeExcluded,!askingChromeAccess,!chromeOpeningForSetup else {return}
+        // rc-018 RC3 (A2): never while DayDream is about to restart (setup's Allow is disabled then).
+        guard development == nil,ReleaseFeatures.chromePageHistory,!chromeExcluded,!askingChromeAccess,!chromeOpeningForSetup,
+              !permissionAutoRelaunch else {return}
         chromeSetupAsked=true
         let env=chromeAccessEnvironment
         if env.running() != nil {allowChromeAccess();return}
@@ -2946,7 +3119,7 @@ import WriterBackend
     /// System Settings shows the switch instead.
     func askChromeAgain() {
         guard development == nil,ReleaseFeatures.chromePageHistory,!chromeExcluded,!askingChromeAccess,!chromeOpeningForSetup,
-              !chromeResetting else {return}
+              !chromeResetting,!permissionAutoRelaunch else {return}
         chromeReminder.dismiss()
         let env=chromeAccessEnvironment
         guard env.installed() else {return}
@@ -2997,6 +3170,7 @@ import WriterBackend
     /// (no restart), and the reminder, the guide and the recovery watch end.
     private func chromeAccessAnswered(_ answer:ChromeAccessState,was:ChromeAccessState) {
         let before=chromeLastAnswer
+        chromeAnsweredThisLaunch=true
         if before != answer {chromeLastAnswer=answer;ChromeAccessMemory.save(answer)}
         guard answer == .allowed else {return}
         chromeRecoveryWatch?.invalidate();chromeRecoveryWatch=nil;chromeRecoveryUntil=nil
@@ -3043,18 +3217,34 @@ import WriterBackend
     /// The access setup's and Settings' Chrome rows draw: macOS's last refusal or permission while Chrome is closed, a
     /// read hasn't come back yet or one is running, so a refused row never turns back into "macOS will ask once" (macOS
     /// won't) and never flickers while it is read again. A question in flight (`askingChromeAccess`) shows its spinner.
-    var chromeRowAccess:ChromeAccessState {
+    var chromeRowAccess:ChromeAccessState {chromeRowAccess(lastAnswer:true)}
+    /// rc-018 RC3 (A7, state audit #5): an unfinished setup draws its Chrome row from macOS's reads alone
+    /// (`lastAnswer` false): an answer saved by an earlier install or test copy never decides a first setup's row.
+    func chromeRowAccess(lastAnswer:Bool)->ChromeAccessState {
         // Ask again clearing DayDream's answer: the question is on its way (the spinner, the drawing of the question).
         if chromeResetting {return .checking}
         switch chromeAccess {
         case .chromeNotRunning,.unknown,.checking:
-            if !askingChromeAccess,!chromeOpeningForSetup,let answer=chromeLastAnswer,answer != .notAsked {return answer}
-            return chromeAccess
+            if lastAnswer,!askingChromeAccess,!chromeOpeningForSetup,let answer=chromeLastAnswer,answer != .notAsked {return answer}
+            // rc-018 RC3: a read alone (DayDream coming to the front reads Chrome again) keeps the row's Allow or Ask
+            // again where it was, so a click that brings DayDream forward never lands on a spinner.
+            return PermissionChromeRow.duringRead(current:chromeAccess,shown:chromeAccessShown,
+                                                  questionInFlight:askingChromeAccess || chromeOpeningForSetup)
         default: return chromeAccess
         }
     }
     /// Google Chrome is running now (no prompt; the setup row says Allow opens it in the background otherwise).
     var chromeRunning:Bool {chromeAccessEnvironment.running() != nil}
+    /// Review 10/9: a relaunch in the middle of a first setup (context younger than a minute): an answer saved before it
+    /// was given in this setup, so the unfinished setup's row reads it as one from this launch (`chromeAnsweredThisLaunch`).
+    func keepChromeAnswerAcrossRelaunch() {
+        if let answer=chromeLastAnswer,answer != .notAsked {chromeAnsweredThisLaunch=true}
+    }
+    /// A7: what an earlier install left about Chrome, forgotten for a first setup on a fresh history.
+    func forgetEarlierChromeState(_ defaults:UserDefaults = .standard) {
+        for key in [ChromeAccessMemory.answerKey,DaydreamChromeCard.shownKey,ChromeAccessMemory.reminderKey] {defaults.removeObject(forKey:key)}
+        chromeLastAnswer=nil
+    }
     /// chromeask-1005: page history read Chrome in front while access is refused, after setup: one calm in-app line,
     /// once ever, with Fix. Not while Chrome is excluded or Web pages in Chrome is off (nothing reads then).
     private func remindChromeOff(_ state:ChromeAccessState) {
@@ -3354,6 +3544,7 @@ struct MemoryWindow: View {
           }
           considerOnboarding()
           model.openSetupWindow={ [openWindow] in openWindow(id:"onboarding") }
+          model.openPermissionsWindow={ [openWindow] in openWindow(id:"permissions") }
           if model.chromeCardRequested && model.development == nil {openWindow(id:"onboarding")}
       }
       // gold r2: a history that opened late (a busy moment, or another copy stepping aside) is considered once it opens.
@@ -3362,7 +3553,9 @@ struct MemoryWindow: View {
     /// Setup opens by itself at a first launch, once, when the history is open (a copy that waited for another copy to
     /// let go of the history is considered once it opens it).
     private func considerOnboarding() {
-        guard !consideredOnboarding, !model.historyOpening, !model.anotherCopyOpen else {return}
+        guard !consideredOnboarding else {return}
+        // rc-018 RC3 (rule 1): a held memory window shows whenever setup doesn't open (here, or below).
+        guard !model.historyOpening, !model.anotherCopyOpen else {revealUnlessQuiet();return}
         consideredOnboarding=true
         let requested=CommandLine.arguments.contains("--onboarding")
         // Setup opens until it has been finished once; after an update from a test build whose setup was finished
@@ -3374,15 +3567,23 @@ struct MemoryWindow: View {
         } else {
             opens = model.preferencesAvailable && model.setupLaunch(counting:model.development == nil) != .none
         }
+        let previewSetup=model.development?.preview == true && CommandLine.arguments.contains(PreviewSample.setupArgument)
         if model.development == nil && (requested || opens) {openWindow(id:"onboarding")}
         // DayDream Preview: `--preview-setup` opens setup to click through (File › Set Up DayDream… does too).
-        if model.development?.preview == true && CommandLine.arguments.contains(PreviewSample.setupArgument) {openWindow(id:"onboarding")}
+        else if previewSetup {openWindow(id:"onboarding")}
+        else {revealUnlessQuiet()}
+    }
+    /// The held memory window shows, unless this launch is a background restart (no window until the person opens one).
+    private func revealUnlessQuiet() {
+        if !SetupFocus.shared.quietLaunch {SetupFocus.shared.revealMemory(activate:false)}
     }
     /// The model's controls, with Start going through setup when something there must be done first.
     private var captureActions:CaptureActions {
         var actions=model.captureActions
         actions.resume={ [model,openWindow] in model.requestStart { openWindow(id:"onboarding") } }
-        actions.openSystemSettings={ [model,openWindow] kind in model.showPermissionCards(kind) { openWindow(id:"onboarding") } }
+        actions.openSystemSettings={ [model,openWindow] kind in
+            model.showPermissionCards(kind,openSetup:{ openWindow(id:"onboarding") },openPermissions:{ openWindow(id:"permissions") })
+        }
         return actions
     }
 }
@@ -3519,9 +3720,20 @@ struct DaydreamMainWindowContent: View {
         } else if let model=session.model {MemoryWindow(model:model)} else if let failure=session.failure {Text(failure).padding()}
         else if session.preparing {DaydreamPreparingWindow().onAppear {session.windowShown()}} else {SyntheticWindow()}
         #else
-        if let model=session.model {MemoryWindow(model:model)} else if let failure=session.failure {Text(failure).padding()}
-        else {DaydreamPreparingWindow().onAppear {session.windowShown()}}
+        content
+            // rc-018 RC3 (rule 1): while setup is unfinished (or after a background restart) this window is held out of
+            // sight from the moment it exists (`SetupFocus.holdMemory`); setup finishing or closing shows it.
+            .background(WindowReader { SetupFocus.shared.memoryWindowAppeared($0) })
         #endif
+    }
+    @ViewBuilder private var content: some View {
+        if let model=session.model {MemoryWindow(model:model)}
+        else if let failure=session.failure {Text(failure).padding().onAppear {SetupFocus.shared.revealMemory(activate:false)}}
+        // A setup relaunch or a first setup: no "Getting ready…" (the window is held hidden); the model is made at once.
+        else if SetupFocus.shared.holdsMemory && session.waitsForWindow {
+            Color.clear.frame(minWidth:560,maxWidth:.infinity,minHeight:340,maxHeight:.infinity).onAppear {session.windowShown()}
+        }
+        else {DaydreamPreparingWindow().onAppear {SetupFocus.shared.revealMemory(activate:false);session.windowShown()}}
     }
 }
 /// The window while launch prepares the history (DaydreamLaunchSession.preparing): the menu bar's line, nothing else. The
@@ -3555,6 +3767,35 @@ struct PermissionRequestsHost<Content:View>: View {
     @ObservedObject var model:MemoryViewModel
     @ViewBuilder let content:()->Content
     var body:some View {content().environment(\.daydreamPermissionRequests,model.permissionRequests)}
+}
+/// rc-018 RC3 (A5 with B9): the permissions window, which "Turn on…" opens beside System Settings after setup, hands
+/// back to itself as setup does: Accessibility read Allowed with System Settings in front and no sheet or password window
+/// brings this window forward as key, once (`SetupFocus.handBack`). It replaces the drag guide's old activation. Its own
+/// read every second, as setup reads (the model reads permissions only while recording or on activation).
+struct PermissionsWindowFocus<Content:View>: View {
+    @ObservedObject var model:MemoryViewModel
+    @ViewBuilder let content:()->Content
+    @State private var last:PermissionSnapshot?
+    private let timer=Timer.publish(every:1,on:.main,in:.common).autoconnect()
+    var body:some View {
+        content()
+            .background(WindowReader {SetupFocus.shared.permissionsWindow=$0})
+            .onAppear {last=Self.read()}
+            .onReceive(timer) {_ in
+                let now=Self.read()
+                defer {last=now}
+                guard let old=last,model.development == nil else {return}
+                let requests=model.permissionRequests
+                let reopen=DaydreamOnboarding.relaunchPending(available:true,accessibility:true,inputMonitoring:now.inputMonitoring == true,
+                                                              canReopen:requests?.quitAndReopen != nil,
+                                                              inputMonitoringAtLaunch:requests?.inputMonitoringAtLaunch,
+                                                              inputNeedsReopen:model.inputNeedsReopen)
+                SetupFocus.shared.permissionsWindowRead(from:old,to:now,needsReopen:reopen,stillAllowed:{ Self.read().accessibility == true })
+            }
+    }
+    static func read()->PermissionSnapshot {
+        PermissionSnapshot(accessibility:AXIsProcessTrusted(),inputMonitoring:CGPreflightListenEventAccess())
+    }
 }
 /// A4's menu bar panel with the app's routes (`DaydreamMainWindow.menuBarRoutes`): the card's Open DayDream, Search…,
 /// Settings… and today line bring the one memory window forward. The panel's default route is
@@ -3602,14 +3843,21 @@ struct MacMemApplication: App {
         #endif
         Window("DayDream permissions",id:"permissions") {
             if let model=session.model {
-                PermissionRequestsHost(model:model) {
-                    DaydreamPermissionSettings(enabled:model.development == nil,known:model.permissionSnapshot,allowedBefore:model.permissionsAllowedBefore)
+                PermissionsWindowFocus(model:model) {
+                    PermissionRequestsHost(model:model) {
+                        DaydreamPermissionSettings(enabled:model.development == nil,known:model.permissionSnapshot,allowedBefore:model.permissionsAllowedBefore)
+                    }
                 }
+                // rc-018 RC3 (A6): a permission page shows: DayDream may restart itself for Input Monitoring.
+                .onAppear {SetupFocus.shared.permissionsWindowShowing += 1}
+                .onDisappear {SetupFocus.shared.permissionsWindowShowing = max(0,SetupFocus.shared.permissionsWindowShowing-1)}
             } else {DaydreamPermissionSettings(enabled:false)}
         }.windowResizability(.contentSize)
             .commandsRemoved()
         Window("Set up DayDream",id:"onboarding") {
             if let model=session.model {PermissionRequestsHost(model:model) {DaydreamOnboarding(model:model)}}
+            // rc-018 RC3: restored by macOS before the model exists (a relaunch): nothing yet, and the model is made now.
+            else if session.waitsForWindow || session.preparing {Color.clear.frame(width:660,height:560).onAppear {session.windowShown()}}
             else {Text("DayDream setup is unavailable in this preview.").padding()}
         }.windowResizability(.contentSize)
             .commandsRemoved()

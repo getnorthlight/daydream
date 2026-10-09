@@ -15,7 +15,7 @@ One narrow exception mechanism, `LEGACY_UNBUILT`: literals inside a listed view 
 reported as PENDING instead of failing (a hit in a view that the product mounts again fails like any other). It is
 empty now: the three pre-redesign capture views it listed were deleted in wave 3b (I2).
 
-The Swift scanner here (`scan`) is shared with scripts/check_macos13_api.py.
+The Swift scanner here (`scan`) is shared with the other source scans.
 """
 import re
 import sys

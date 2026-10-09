@@ -15,6 +15,14 @@ import AppKit
 import SwiftUI
 import MemoryCore
 import MemoryUI
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 @MainActor final class DayDataRecorder {
     private(set) var events:[String]=[]
@@ -36,7 +44,7 @@ func fail(_ message:String) -> Never {
     FileHandle.standardError.write(Data("FAIL: \(message)\n".utf8))
     exit(1)
 }
-@MainActor func expect(_ condition:Bool,_ message:@autoclosure ()->String) { if !condition {fail(message())} }
+@MainActor func expect(_ condition:Bool,_ message:@autoclosure ()->String) { if !condition {ddFail(message())} }
 func pass(_ message:String) { print("PASS: \(message)"); fflush(stdout) }
 @MainActor func thrownMessage(_ body:() throws -> Void) -> String? {
     do {try body();return nil}
@@ -68,6 +76,7 @@ func body(of signature:String,in source:String) -> String {
 
 @main @MainActor struct DDAppModelChecks {
     static func main() async throws {
+        ddReportAtExit()
         DispatchQueue.global().asyncAfter(deadline:.now()+90) {
             FileHandle.standardError.write(Data("FAIL: dd-app-model-checks watchdog expired after 90s\n".utf8))
             exit(2)
@@ -423,7 +432,7 @@ func body(of signature:String,in source:String) -> String {
         try model.excludeApp("dev.zed.Zed")
         expect(try reader.policy().revision == revision && recorder.take().isEmpty,"excluding an excluded app saved again")
         for (bundle,message) in [("com.apple.Passwords","This app is always private."),("com.getnorthlight.daydream","This app is always private."),
-                                 ("not an app id!","This app can't be excluded. Nothing was saved."),(".hidden","This app can't be excluded. Nothing was saved.")] {
+                                 ("not,an app id","This app can't be excluded. Nothing was saved."),("tab\tid","This app can't be excluded. Nothing was saved.")] {
             expect(thrownMessage {try model.excludeApp(bundle)} == message,"excluding \(bundle) did not refuse with \(message)")
         }
         expect(try reader.policy().revision == revision && !model.preferencesUnresolved,"a refused exclusion left a draft or a save")

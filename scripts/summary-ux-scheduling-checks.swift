@@ -124,14 +124,16 @@ actor FakeOpenRouter {
     /// Before, a clock 2-3 hours back crossed it when the check ran between about 01:40 and 03:00 local time: a moment
     /// then ended on the day before the writer's "today", so the next pass (today's batch) never tried it again and
     /// "a key revoked while writing" read on(cloud) (and "Try Again while OpenRouter keeps answering 429" after it);
-    /// run at 01:56 the moment fixture itself found no moment. A start outside 01:00-20:00 moves to the nearest earlier
-    /// noon (still under 16 hours back, well inside typed words' 24 hours); scenarios move the clock under 4 hours.
+    /// run at 01:56 the moment fixture itself found no moment. A start outside 04:00-20:00 moves to the nearest earlier
+    /// noon (under 19 hours back, inside typed words' 24 hours); scenarios move the clock under 4 hours. (Phase 1: the
+    /// bound was 01:00, but fullBacklog's 128 moments reach about 2.5 hours behind the start, so a run between about
+    /// 04:00 and 05:30 put some of them on the day before and queued 110-116 of 128.)
     static func recentClock(_ back: TimeInterval) -> Clock {
         let start = Date().addingTimeInterval(-back), calendar = Calendar.current
         let hour = calendar.component(.hour, from: start)
-        guard hour < 1 || hour >= 20 else { return Clock(start) }
+        guard hour < 4 || hour >= 20 else { return Clock(start) }
         let day = calendar.startOfDay(for: start)
-        let noon = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: hour < 1 ? calendar.date(byAdding: .day, value: -1, to: day)! : day)!
+        let noon = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: hour < 4 ? calendar.date(byAdding: .day, value: -1, to: day)! : day)!
         return Clock(noon)
     }
     @MainActor static func rig(_ name: String, clock: Clock = recentClock(3 * 3600), admission: LocalAdmission? = nil, home reuse: URL? = nil,

@@ -1,0 +1,24 @@
+# The pinned failures of every known-failure row of scripts/checks-manifest.tsv (scripts/verify-run-manifest.py).
+# A known failure verifies as KNOWN-FAIL only when it exits with `exit`, prints at least its min_pass PASS lines, and
+# every failure line in its log is one of its `fail` rows (the label, or its start up to a separator), each of which
+# still fails. Anything else, a new FAIL in the same file, a crash, a failed compile, is FAIL.
+# Labels: "FAIL ..." / "FAIL: ..." lines, unittest "FAIL: test_name", "Precondition failed: ..." / "Fatal error: ...".
+step	exit	fail
+store-perf	1	FAIL: the heartbeat waited
+owner-store-perf	1	FAIL: the heartbeat waited
+native-intake-boundary	1	FAIL production sealed A boundary case-2
+native-intake-boundary	1	FAIL production sealed A boundary case-3
+native-intake-boundary	1	FAIL production sealed A boundary case-13
+native-intake-boundary	1	FAIL production sealed A boundary case-22
+native-intake-boundary	1	FAIL production sealed A boundary case-23
+native-intake-boundary	1	FAIL production sealed A boundary case-34
+migration-py	1	FAIL: test_chunk_failure_rolls_back_checkpoint_and_records
+migration-py	1	FAIL: test_current_app_exclusion_and_expiry_purge_originals
+migration-py	1	FAIL: test_duplicate_identity_and_richer_alternate_block
+migration-py	1	FAIL: test_five_actions_resume_repeat_and_exact_originals
+migration-py	1	FAIL: test_missing_attachment_and_approved_reference
+migration-py	1	FAIL: test_nanoseconds_offset_preserved
+migration-py	1	FAIL: test_new_source_tombstone_removes_previously_imported_original
+migration-py	1	FAIL: test_policy_exclusions_and_source_tombstones_explicit
+migration-py	1	FAIL: test_summary_only_not_fabricated_event
+migration-py	1	FAIL: test_wal_activity_export_is_scoped_and_consistent

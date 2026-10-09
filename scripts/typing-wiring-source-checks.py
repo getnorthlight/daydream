@@ -15,6 +15,19 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 APP = ROOT / 'Sources/MacMemApp'
 
 
+def git_checkout_skip_reason():
+    """None in a git checkout of this repo; otherwise why the git-listed checks are skipped (a `git archive` tree)."""
+    try:
+        top = subprocess.run(['git', '-C', str(ROOT), 'rev-parse', '--show-toplevel'], capture_output=True, text=True)
+    except OSError as error:
+        return 'git is not available (%s)' % error
+    if top.returncode != 0:
+        return 'not a git checkout (%s): the tracked-file list needs git' % ROOT
+    if pathlib.Path(top.stdout.strip()).resolve() != ROOT.resolve():
+        return '%s is not the top of its git checkout (%s)' % (ROOT, top.stdout.strip())
+    return None
+
+
 def read(rel):
     return (ROOT / rel).read_text()
 
@@ -51,6 +64,9 @@ class AppWiring(unittest.TestCase):
             self.assertNotIn(word, coordinator)
 
     def test_only_the_app_constructs_the_keychain_store(self):
+        reason = git_checkout_skip_reason()
+        if reason:
+            self.skipTest('SKIP (environment): ' + reason)
         tracked = subprocess.run(['git', 'ls-files', '*.swift'], cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()
         # A construction or any store factory call, not a mention in a comment. owner/v1 review: Remove everything
         # (UninstallService) deletes the history's key through the app's own factory, so it is the one other user.

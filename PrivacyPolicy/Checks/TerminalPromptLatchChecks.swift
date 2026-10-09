@@ -5,7 +5,7 @@ import PrivacyPolicy
 /// TerminalPromptLatch. No terminal, event tap, AX or real input.
 enum TerminalPromptLatchChecks {
     static var passed = 0
-    static func pass(_ ok: Bool, _ label: String) { require(ok, "latch: " + label); passed += 1; print("PASS latch: " + label) }
+    static func pass(_ ok: Bool, _ label: String) { require(ok, "latch: " + label); if ok { passed += 1; print("PASS latch: " + label) } }
 
     /// Types `keys` characters then Return with `line`; returns what was recorded.
     static func typeLine(_ latch: inout TerminalPromptLatch, _ line: String, focus: String = "f1") -> [TerminalPromptLatch.Decision] {

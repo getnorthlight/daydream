@@ -1,16 +1,26 @@
 import SwiftUI
 import AppKit
 import MemoryUI
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 @MainActor @main struct PermissionSettingsChecks {
     static var checks = 0
 
     static func check(_ condition: @autoclosure () -> Bool, _ label: String) {
-        precondition(condition(), label)
+        if !(condition()) { ddFail(label); return }
         checks += 1
+        print("PASS " + label)
     }
 
     static func main() async throws {
+        ddReportAtExit()
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.prohibited)
         let output = URL(fileURLWithPath: "/private/tmp/daydream-permission-settings-renders")

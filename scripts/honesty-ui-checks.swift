@@ -16,11 +16,19 @@ import SwiftUI
 import MemoryCore
 import MemoryUI
 import WriterBackend
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 @MainActor @main struct HonestyUIChecks {
     static var passed = 0
     static func check(_ condition: Bool, _ name: String) {
-        guard condition else { fflush(stdout); FileHandle.standardError.write(Data("FAIL: \(name)\n".utf8)); exit(1) }
+        guard condition else { ddFail(name); return }
         passed += 1; print("PASS: " + name); fflush(stdout)
     }
     static func pump(_ s: Double = 0.15) { RunLoop.main.run(until: Date().addingTimeInterval(s)) }
@@ -41,6 +49,7 @@ import WriterBackend
     static func views<T: NSView>(_ type: T.Type, in view: NSView) -> [T] { ((view as? T).map { [$0] } ?? []) + view.subviews.flatMap { views(type, in: $0) } }
 
     static func main() {
+        ddReportAtExit()
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.accessory)
 
@@ -110,52 +119,28 @@ import WriterBackend
         check(!DaydreamSetupText.localUnavailable.lowercased().contains("model") && !DaydreamSetupText.localUnavailable.lowercased().contains("download"),
               "On this Mac, when missing, doesn't blame the model or the download")
 
-        // B. The summaries page (fix/setup-status, owner 9/28): "Summaries on this Mac" first (only where the build has the
-        // runtime), then "Use an OpenRouter key instead" with its one line. One at a time; both off is Off (`later`); the
-        // key field shows only while the OpenRouter row is on. No card, sheet or second question.
-        check(DaydreamSummaryChoice.allCases.contains(.later), "summaries: both switches off is Off")
-        for available in [false, true] {
-            var selection = available ? DaydreamSummaryChoice.local : .cloud
-            var key = ""
-            func render() -> NSView {
-                host(DaydreamSummariesContent(choice: Binding(get: { selection }, set: { selection = $0 }), cloudKey: Binding(get: { key }, set: { key = $0 }),
-                                              localAvailable: available))
-            }
-            var view = render()
-            var switches = views(NSSwitch.self, in: view)
-            check(switches.count == (available ? 2 : 1) && switches.allSatisfy(\.isEnabled) && switches[0].state == .on && switches.dropFirst().allSatisfy { $0.state == .off },
-                  "summaries: \(available ? "Summaries on this Mac on, the OpenRouter row off" : "only the OpenRouter row, on"), all usable (available: \(available))")
-            check(views(NSSecureTextField.self, in: view).count == (available ? 0 : 1), "summaries: the key field only while the OpenRouter row is on (available: \(available))")
-            if available {
-                switches[1].performClick(nil); pump()
-                check(selection == .cloud, "summaries: the OpenRouter switch turns this Mac off (\(selection))")
-                view = render()
-                switches = views(NSSwitch.self, in: view)
-                check(views(NSSecureTextField.self, in: view).count == 1 && switches[1].state == .on && switches[0].state == .off,
-                      "summaries: the OpenRouter row on shows the key field")
-                switches[1].performClick(nil); pump()
-                check(selection == .later, "summaries: both off is Off (\(selection))")
-            }
-        }
+        // B. claude/setup-local-summaries (owner 10/7): setup has no summaries page; the switches are Settings › Summarizer's.
+        let onboardingSource = (try? String(contentsOfFile: "Sources/MacMemApp/DaydreamOnboarding.swift", encoding: .utf8)) ?? ""
+        check(!onboardingSource.contains("CloudSummariesSwitch") && !onboardingSource.contains("DaydreamSummariesContent"), "summaries: setup draws no summaries switches")
         var switchBody = ""
         dump(CloudSummariesSwitch(isOn: .constant(false), key: .constant(""), showsKey: false).body, to: &switchBody)
         check(switchBody.contains(CloudSummariesText.line) && switchBody.contains(CloudSummariesText.title),
               "the switch draws its title and the one line (what is sent)")
 
-        // C. The last page: the view's body, dumped, says what a connected app can read whatever the rows are, and holds
-        // the FileVault notice only when FileVault reads as off (never a false "isn't encrypted").
-        for rows in [[], [DaydreamReviewRow(id: "summaries", title: "Summaries", value: "Off", systemImage: "text.alignleft")]] {
+        // C. The last page: the view's body, dumped, says what a connected app can read with or without a message, and holds
+        // the FileVault notice only when FileVault reads as off (never a false "isn't encrypted"). No rows (owner 10/7).
+        for message in [nil, "Fabricated message"] as [String?] {
             for off in [false, true] {
                 var body = ""
-                dump(DaydreamReviewContent(rows: rows, message: rows.isEmpty ? nil : "Fabricated message", fileVaultOff: off, aiReads: true).body, to: &body)
+                dump(DaydreamReviewContent(message: message, fileVaultOff: off, aiReads: true).body, to: &body)
                 // dump() prints strings as debug text, which escapes the apostrophes.
                 func dumped(_ text: String) -> String { String(String(reflecting: text).dropFirst().dropLast()) }
                 check(body.contains(dumped(DaydreamSetupText.aiReads)) && !body.contains(dumped(DaydreamSetupText.ownMac))
                       && body.contains(dumped(DaydreamSetupText.fileVault)) == off,
-                      "last page: what AI apps can read always, FileVault notice \(off ? "shown when off" : "hidden when on or unknown") (\(rows.count) rows)")
+                      "last page: what AI apps can read always, FileVault notice \(off ? "shown when off" : "hidden when on or unknown") (\(message == nil ? "no message" : "a message"))")
             }
         }
-        _ = host(DaydreamReviewContent(rows: []))
+        _ = host(DaydreamReviewContent())
 
         // D. Sources: the app wires these, and no user-facing text overclaims.
         func source(_ path: String) -> String { (try? String(contentsOfFile: path, encoding: .utf8)) ?? "" }
@@ -178,14 +163,15 @@ import WriterBackend
               && !onboarding.contains("CloudConsentSheet") && !settingsSource.contains("CloudConsentSheet") && !onboarding.contains("cloudReview")
               && !settingsSource.contains(".sheet(") && !onboarding.contains(".sheet("),
               "no cloud consent sheet: setup and Settings have no sheet at all")
-        check(screens.contains("CloudSummariesSwitch(isOn:") && settingsSource.contains("CloudSummariesSwitch(isOn:")
+        // claude/setup-local-summaries: setup has no summaries page; Settings › Summarizer is where the switch is.
+        check(!screens.contains("CloudSummariesSwitch(") && !onboarding.contains("CloudSummariesSwitch(") && settingsSource.contains("CloudSummariesSwitch(isOn:")
               && source("Sources/MemoryUI/CloudSummariesSwitch.swift").contains("Text(CloudSummariesText.line)"),
-              "setup and Settings draw the same Cloud summaries switch with its one line")
-        // fix/setup-status: setup (at Continue) and Settings (at once) turn it on through the writer's chooseCloud, which
-        // records the notice (fix/engine-battery's WriterIntegration.chooseCloud; the setup shim is gone at fix/sx-all).
+              "Settings draws the Cloud summaries switch with its one line (setup has none)")
+        // fix/setup-status: Settings turns it on at once through the writer's chooseCloud, which records the notice
+        // (fix/engine-battery's WriterIntegration.chooseCloud). Setup has no summaries page (claude/setup-local-summaries).
         let chooser = source("Sources/MacMemApp/WriterIntegration.swift")
         let chooseCloud = chooser.range(of: "func chooseCloud(key").map { String(chooser[$0.lowerBound...].prefix(2600)) } ?? ""
-        check(onboarding.contains("await SummaryControls.current.chooseCloud(writer,") && settingsSource.contains("await SummaryControls.current.chooseCloud(writer,")
+        check(!onboarding.contains("chooseCloud(") && settingsSource.contains("await SummaryControls.current.chooseCloud(writer,")
               && settingsSource.contains("chooseCloud: { await $0.chooseCloud(key: $1) }")
               && chooseCloud.replacingOccurrences(of: " ", with: "").contains("enableCloud(acceptedDisclosureVersion:")
               && chooseCloud.contains("cloudDisclosureVersion)")
@@ -212,10 +198,14 @@ import WriterBackend
               && PrivacyPromise.policyURL.absoluteString.hasSuffix("/PRIVACY.md")
               && source("Sources/MemoryUI/SettingsHub.swift").contains("let line = Self.footer(fileVaultOn: fileVaultOn)"),
               "Settings says where history is kept and who can send it out, with Learn more to PRIVACY.md")
-        // fix/setup-status: On this Mac is shown only where the build has it, and is the default only on a Mac that runs it.
-        check(onboarding.contains("localAvailable: writer.localOffered") && onboarding.contains("return localOffered && qualifies ? .local : .cloud")
-              && onboarding.contains("if SummaryPhaseReading.localOn(phase) && localOffered { return .local }"),
-              "setup: On this Mac only where this build has it, the default only on a Mac that can run it")
+        let integration0 = source("Sources/MacMemApp/WriterIntegration.swift")
+        // claude/setup-local-summaries: On this Mac starts by default only where the build has it, on a Mac that runs it,
+        // with 5 GB free, for someone who never chose.
+        check(onboarding.contains("SummaryControls.current.chooseLocalByDefault(writer, Self.macQualifies)")
+              && integration0.contains("guard localOffered,qualifies else {defaultLocalPending=nil;return .unavailable}")
+              && integration0.contains("guard noChoiceYet else {defaultLocalPending=nil;return .alreadyChosen}")
+              && integration0.contains("free >= Self.defaultLocalMinimumFree else {return .lowSpace}"),
+              "setup: On this Mac by default only where this build has it, on a Mac that can run it, with 5 GB free, for someone who never chose")
         let integration = source("Sources/MacMemApp/WriterIntegration.swift")
         check(integration.contains("guard localOffered else") && integration.contains("status=DaydreamSetupText.localUnavailable")
               && integration.contains("statusStore?.setSummaryWriter(provider)"),
@@ -223,8 +213,8 @@ import WriterBackend
         let settings = source("Sources/MacMemApp/WriterPreferences.swift")
         // fix/setup-status: Settings › Summarizer is one switch per way (the local row only where the build has it) and one
         // state line; no Download or Turn on button, and a certificate check that failed is one plain line with Try Again.
-        check(settings.contains("if writer.localOffered {") && settings.contains("CloudSummariesSwitch(") && settings.contains("DaydreamSummariesContent.localTitle"),
-              "Settings › Summarizer uses the same switches and wording as setup")
+        check(settings.contains("if writer.localOffered {") && settings.contains("CloudSummariesSwitch(") && settings.contains("DaydreamSummariesText.localTitle"),
+              "Settings › Summarizer has both switches: Summaries on this Mac (where the build has it) and OpenRouter")
         check(!settings.contains("\"Download\"") && !settings.contains("\"Turn on\"") && settings.contains("private var localLine:String? {localOn ? phase.line ?? (writer.retryWaitsForPower && phase == .on(.local) ? Self.waitsForPowerLine:nil):nil}"),
               "Settings: no Download or Turn on button; the local row's only line is the state's own (or, on, that a retry waits for power)")
         check(SummaryProblem.appleCheck.line == "DayDream couldn't check its signature with Apple." && SummaryProblem.appleCheck.button == "Try Again"

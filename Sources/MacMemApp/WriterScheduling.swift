@@ -107,6 +107,12 @@ actor WriterQueueSource {
         /// Open members receive a provisional note; closed members retain ordinary/final status.
         var summaryDue:[ScheduledWriterTarget]=[]
         var nextSummary:Date?
+        /// claude/int-016: the `summaryDue` members that rewrite a note already written for good (a closed moment with a
+        /// non-provisional mark, due again by the rewrite rule). They are ordinary work: never a one-second service wake
+        /// (the 5-minute spacing of ordinary wakes holds), though a pass that runs still takes them with its batch.
+        var summaryRewrites:Set<String>=[]
+        /// Whether first-note service work is due now (`summaryDue` less the rewrites): what a one-second wake is for.
+        var firstNotesDue:Bool {summaryDue.contains {!summaryRewrites.contains($0.key)}}
         /// Writable, nonempty local open moments may retain one warm model lease; this does not load the model.
         var keepLocalWarm=false
         /// Provisional notes become final once closed, even at the same revision.
@@ -211,7 +217,10 @@ actor WriterQueueSource {
             }
             found.targets.append(item)
             // First eligible closed work runs promptly at closure; do not add a queue-relative delay.
-            if audience == .local, activity.status != "ready" {found.summaryDue.append(item)}
+            if audience == .local, activity.status != "ready" {
+                found.summaryDue.append(item)
+                if let mark,!mark.provisional {found.summaryRewrites.insert(item.key)}
+            }
         }
         // claude/ready-1002 (owner): rewrites go newest first (today before past days is the caller's order).
         let newest=rewrites.sorted {($0.lastActivity,$0.key) > ($1.lastActivity,$1.key)}

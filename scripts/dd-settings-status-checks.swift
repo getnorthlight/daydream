@@ -83,6 +83,15 @@ struct RootFrameKey: PreferenceKey {
     }
     static func equal<T: Equatable>(_ got: T, _ want: T, _ name: String) { check(got == want, name, "\(got)") }
 
+    /// What a click-area failure needs to be told apart from a hit area that really shrank: these checks passed with
+    /// the display on and failed (the same offsets on every page) in runs made while the Mac's display was off.
+    static func clickEnvironment() -> String {
+        let session = CGSessionCopyCurrentDictionary() as? [String: Any] ?? [:]
+        return "screens \(NSScreen.screens.count), window scale \(window.backingScaleFactor), occlusion visible "
+            + "\(window.occlusionState.contains(.visible)), screen locked \(session["CGSSessionScreenIsLocked"] as? Bool ?? false), "
+            + "on console \(session[kCGSessionOnConsoleKey] as? Bool ?? false)"
+    }
+
     static func model(_ s: SettingsStatusSnapshot) -> SettingsStatusCardModel {
         SettingsStatusCardModel(s, calendar: Fx.calendar, now: Fx.now)
     }
@@ -678,13 +687,14 @@ struct RootFrameKey: PreferenceKey {
             let L = DaydreamSettingsLayout.self
             check(abs(back.minX - L.horizontalPadding) < 1 && abs(back.midY - (L.topPadding + L.headerHeight / 2)) < 1,
                   "\(title): Back sits at the header's leading edge", "\(back)")
-            var hits = 0
+            var hits = 0, missed: [String] = []
             for (dx, dy) in [(0.0, 0.0), (-10.0, -10.0), (10.0, -10.0), (-10.0, 10.0), (10.0, 10.0), (-15.0, 0.0), (15.0, 0.0)] {
                 let before = backs
                 _ = click(view, calls, at: CGPoint(x: back.midX + dx, y: back.midY + dy))
-                if backs == before + 1 { hits += 1 }
+                if backs == before + 1 { hits += 1 } else { missed.append("(\(Int(dx)),\(Int(dy)))→\(backs - before)") }
             }
-            equal(hits, 7, "\(title): Back answers a click anywhere in its square (center, ±10 pt corners, ±15 pt sides)")
+            check(hits == 7, "\(title): Back answers a click anywhere in its square (center, ±10 pt corners, ±15 pt sides)",
+                  "\(hits); missed \(missed.joined(separator: " ")); back \(back); \(clickEnvironment())")
             let before = backs
             _ = click(view, calls, at: CGPoint(x: back.maxX + 60, y: back.midY))
             check(backs == before && calls.closes == 0, "\(title): a click on the title does nothing")
@@ -704,13 +714,14 @@ struct RootFrameKey: PreferenceKey {
         }, size: NSSize(width: 660, height: 600))
         if let back = local("setup.back") {
             check(back.width >= 74 - 0.5 && back.height >= 36 - 0.5, "setup: Back is at least 74×36", "\(back)")
-            var hits = 0
+            var hits = 0, missed: [String] = []
             for (dx, dy) in [(0.0, 0.0), (-(back.width / 2 - 4), 0.0), (back.width / 2 - 4, 0.0), (0.0, -14.0), (0.0, 14.0)] {
                 let before = backs
                 _ = click(setup, calls, at: CGPoint(x: back.midX + dx, y: back.midY + dy))
-                if backs == before + 1 { hits += 1 }
+                if backs == before + 1 { hits += 1 } else { missed.append("(\(Int(dx)),\(Int(dy)))→\(backs - before)") }
             }
-            equal(hits, 5, "setup: Back answers across its whole box")
+            check(hits == 5, "setup: Back answers across its whole box",
+                  "\(hits); missed \(missed.joined(separator: " ")); back \(back); \(clickEnvironment())")
         } else {
             check(false, "setup: Back is laid out")
         }

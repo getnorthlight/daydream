@@ -580,7 +580,13 @@ extension MemoryStore {
         let old=try rows("SELECT id FROM level_notes WHERE level IN ('day','block') AND start<?",[cutoff]).map { $0[0] }
         for id in old { try dropLevel(id,expired:true) }
         if !old.isEmpty { DayReviewCache.bump() }
-        if try hasReviewClauses() { try exec("DELETE FROM review_clauses WHERE day<?",[String(cutoff.prefix(10))]) }
+        // Delete only when a clause is past its day: writePending runs this on every pass inside the typed-narrative
+        // maintenance scope, and an unconditional DELETE (even of no rows) is a write outside that scope's statements,
+        // which drops the certified carry and withholds the next typed part (the 10/03 day-review regression).
+        let clauseCutoff=String(cutoff.prefix(10))
+        if try hasReviewClauses(), try !rows("SELECT 1 FROM review_clauses WHERE day<? LIMIT 1",[clauseCutoff]).isEmpty {
+            try exec("DELETE FROM review_clauses WHERE day<?",[clauseCutoff])
+        }
         return old.count
     }
 

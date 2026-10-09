@@ -95,6 +95,8 @@ import CoreIntegration
                                        "surface": surface, "send": send ? "detected" : "none"]
             if send { unit["sendBy"] = surface == "email" ? "commandReturn" : "return" }
             if let to { unit["to"] = to }
+            // A Messages unit names its conversation only from a proven message box (4d2ec93, MessagesMomentIdentity).
+            if surface == "text" { unit["field"] = "message" }
             ev(t, "keyboard.text_input", app == "Chrome" ? "Google Chrome" : app, title, url, text: words, unit: unit)
             if send { ev(t.addingTimeInterval(1), surface == "email" ? "keyboard.shortcut" : "keyboard.submit", app, title, url) }
         }

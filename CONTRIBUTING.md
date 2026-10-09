@@ -19,7 +19,7 @@ The checks are meant to use made-up data in temporary folders, and never to star
 
 - **Core checks:** `swift run MacMemChecks` (in `Checks/`) covers capture, privacy, browser, timed-pause, update and installation rules. `swift run ProductionBindingChecks` covers the storage snapshot and backup bindings.
 - **Package checks:** each package in the repository has its own runner, for example `swift run --package-path PrivacyPolicy PrivacyChecks`, `swift run --package-path WriterBackend WriterChecks` and `swift run --package-path BrowserBridge BrowserBridgeChecks`.
-- **Unit tests:** `swift test` runs `Tests/MemoryCoreTests`. It needs the full Xcode, because the Command Line Tools don't include XCTest.
+- **Search tests:** the full suite runs `Tests/MemoryCoreTests/TypesenseTests.swift` through `scripts/search-test-runner.swift` (no XCTest needed). Set `TYPESENSE_BINARY` to the pinned `typesense-server` for the real-server cases.
 - **Full suite:** `bash runner-1001/run-headless.sh [label]` builds the package and runs every headless check, including the `scripts/*-checks.swift` files, with made-up data in `.build/checks`. It needs the pinned Sparkle and Node 22; on-screen checks are skipped. `ONLY=<regex>` reruns chosen steps. See [runner-1001/README.md](runner-1001/README.md).
 - **Docs checks:** `python3 scripts/docs-claims-checks.py -v` checks that the README, PRIVACY.md, the FAQ, SECURITY.md and the GitHub templates keep their promises and have no blanks.
 

@@ -56,11 +56,13 @@ class Checks(unittest.TestCase):
             self.assertIn(token,s)
     def test_no_example_size_or_key_blur_activation(self):
         s=read('Sources/MacMemApp/WriterPreferences.swift')
-        # fix/setup-status: the size is setup's and Settings' shared line (DaydreamOnboarding.modelSize), and the cloud
-        # disclosure is accepted inside WriterIntegration.chooseCloud (the switch's one honest line).
+        # fix/setup-status: the cloud disclosure is accepted inside WriterIntegration.chooseCloud (the switch's one honest
+        # line). claude/setup-local-summaries (owner 10/7): setup has no summaries page, so it says no model size (the
+        # download starts by itself; Settings › Summaries shows its size).
         onboarding=read('Sources/MacMemApp/DaydreamOnboarding.swift')
         integration=read('Sources/MacMemApp/WriterIntegration.swift')
-        self.assertIn('static var modelSize: String { SummaryPhaseReading.gigabytes(WriterCandidates.recommended?.asset.bytes',onboarding)
+        self.assertNotIn('modelSize',onboarding)
+        self.assertNotIn('DaydreamSummariesContent',onboarding)
         for text in (s,onboarding):
             self.assertNotIn('2.1 GB',text)
             self.assertNotIn('"Connected"',text)

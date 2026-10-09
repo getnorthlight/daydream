@@ -217,14 +217,15 @@ actor Commits { var n = 0; func add() { n += 1 }; func count() -> Int { n } }
         let sep = (model: (try? msep.get()).map(plain), code: (try? fsep.get()).map(plain))
         check(same.model == ["[draft] Asked ChatGPT."], "same unit (paused piece, then the send key): the model's note is exactly [draft] Asked ChatGPT. (got \(same.model ?? []))")
         check(same.code == ["[draft] Typed in ChatGPT and used the send key."], "same unit: code's note is exactly [draft] Typed in ChatGPT and used the send key. (got \(same.code ?? []))")
-        check(sep.model == ["[submitted] Asked ChatGPT.","[submitted] Asked ChatGPT."], "separate units (two runs, each with the send key): each has its own submitted model bullet (got \(sep.model ?? []))")
-        check(sep.code == ["[submitted] Used the send key in ChatGPT.","[submitted] Used the send key in ChatGPT."], "separate units: code keeps one submitted bullet per source run (got \(sep.code ?? []))")
+        // claude/messages-1003 (owner, 1f22c5b): two lines of one note that say the same thing are one line, citing both.
+        check(sep.model == ["[submitted] Asked ChatGPT."], "separate units (two runs, each with the send key): one submitted model line for the two identical asks (got \(sep.model ?? []))")
+        check(sep.code == ["[submitted] Used the send key in ChatGPT."], "separate units: code's one submitted line for the two identical sends (got \(sep.code ?? []))")
         check((try? fs.get())?.generatorVersion == fallbackVersion && (try? fsep.get())?.generatorVersion == fallbackVersion
               && (try? ms.get())?.generatorVersion == CanonicalGrounding.localVersion && (try? msep.get())?.generatorVersion == CanonicalGrounding.localVersion,
               "same vs separate units: the model's notes are the model's, code's notes are code's")
-        check([msep,fsep].compactMap {try? $0.get()}.allSatisfy {n in
-            n.bullets.count==2 && n.bullets.allSatisfy {$0.actionIDs.count==1} && Set(n.bullets.flatMap(\.actionIDs))==Set(rsep.actions.map(\.id))
-        }, "separate run bullets preserve distinct source IDs without inventing one message")
+        check([msep,fsep].compactMap {try? $0.get()}.count == 2 && [msep,fsep].compactMap {try? $0.get()}.allSatisfy {n in
+            n.bullets.count==1 && n.bullets[0].actionIDs==rsep.actions.map(\.id)
+        }, "the one line cites both source runs, in order (nothing dropped, no message invented)")
         let four = [ms, msep, fs, fsep].compactMap { try? $0.get() }
         check(four.count == 4 && four.allSatisfy(noInference), "same vs separate units: no typed words, no topic, no delivery or reply claim in any of the four")
         check(four.count == 4 && four.allSatisfy { coreAcceptsAll($0, $0.requestID == "fs" ? rs : rsep) }, "same vs separate units: core's claim rule accepts all four")

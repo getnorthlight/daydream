@@ -1,6 +1,14 @@
 import Foundation
 @testable import MemoryCore
 import PrivacyPolicy
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 /// W0 app wiring (typesafe SPEC 12.2 items 2 and 11): what the app does with
 /// typed text at launch, compiled from the app's own files
@@ -9,9 +17,10 @@ import PrivacyPolicy
 /// launch, no timer on a real run loop, no capture.
 @main struct TypedLaunchChecks {
     static var count = 0
-    static func check(_ value: Bool, _ label: String) { precondition(value, "FAILED: " + label); count += 1; print("PASS " + label) }
+    static func check(_ value: Bool, _ label: String) { if !(value) { ddFail(label); return }; count += 1; print("PASS " + label) }
 
     @MainActor static func main() throws {
+        ddReportAtExit()
         setbuf(stdout, nil)
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("typed-launch-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

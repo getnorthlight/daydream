@@ -6,7 +6,7 @@
 //   B. Input Monitoring turned on after launch: DayDream restarts by itself once both read on, never in a loop.
 //   C. Look-alike rows: the page names the exact row, and a row left from another copy is removed first, then added
 //      again (tccd 10/3: a card dropped onto an existing row changes nothing).
-//   D. Back twice from System Settings with both still off: the remove-and-add-again step comes first.
+//   D. Back twice from System Settings with a permission still off: its remove-and-add-again step (counted per permission).
 import AppKit
 import MemoryCore
 import MemoryUI
@@ -124,17 +124,22 @@ import MemoryUI
         check(before(recovery, "minus", "drag the card") && recovery.contains("changes nothing") && !recovery.contains("Quit and reopen"), "C-rows",
               "\"Already turned on in System Settings?\": remove, then add again; switching the old row on changes nothing: \(recovery)")
 
-        // MARK: D. Back twice with both off
+        // MARK: D. Back twice with that permission off (rc-018 RC3 B4: counted per permission)
         var returns = PermissionReturns()
-        returns.returned(paneOpened: false)
-        check(!returns.showsReAddFirst(accessibility: false, inputMonitoring: false), "D-returns", "coming back without opening a pane doesn't count")
-        returns.returned(paneOpened: true)
-        check(!returns.showsReAddFirst(accessibility: false, inputMonitoring: false), "D-returns", "once back: not yet")
-        returns.returned(paneOpened: true)
-        check(returns.showsReAddFirst(accessibility: false, inputMonitoring: false), "D-returns", "twice back, both off: remove-and-add-again first")
-        check(!returns.showsReAddFirst(accessibility: true, inputMonitoring: false), "D-returns", "one allowed: not shown")
-        returns.reset()
-        check(!returns.showsReAddFirst(accessibility: false, inputMonitoring: false), "D-returns", "a permission read on starts the count over")
+        returns.returned(from: nil)
+        check(!returns.showsReAdd("inputMonitoring", allowed: false) && returns.count("inputMonitoring") == 0, "D-returns",
+              "coming back without opening a pane doesn't count")
+        returns.returned(from: "inputMonitoring")
+        check(!returns.showsReAdd("inputMonitoring", allowed: false), "D-returns", "once back: not yet")
+        returns.returned(from: "inputMonitoring")
+        check(returns.showsReAdd("inputMonitoring", allowed: false) && !returns.showsReAdd("accessibility", allowed: false), "D-returns",
+              "twice back from Input Monitoring's pane, still off: its remove-and-add-again step (not Accessibility's)")
+        check(!returns.showsReAdd("inputMonitoring", allowed: true), "D-returns", "that permission allowed: not shown")
+        returns.reset("accessibility")
+        check(returns.showsReAdd("inputMonitoring", allowed: false) && returns.count("inputMonitoring") == 2, "D-returns",
+              "the OTHER permission reading on never starts this one's count over (owner 10/9)")
+        returns.reset("inputMonitoring")
+        check(!returns.showsReAdd("inputMonitoring", allowed: false), "D-returns", "its own permission read on starts its count over")
 
         try? FileManager.default.removeItem(at: out)
         print("permission-guidance: \(Report.passed) passed, \(Report.failed) failed")

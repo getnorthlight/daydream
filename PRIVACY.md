@@ -31,7 +31,7 @@ DayDream also sends anonymous [usage counts](#usage-counts) to PostHog about onc
 
 DayDream also checks DayDream's website (getdaydream.app) for updates, unless you turn that off, and downloads a new version from GitHub. Those requests ask for the list of versions and the update itself, and carry no history. The website and GitHub see your IP address, as any website does.
 
-Summaries on this Mac send no history. Setup shows them switched on (on a Mac that can run them): when you press Continue, or turn them on in Settings › Summarizer, DayDream downloads the model (2.74 GB) from Hugging Face in the background, and it may also ask Apple about its signing certificate. It does neither by itself, except that a download you started finishes after a quit (and may then ask Apple), and neither request carries history.
+Summaries on this Mac send no history. For a new install they turn on by themselves during setup, once the permissions page is done, on a Mac that can run them with at least 5 GB free: DayDream then downloads the model (2.74 GB) from Hugging Face in the background, and it may also ask Apple about its signing certificate. The same happens when you turn them on in Settings › Summarizer, where you can also turn them off. Otherwise it does neither by itself, except that a download already under way finishes after a quit (and may then ask Apple), and neither request carries history.
 
 ## What we receive
 
@@ -45,7 +45,8 @@ DayDream sends these counts to PostHog (a product analytics service, `us.i.posth
 - each setup step you finish: a permission allowed, the summaries you chose (on this Mac, OpenRouter or off), the AI app you connected (Claude, Claude Code, Cursor, ChatGPT, Windsurf or other), and setup done;
 - once a day: whether recording is on, paused or off, whether its two permissions are allowed, about how long it recorded the day before (none, under an hour, 1–3, 3–6 or 6+ hours), which summaries are on, which AI apps are connected, whether Web pages in Chrome is on, and how many summaries were written or failed and why (like a bad OpenRouter key);
 - each time an AI app uses a DayDream tool: which AI app, which tool, how many results and how long it took;
-- each time you open DayDream's window (from the menu bar, the Dock or another way) and each search in it, with how many results.
+- each time you open DayDream (from the menu bar, the Dock, Finder or another way; not when it opens by itself at login) and each search in its window, with how many results;
+- once after each update: the version it updated from and to.
 
 Each count carries DayDream's version and a random ID made for your copy of DayDream. The ID isn't made from anything on your Mac, your name, your email or an account, so we can't tell who you are from it. DayDream asks PostHog not to keep your IP address or look up where you are. Usage counts never include your history, the words you type, window or page titles, sites or addresses, app names other than the AI apps above, searches, notes or file names.
 

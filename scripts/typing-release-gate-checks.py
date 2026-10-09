@@ -76,14 +76,11 @@ OWNER_FLAG_PASSERS = {'scripts/package.sh', 'scripts/developer-id-release.py', '
 # Package.swift, packaging/ and the app's sources still never define the flag). Each with the commit that added it.
 CHECK_AND_QA_PASSERS = {
     'runner-1001/run-checks.sh', 'runner-1001/owner-lane.sh', 'runner-1001/ui-checks.sh',  # 858ec32: the owner lane
+    'runner-1001/wired-lanes.sh',              # e90eba2: Phase 1's wired lanes, owner flags
     'scripts/agent-tools-evals.py',            # f2e15e7: agent-tools evals, owner lane
-    'scripts/check-ui-revision.sh',            # 5a02623: UI revision check build (QA harness)
     'scripts/compile-legacy-qa-boundary.py',   # c92de61: asserts the QA stage's flags
     'scripts/day-review-checks.swift',         # ba46541: its compile line in a comment
     'scripts/reddit-combined-capture-checks.swift',  # 4a5a188: standalone QA check, compile line in a comment
-    'scripts/run-messages-moment-checks.sh',   # d252cbf: Messages moment checks, owner flags
-    'scripts/sig-modern-repro-build.py',       # d5f82ae: QA repro build
-    'scripts/sig-note-prepare-build.py',       # d586301: QA note-prepare build
     'scripts/typing-public-lane-checks.py',    # 079c36d: asserts the release passes the flag
     'docs/agent-tools/ownership.md',           # 5a74d76: the owner lane's build line
     'docs/private-capture-qa.md',              # 0184887: QA fixture compiles
@@ -242,6 +239,9 @@ def without_qa(text):
 assert without_qa('a\n#if DAYDREAM_QA_HARNESS && DAYDREAM_OWNER_TYPING\nqa\n#if X\nqa2\n#endif\n#else\nkept\n#endif\nb\n') == 'a\nkept\n#endif\nb\n'
 
 
+GUIDE = 'Sources/MemoryUI/PermissionDragGuide.swift'
+
+
 def app_proof_problems(files):
     """files: (relative path, text). The web-content proof's source rules, over what a shipping (non-QA) build
     compiles: the QA harness's own bootstraps (e01b406, aaeab02) focus a fresh test field and never ship."""
@@ -259,7 +259,16 @@ def app_proof_problems(files):
         if 'TypingCategories.enhancedUserInterfaceApps.contains(bundle)' not in prepare or 'trustedNativeProcess(pid:pid,bundle:bundle)' not in prepare \
                 or 'allowed(bundle)' not in prepare:
             found.append(('enhanced-user-interface-not-scoped', 'AccessibilitySnapshot.swift'))
-    writers = [rel for rel, text in code.items() if 'AXUIElementSetAttributeValue(' in text]
+    # rel-018: setup's Input Monitoring step moves System Settings' own window beside setup (PermissionDragGuide): its
+    # position and size only, three writes in setFrame, and nothing else written anywhere in that file.
+    guide = code.get(GUIDE, '')
+    if 'AXUIElementSetAttributeValue(' in guide:
+        frame = guide.split('static func setFrame(', 1)[-1].split('\n    }', 1)[0] if 'static func setFrame(' in guide else ''
+        writes = re.findall(r'AXUIElementSetAttributeValue\(([^)]*)\)', guide)
+        if len(writes) != 3 or frame.count('AXUIElementSetAttributeValue(') != 3 \
+                or not all(re.fullmatch(r'element, kAX(Position|Size)Attribute as CFString, (position|extent)', w) for w in writes):
+            found.append(('window-move-writes-more-than-position-and-size', GUIDE))
+    writers = [rel for rel, text in code.items() if 'AXUIElementSetAttributeValue(' in text and rel != GUIDE]
     enhanced_writes = len(re.findall(r'AXUIElementSetAttributeValue\(app,enhancedUserInterface as CFString,', snapshot))
     if writers != ['Sources/MacMemApp/AccessibilitySnapshot.swift'] or snapshot.count('AXUIElementSetAttributeValue(') != 1 + enhanced_writes \
             or enhanced_writes > 1 \
@@ -317,6 +326,18 @@ class GateChecks(unittest.TestCase):
         self.assertIn('attribute-write-not-only-the-manual-switch',
                       enhanced_bad(enhanced.replace('}\n}\n', '}\nstatic func x() { AXUIElementSetAttributeValue(app,enhancedUserInterface as CFString,w) }\n}\n', 1)))
         self.assertIn('attribute-write-not-only-the-manual-switch', [k for k, _ in app_proof_problems(good + [('Sources/X.swift', 'AXUIElementSetAttributeValue(x,y,z)')])])
+        # rel-018: setup's window move writes System Settings' position and size, three times in setFrame, nothing else.
+        move = ('static func setFrame(_ element: AXUIElement, _ rect: CGRect) -> Bool {\n'
+                '        AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, position)\n'
+                '        AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, extent)\n'
+                '        AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, position)\n    }\n')
+        self.assertEqual(app_proof_problems(good + [(GUIDE, move)]), [])
+        self.assertIn('window-move-writes-more-than-position-and-size',
+                      [k for k, _ in app_proof_problems(good + [(GUIDE, move.replace('kAXSizeAttribute', 'kAXValueAttribute'))])])
+        self.assertIn('window-move-writes-more-than-position-and-size',
+                      [k for k, _ in app_proof_problems(good + [(GUIDE, move + 'AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, position)\n')])])
+        self.assertIn('attribute-write-not-only-the-manual-switch',
+                      [k for k, _ in app_proof_problems(good + [('Sources/MemoryUI/Other.swift', move)])])
         # A write inside a QA-harness-only branch is not compiled into a shipping build; one outside it still is.
         qa = '#if DAYDREAM_QA_HARNESS && DAYDREAM_OWNER_TYPING && DAYDREAM_CHROME_TYPING\nAXUIElementSetAttributeValue(f,k,v)\n#endif\n'
         self.assertEqual(app_proof_problems(good + [('Sources/QA.swift', qa)]), [])

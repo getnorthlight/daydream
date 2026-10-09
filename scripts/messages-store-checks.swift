@@ -1,11 +1,20 @@
 import Foundation
 import MemoryCore
 import PrivacyPolicy
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 // Actual CoreCaptureBinding source + sealed isolated MemoryStore. Synthetic
 // proof and characters only; no AX, event posting, default home or Keychain.
 @main struct MessagesStoreChecks {
     static func main() throws {
+        ddReportAtExit()
         let home=FileManager.default.temporaryDirectory.appendingPathComponent("messages-store-fixture-"+UUID().uuidString)
         try FileManager.default.createDirectory(at:home,withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
         let keys=InMemoryTypedKeyStore(),store=try MemoryStore(home:home,writable:true,automaticallySyncSearch:false)
@@ -14,7 +23,7 @@ import PrivacyPolicy
         try store.setCaptureState("recording",reason:"synthetic controlled fixture")
         let binding=CoreCaptureBinding(store:store)
         var count=0,mono:UInt64=10_000_000_000
-        func check(_ value:Bool,_ label:String) {precondition(value,label);count += 1}
+        func check(_ value:Bool,_ label:String) {if !(value) { ddFail(label); return };count += 1}
         // messages-1003: Return alone never detects a send, whatever the field; the composer emptying does (below).
         let cases:[(String,String,String,String)]=[("oneLine","AXTextField","","unknown"),("to","AXTextField","To:","unknown"),("body","AXTextArea","","unknown")]
         for (id,role,label,send) in cases {

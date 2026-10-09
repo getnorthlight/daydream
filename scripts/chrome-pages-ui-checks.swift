@@ -16,13 +16,21 @@ import Carbon
 import SwiftUI
 import MemoryCore
 import MemoryUI
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 func fail(_ message:String) -> Never {
     fflush(stdout)
     FileHandle.standardError.write(Data("FAIL: \(message)\n".utf8))
     exit(1)
 }
-@MainActor func expect(_ condition:Bool,_ message:@autoclosure ()->String) { if !condition {fail(message())} }
+@MainActor func expect(_ condition:Bool,_ message:@autoclosure ()->String) { if !condition {ddFail(message())} }
 func pass(_ message:String) { print("PASS: \(message)"); fflush(stdout) }
 @MainActor func thrownText(_ body:() throws -> Void) -> String? {
     do {try body();return nil}
@@ -108,6 +116,7 @@ final class FakeChrome:@unchecked Sendable {
     }()
 
     static func main() async throws {
+        ddReportAtExit()
         DispatchQueue.global().asyncAfter(deadline:.now()+120) {
             FileHandle.standardError.write(Data("FAIL: chrome-pages-ui-checks watchdog expired after 120s\n".utf8))
             exit(2)
@@ -655,7 +664,7 @@ final class FakeChrome:@unchecked Sendable {
                && Row.subtitle(access:.denied,typing:true,opensChrome:false) == Row.offLine
                && Row.line(access:.allowed,asked:true) == nil,
                "setup row: no line before the press; after it, why macOS gave no answer; refused, the row's own line says where to allow it")
-        expect(Row.title == "Google Chrome" && Row.allowTitle == "Allow" && Row.reason == ChromePagesCard.setupLine,"setup row: its words")
+        expect(Row.title == "Google Chrome" && Row.allowTitle == "Allow" && Row.reason == "Knows which page you're on.","setup row: its words (owner 10/8)")
         pass("setup's Chrome row asks once on its press (opening a closed Chrome first); nothing asks after setup")
 
         // A late read never overwrites a newer one.

@@ -130,7 +130,13 @@ actor LoadCounter:LocalInference {
   require(userRepair?.code=="user" && userRepair!.reason.contains("never write") && !userRepair!.reason.contains("implied"),"pronoun repair gives the same no-personal-subject contract as validation")
   let parcel=try request("parcel-copy",[action("p1","The courier lost my parcel; can you check the delivery desk?")])
   let pv=try ModelView(request:parcel,actions:parcel.actions)
-  let copyRepair=rejection("Parcel inquiry","Texted Avery about the lost parcel and asked to check the delivery desk.",parcel,pv)
+  // A sent text's gist ("Texted Avery ...") keeps core's copy rule since 1f22c5b (owner, messages-1003); the writer's
+  // copy repair is for every other lead.
+  require(rejection("Parcel inquiry","Texted Avery about the lost parcel and asked to check the delivery desk.",parcel,pv)?.code != "copy","a sent text's gist may keep its content words (owner rule, 10/03)")
+  // The word list is the hint for a source with no separate requests or absences; one that has them gets a03ea84's
+  // "missing source clauses" hint instead (summary-clause-checks covers that one).
+  let plain=try request("parcel-words",[action("w1","The courier lost my parcel at the delivery desk.")])
+  let copyRepair=rejection("Parcel inquiry","Wrote to Avery about the lost parcel at the delivery desk.",plain,try ModelView(request:plain,actions:plain.actions))
   require(copyRepair?.code=="copy" && copyRepair!.reason.contains("preserving every captured statement and request") && !copyRepair!.reason.contains("8 words"),"copy repair retains facts and requests without an eight-word bullet demand")
   require(copyRepair?.reason.contains("Repeated ordinary content words by item: i1:")==true && copyRepair!.reason.contains("\"parcel\"") && copyRepair!.reason.contains("\"desk\""),"copy repair names visible repeated content words with their exact item owner")
   require(copyRepair?.reason.contains("\"courier\"")==false && copyRepair?.reason.contains("\"avery\"")==false,"replacement targets exclude uncopied content and exact recipient names")

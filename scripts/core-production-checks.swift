@@ -2,11 +2,12 @@ import Foundation
 @testable import MemoryCore
 
 @main struct Checks {
-    static var count=0
-    static func check(_ value:Bool,_ label:String) {precondition(value,label);count+=1;print("PASS "+label)}
-    static func rejects(_ label:String,_ work:() throws -> Void) {do {try work();fatalError(label)} catch {check(true,label)}}
+    static var count=0, failures=0
+    // Collect, then report: a failed check prints FAIL and the run goes on; the exit is non-zero at the end.
+    static func check(_ value:Bool,_ label:String) {if value {count+=1;print("PASS "+label)} else {failures+=1;print("FAIL "+label)}}
+    static func rejects(_ label:String,_ work:() throws -> Void) {do {try work();check(false,label+" (was accepted)")} catch {check(true,label)}}
     static func main() throws {
-        setbuf(stdout,nil)
+        setvbuf(stdout,nil,_IOLBF,0)
         let root=FileManager.default.temporaryDirectory.appendingPathComponent("core-production-"+UUID().uuidString)
         try FileManager.default.createDirectory(at:root,withIntermediateDirectories:false)
         defer {try? FileManager.default.removeItem(at:root)}
@@ -124,6 +125,7 @@ import Foundation
         try Data("keep this synthetic file".utf8).write(to:untracked)
         rejects("missing ledger cannot authorize deletion of nonempty directory") {try noMigration.cleanupMigrationAttachments()}
         check(try String(contentsOf:untracked)=="keep this synthetic file","untracked bytes preserved for review")
+        if failures>0 {print("\(failures) failed");exit(1)}
         print("\(count) native core production checks passed")
     }
 }

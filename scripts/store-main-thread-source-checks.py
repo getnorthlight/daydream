@@ -150,7 +150,7 @@ class LaunchPreparation(unittest.TestCase):
         content = body(APP, 'struct DaydreamMainWindowContent: View')
         self.assertIn('else if session.preparing {DaydreamPreparingWindow().onAppear {session.windowShown()}} else {SyntheticWindow()}', content,
                       'the window shows the synthetic preview while launch prepares the history (perf2-1005: and says it appeared)')
-        self.assertIn('else {DaydreamPreparingWindow().onAppear {session.windowShown()}}', content,
+        self.assertIn('else {DaydreamPreparingWindow().onAppear {SetupFocus.shared.revealMemory(activate:false);session.windowShown()}}', content,
                       "perf2-1005: the app's preparing window tells the session it appeared, so the model is made after it draws")
         self.assertIn('DaydreamMenuBarIsolatedPanel(line: session.preparing ? MenuBarMenu.preparingLine : MenuBarMenu.isolatedLine)', scene,
                       'the menu bar says "Isolated preview" while launch prepares the history')

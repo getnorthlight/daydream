@@ -11,10 +11,11 @@ import SwiftUI
 /// Reduce Motion), remembered while DayDream runs. Pure rules, source pins and off-window layout sizes; no app, window
 /// or defaults of the person.
 @main @MainActor enum SettingsCondenseChecks {
-    static var checks = 0
+    static var checks = 0, failures = 0
+    // Collect-then-report: every check prints PASS or FAIL and the run goes on; the exit is non-zero when any failed.
     static func require(_ ok: Bool, _ reason: String, _ got: @autoclosure () -> String = "") {
-        guard ok else { FileHandle.standardError.write(Data("FAIL: \(reason) \(got())\n".utf8)); exit(1) }
-        checks += 1
+        guard ok else { failures += 1; print("FAIL: \(reason) \(got())"); return }
+        checks += 1; print("PASS: \(reason)")
     }
     static func source(_ path: String) -> String { (try? String(contentsOfFile: path, encoding: .utf8)) ?? "" }
 
@@ -24,7 +25,8 @@ import SwiftUI
         chromeRow()
         typingRow()
         page()
-        print("PASS: settings-condense \(checks) checks; private defaults suite, no windows")
+        print("settings-condense: \(checks) passed, \(failures) failed; private defaults suite, no windows")
+        if failures > 0 { exit(1) }
     }
 
     static func aiReads() {
@@ -41,14 +43,10 @@ import SwiftUI
         require(AIReadsTypedSetting.line == "AI apps you connect can see what you type, minus passwords and codes.",
                 "one short line")
         let cards = source("Sources/MemoryUI/PermissionSetup.swift")
-        guard let chrome = cards.range(of: "if let chromeRow { chromeCard(chromeRow) }"),
-              let toggle = cards.range(of: "if showsAIReadsToggle { aiReadsCard }") else { require(false, "setup markers"); return }
-        require(chrome.upperBound <= toggle.lowerBound && cards[chrome.upperBound..<toggle.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                "the toggle is directly under the Google Chrome row")
-        require(cards.contains("@AppStorage(AIReadsTypedSetting.key) private var aiReadsTyped = AIReadsTypedSetting.defaultValue")
-                && cards.contains("Toggle(\"\", isOn: $aiReadsTyped)"), "setup's toggle is bound to the setting")
-        // Owner 10/5: setup doesn't show it (connecting an AI app is the choice); Settings › Connections does.
-        require(!source("Sources/MacMemApp/DaydreamOnboarding.swift").contains("showsAIReadsToggle"),
+        // Owner 10/5, 10/7: setup doesn't show it (connecting an AI app is the choice; the permissions page's toggle path is
+        // gone); Settings › Connections does.
+        require(!cards.contains("AIReadsTypedSetting") && !cards.contains("aiReadsCard")
+                && !source("Sources/MacMemApp/DaydreamOnboarding.swift").contains("showsAIReadsToggle"),
                 "setup's Permissions card doesn't show it")
         let connections = source("Sources/MacMemApp/ConnectionSettings.swift")
         require(connections.contains("@AppStorage(AIReadsTypedSetting.key) private var aiReadsTyped = AIReadsTypedSetting.defaultValue")

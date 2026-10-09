@@ -209,9 +209,10 @@ import MemoryUI
               && !app.contains("StoreIntegrity.health("), "launch opens the history through the repair (no whole-file check on a usual launch), and notes a kept file for the menu")
         check(app.contains("var shownIssue:String? { operationalIssue }")
               && app.contains("operationalIssue:shownIssue ?? (resumeUnavailable == nil ? historySetAsideIssue : nil)")
-              // gold/int: lifecycle shows its derived blocker (shownBlocker) before the set-aside line, which still
-              // shows only with no blocker (resumeUnavailable == nil).
-              && app.contains("issue:shownIssue ?? shownBlocker ?? (resumeUnavailable == nil ? historySetAsideIssue : nil),"),
+              // gold/int: lifecycle shows its derived blocker before the set-aside line, which still shows only with no
+              // blocker (resumeUnavailable == nil). permflash-015 named it presentedBlocker (shownBlocker, or a settled
+              // permission blocker).
+              && app.contains("issue:shownIssue ?? presentedBlocker ?? (resumeUnavailable == nil ? historySetAsideIssue : nil),"),
               "the damaged-history line is the orange line only when no problem or blocker is shown")
 
         // One line, leading to Backup and restore; it goes once that page has been seen, or a backup restored.

@@ -1,0 +1,48 @@
+# Check files that are deliberately not a runner step, each with a reason (scripts/verify-run-manifest.py --inventory).
+# kind: tool | library | release-module | qa-optin | perf-phase2 | stage-only | render | manual-window | fixture | runner |
+#   needs-model | phase2-rewrite
+file	kind	reason
+scripts/capture-fixture-checks.swift	qa-optin	QA harness check (owned-composer / scripted-Chrome QA builds); off by default until Phase 2 decides whether the QA harness stays
+scripts/capture-fixture-enabled-checks.swift	qa-optin	QA harness check (owned-composer / scripted-Chrome QA builds); off by default until Phase 2 decides whether the QA harness stays
+scripts/capture-row-order-checks.swift	qa-optin	QA harness check (owned-composer / scripted-Chrome QA builds); off by default until Phase 2 decides whether the QA harness stays
+scripts/capture-workflow-contract-checks.swift	qa-optin	QA harness check (owned-composer / scripted-Chrome QA builds); off by default until Phase 2 decides whether the QA harness stays
+scripts/card-click-perf-checks.swift	perf-phase2	benchmark with timing thresholds; joins the Phase 2 perf lane
+scripts/check-daydream-icon-alpha.swift	tool	checks a rendered icon PNG passed on the command line; run by hand when the icon changes
+scripts/check_dmg.py	stage-only	needs a built DMG, app or pkg; run by the release stage, not the source runner
+scripts/check_dmg_layout.py	stage-only	needs a built DMG, app or pkg; run by the release stage, not the source runner
+scripts/check_local_seal.py	tool	checks an app copy after scripts/seal-local-app.sh (the ad-hoc local seal, not the Developer ID release); takes the app path as its argument and is run by hand; nothing in the repo invokes it
+scripts/check_package.py	tool	checks dist/Daydream-guided-local-unsigned.pkg, which scripts/package.sh (the ad-hoc local installer, not the Developer ID release) writes; run by hand after package.sh; nothing in the repo invokes it
+scripts/check_state_vocabulary.py	library	imported by the copy checks as their vocabulary engine; not a check on its own
+scripts/chrome-automation-request-controls-checks.swift	qa-optin	QA harness check (owned-composer / scripted-Chrome QA builds); off by default until Phase 2 decides whether the QA harness stays
+scripts/chrome-front-inspection-controls-checks.swift	qa-optin	QA harness check (owned-composer / scripted-Chrome QA builds); off by default until Phase 2 decides whether the QA harness stays
+scripts/chrome-permission-readiness-checks.swift	qa-optin	QA harness check (owned-composer / scripted-Chrome QA builds); off by default until Phase 2 decides whether the QA harness stays
+scripts/claude-owned-composer-checks.swift	qa-optin	QA harness check (owned-composer / scripted-Chrome QA builds); off by default until Phase 2 decides whether the QA harness stays
+scripts/day-nav-speed-checks.swift	perf-phase2	benchmark with timing thresholds; joins the Phase 2 perf lane
+scripts/daydream-core-source-checks.py	library	the runner reads its capture= file list (CAPTURE); its own steps are the memory-controls/onboarding-staging steps
+scripts/focus-list-scroll-perf-checks.swift	perf-phase2	benchmark with timing thresholds; joins the Phase 2 perf lane
+scripts/honesty-switch-off-checks.swift	library	compiled and run by scripts/honesty-switch-off-checks.sh (step honesty-switch-off)
+scripts/messages-identity-checks.swift	qa-optin	QA harness check (owned-composer / scripted-Chrome QA builds); off by default until Phase 2 decides whether the QA harness stays
+scripts/messages-kernel-identity-checks.swift	qa-optin	QA harness check (owned-composer / scripted-Chrome QA builds); off by default until Phase 2 decides whether the QA harness stays
+scripts/messages-owned-preflight-checks.swift	qa-optin	QA harness check (owned-composer / scripted-Chrome QA builds); off by default until Phase 2 decides whether the QA harness stays
+scripts/native-lifecycle-files-checks.swift	qa-optin	QA harness check (owned-composer / scripted-Chrome QA builds); off by default until Phase 2 decides whether the QA harness stays
+scripts/normal-main-chrome-metadata-checks.swift	qa-optin	QA harness check (owned-composer / scripted-Chrome QA builds); off by default until Phase 2 decides whether the QA harness stays
+scripts/note-search-perf-checks.swift	perf-phase2	benchmark with timing thresholds; joins the Phase 2 perf lane
+scripts/notes-activation-checks.swift	qa-optin	QA harness check (owned-composer / scripted-Chrome QA builds); off by default until Phase 2 decides whether the QA harness stays
+scripts/notes-menu-diagnostic-checks.swift	qa-optin	QA harness check (owned-composer / scripted-Chrome QA builds); off by default until Phase 2 decides whether the QA harness stays
+scripts/notes-menu-diagnostic-files-checks.swift	qa-optin	QA harness check (owned-composer / scripted-Chrome QA builds); off by default until Phase 2 decides whether the QA harness stays
+scripts/notes-metadata-checks.swift	qa-optin	QA harness check (owned-composer / scripted-Chrome QA builds); off by default until Phase 2 decides whether the QA harness stays
+scripts/prompt-row-render.swift	render	renders the AI prompt rows to PNG for a person to look at; asserts nothing
+scripts/qa-chrome-outcome-buffer-checks.py	qa-optin	QA harness check (owned-composer / scripted-Chrome QA builds); off by default until Phase 2 decides whether the QA harness stays
+scripts/qa-chrome-preflight-isolation-checks.py	qa-optin	QA harness check (owned-composer / scripted-Chrome QA builds); off by default until Phase 2 decides whether the QA harness stays
+scripts/qa-chrome-transport-outcome-checks.py	qa-optin	QA harness check (owned-composer / scripted-Chrome QA builds); off by default until Phase 2 decides whether the QA harness stays
+scripts/reddit-combined-capture-checks.swift	qa-optin	QA harness check (owned-composer / scripted-Chrome QA builds); off by default until Phase 2 decides whether the QA harness stays
+scripts/show-all-render.swift	render	renders the Show all page to PNG for a person to look at; asserts nothing
+BrowserBridge/fixtures/run-core-checks.sh	runner	an older standalone recipe (its own swift build under /private/tmp) for core-ingestion-checks.swift and key-store-checks.mjs; the runner runs both (bb-core-ingestion, bb-key-store-mjs)
+WriterBackend/run-core-checks.sh	runner	an older standalone recipe for WriterBackend/CoreChecks.swift and AdapterChecks; the runner runs both (wb-core, wb-AdapterChecks)
+WriterBackend/BindingChecks/main.swift	phase2-rewrite	stale (10/08 probe against the owner objects): its click-only fixtures now commit through the code writer (generator code-moment9-validator15, one bullet holding every action), so the fake model never runs; the claims that need it fail (generator is the local model's, a delete or revision during inference is denied). Needs fixtures that reach the model
+WriterBackend/BindingChecks/run.sh	phase2-rewrite	BindingChecks' build recipe (see WriterBackend/BindingChecks/main.swift)
+WriterBackend/CandidateRuntimeChecks/main.swift	needs-model	verifies and loads the pinned runtime archive and model file given as arguments; run by hand with the real model
+WriterBackend/ColdRestartChecks/main.swift	needs-model	clones the pinned model file and unpacks the runtime archive given as arguments, then restarts the writer cold; run by hand with the real model
+WriterBackend/ControllerModelChecks/main.swift	needs-model	clones the pinned model file and unpacks the runtime archive given as arguments; run by hand with the real model
+runner-1001/run-checks.sh	runner	the check runner itself
+runner-1001/ui-checks.sh	runner	sourced by runner-1001/run-checks.sh: the APP and UI recipes

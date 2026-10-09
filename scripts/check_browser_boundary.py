@@ -42,13 +42,9 @@ CHROME_TYPING_FILES = ['Sources/MemoryCore/BrowserTypingJoin.swift', 'Sources/Ma
 RECIPE_AND_DOC_FILES = {
     'runner-1001/ui-checks.sh',                  # 858ec32: the flagged UI half of the copied headless runner
     'scripts/typing-public-lane-checks.py',      # 079c36d: pins that every release stage passes both flags
-    'scripts/run-messages-moment-checks.sh',     # d252cbf: Messages identity checks, owner lane
     'scripts/agent-tools-evals.py',              # f2e15e7: agent-tools evals, owner lane (--mode both)
     'scripts/check-qa-harness-boundary.py',      # 0184887: pins the QA harness's own #if lines
     'scripts/compile-legacy-qa-boundary.py',     # c92de61: pins a QA stage's swift_flags
-    'scripts/check-ui-revision.sh',              # 5a02623: the private UI review recipe (QA flags explicit)
-    'scripts/sig-modern-repro-build.py',         # d5f82ae: standalone summary repro compile
-    'scripts/sig-note-prepare-build.py',         # d586301: standalone note-prepare compile
     'docs/agent-tools/ownership.md',             # 5a74d76: the owner lane's build flags (text)
     'evidence-0930/CODEX-B-1001-REPORT.md',      # 630af14: the fixture runner's owner-lane command (text)
 }
@@ -70,7 +66,9 @@ FLAG_FILES = set(CHROME_TYPING_FILES) | {'Checks/main.swift', 'Checks/ChromeBrac
                                          # only under the flag (release-scan keeps the public binary clean).
                                          'scripts/preview/build-preview-app.sh', 'Sources/MemoryCore/PreviewSample.swift',
                                          # CODEX-E-1001: reviewed nonshipping copied headless check recipes.
-                                         'runner-1001/run-checks.sh', 'runner-1001/owner-lane.sh'} | RECIPE_AND_DOC_FILES
+                                         'runner-1001/run-checks.sh', 'runner-1001/owner-lane.sh',
+                                         # Phase 1 (9a-9e): the wired lanes compile with both shipped flags, as owner-lane.
+                                         'runner-1001/wired-lanes.sh'} | RECIPE_AND_DOC_FILES
 # Website typing (typing-all SPEC-LATER 4.2, the web track): its owner-only
 # row, rules and strings live in the Chrome typing core file; its end-to-end
 # check drives the actual EventCapture in the owner build.
@@ -90,8 +88,7 @@ OWNER_HOOKS = {'Sources/MemoryCore/BrowserSafety.swift': 1, 'Sources/MemoryCore/
 OWNER_TEXT_FILES = {
     'Sources/MemoryUI/ChromePagesSettings.swift': ["It never saves what's on the page, what you type, or your clicks."],
     'Sources/MemoryCore/Diagnostics.swift': ['"Typed text (Notes and TextEdit)"'],
-    'Sources/MemoryUI/PermissionSetup.swift': ['"Notice clicks while recording, and typing in Notes and TextEdit only if you turn typed text on."',
-                                              '"Notices clicks, and typing in Notes and TextEdit."'],
+    'Sources/MemoryUI/PermissionSetup.swift': ['"Notice clicks while recording, and typing in Notes and TextEdit only if you turn typed text on."'],
     # typingfix (owner/v1 review F4): the typed-text switch and the safe-typing screen name websites in Chrome.
     'Sources/MemoryUI/OnboardingScreens.swift': ['public static var typedTextScope: String { "\\(TypingSettingsText.allowedAppsPhrase()) only" }',
                                                 'public static let websiteTypingBullet: String? = nil'],
@@ -128,7 +125,7 @@ OWNER_FLAG_FILES = {'PrivacyPolicy/Sources/PrivacyPolicy/OwnerTyping.swift', 'So
                     # the writer's "would typing be recorded here" fact asks the owner build's website rules (public: never).
                     'scripts/docs-claims-checks.py', 'Sources/MemoryCore/WriterFacts.swift',
                     # CODEX-E-1001: reviewed nonshipping copied headless check recipes.
-                    'runner-1001/run-checks.sh', 'runner-1001/owner-lane.sh',
+                    'runner-1001/run-checks.sh', 'runner-1001/owner-lane.sh', 'runner-1001/wired-lanes.sh',
                     # Checks that compile an owner-build expectation (the checks targets and scripts; nothing ships):
                     'Checks/WebTypingChecks.swift',              # e214a29: website typing's owner-only checks
                     'scripts/day-review-checks.swift',           # ba46541: Messages typing fixtures in the owner lane
@@ -139,10 +136,6 @@ OWNER_FLAG_FILES = {'PrivacyPolicy/Sources/PrivacyPolicy/OwnerTyping.swift', 'So
                     # QA harness check and build recipes (codex 1001; -D DAYDREAM_QA_HARNESS, never a release):
                     'scripts/claude-owned-composer-checks.swift',          # a202387
                     'scripts/reddit-combined-capture-checks.swift',        # 4a5a188
-                    'scripts/build-notes-activation-controls.py',          # e9ccf53
-                    'scripts/build-notes-menu-diagnostic-controls.py',     # cea0b9f
-                    'scripts/build-notes-metadata-checks.py',              # 86370ab
-                    'scripts/notes-metadata-boundary-checks.py',           # 86370ab
                     'scripts/qa-chrome-outcome-buffer-checks.py',          # 61cd921
                     'scripts/qa-chrome-transport-outcome-checks.py',       # 61cd921
                     # Docs that quote QA compile commands (text only, compiled into nothing):

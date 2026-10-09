@@ -26,8 +26,7 @@ let package = Package(
         .executableTarget(name: "MacMemUIRender", dependencies: ["MemoryUI", "MemoryCore"], path: "UIRender"),
         .executableTarget(name: "MacMemCLI", dependencies: ["MemoryCore"]),
         .executableTarget(name: "MacMemChecks", dependencies: ["MemoryCore", "HistoryCore", .product(name:"PrivacyPolicy",package:"PrivacyPolicy")], path: "Checks"),
-        // Upstream Swift Testing tests remain intact on disk. The installed
-        // toolchain cannot import Testing; XCTest ports run below.
-        .testTarget(name: "MemoryCoreTests", dependencies: ["MemoryCore", "HistoryCore"]),
+        // No test target: Tests/MemoryCoreTests/TypesenseTests.swift runs in the suite through
+        // scripts/search-test-runner.swift (the Command Line Tools have no XCTest).
     ]
 )

@@ -1,10 +1,18 @@
 import Foundation
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 @MainActor @main struct OnboardingFlowChecks {
     static var count = 0
 
     static func check(_ condition: @autoclosure () -> Bool, _ label: String) {
-        precondition(condition(), label)
+        if !(condition()) { ddFail(label); return }
         count += 1
         print("PASS " + label)
     }
@@ -33,6 +41,7 @@ import Foundation
     }
 
     static func main() async throws {
+        ddReportAtExit()
         setbuf(stdout, nil)
         routeChecks()
         typingDefaultChecks()
@@ -97,8 +106,9 @@ import Foundation
     }
 
     static func routeChecks() {
-        check(DaydreamOnboardingPage.allCases == [.permissions, .summaries, .apps, .review], "four setup pages: Chrome is a row on Permissions (owner, 10/2)")
-        check(DaydreamOnboardingPage.review.previous == .apps && DaydreamOnboardingPage.apps.previous == .summaries
+        // claude/setup-local-summaries (owner 10/7): no summaries page; summaries on this Mac start by default past Permissions.
+        check(DaydreamOnboardingPage.allCases == [.permissions, .apps, .review], "three setup pages: Chrome is a row on Permissions (owner, 10/2), no summaries page (10/7)")
+        check(DaydreamOnboardingPage.review.previous == .apps && DaydreamOnboardingPage.apps.previous == .permissions
               && DaydreamOnboardingPage.permissions.previous == nil, "Back goes one page back; none on the first page")
         // The Chrome row: installed, not excluded, access not decided; once shown it stays and shows the answer.
         typealias Row = DaydreamOnboardingChromeRow
@@ -121,7 +131,7 @@ import Foundation
         held.permissionsChanged(accessibility: true, inputMonitoring: true, waitsForChrome: true)
         check(held.page == .permissions, "both permissions allowed while the Chrome row waits: the page stays (Continue moves on)")
         held.permissionsChanged(accessibility: true, inputMonitoring: true)
-        check(held.page == .summaries, "the Chrome row allowed: the page moves on by itself")
+        check(held.page == .apps, "the Chrome row allowed: the page moves on by itself")
         var card = DaydreamOnboardingRoute(afterPermissions: .review, advances: false)
         card.permissionsChanged(accessibility: true, inputMonitoring: true)
         check(card.page == .permissions, "the upgrade's Chrome card never moves on by itself")
@@ -156,18 +166,17 @@ import Foundation
         route.permissionsChanged(accessibility: false, inputMonitoring: true)
         check(route.page == .permissions, "Input Monitoring alone does not advance")
         route.permissionsChanged(accessibility: true, inputMonitoring: true)
-        check(route.page == .summaries, "both actual permissions advance to summaries")
+        check(route.page == .apps, "both actual permissions advance to Apps")
         route.permissionsChanged(accessibility: true, inputMonitoring: true)
-        check(route.page == .summaries, "repeated grant refresh does not skip summaries")
+        check(route.page == .apps, "repeated grant refresh does not skip Apps")
         route.show(.permissions)
         route.permissionsChanged(accessibility: true, inputMonitoring: true)
         check(route.page == .permissions, "Back can review granted permissions without bounce")
         route.permissionsChanged(accessibility: false, inputMonitoring: false)
         route.permissionsChanged(accessibility: true, inputMonitoring: true)
         check(route.page == .permissions, "intentional permission review stays put after regrant")
-        route.show(.summaries)
-        check(route.page == .summaries, "explicit Continue exits permission review")
         route.show(.apps)
+        check(route.page == .apps, "explicit Continue exits permission review")
         route.permissionsChanged(accessibility: false, inputMonitoring: false)
         check(route.page == .apps, "background permission refresh does not redirect app choices")
         route.show(.review)
@@ -180,7 +189,7 @@ import Foundation
         waiting.permissionsChanged(accessibility: true, inputMonitoring: true, relaunchPending: true)
         check(waiting.page == .permissions, "Input Monitoring that works only after DayDream reopens: the page waits (Quit & Reopen)")
         waiting.permissionsChanged(accessibility: true, inputMonitoring: true)
-        check(waiting.page == .summaries, "after the relaunch, both allowed moves on to Summaries by itself")
+        check(waiting.page == .apps, "after the relaunch, both allowed moves on to Apps by itself")
         var again = DaydreamOnboardingRoute(afterPermissions: .review)
         again.permissionsChanged(accessibility: false, inputMonitoring: true)
         check(again.page == .permissions, "a finished setup sent back for a permission waits for both")
@@ -200,7 +209,7 @@ import Foundation
                     remaining /= 4
                     encounteredFullGrant = encounteredFullGrant || (state.0 && state.1)
                     scenario.permissionsChanged(accessibility: state.0, inputMonitoring: state.1)
-                    precondition(scenario.page == (encounteredFullGrant ? .summaries : .permissions), "permission refresh must advance exactly once after both actual grants")
+                    if scenario.page != (encounteredFullGrant ? .apps : .permissions) {ddFail("permission refresh must advance exactly once after both actual grants")}
                 }
                 checkedSequences += 1
             }
@@ -211,7 +220,7 @@ import Foundation
             reviewed.show(destination)
             for state in permissions {
                 reviewed.permissionsChanged(accessibility: state.0, inputMonitoring: state.1)
-                precondition(reviewed.page == destination, "intentional review must not be redirected by permission refresh")
+                if reviewed.page != destination {ddFail("intentional review must not be redirected by permission refresh")}
             }
         }
         check(true, "manual review pages never redirect after partial grants, revocation, or regrant")
@@ -231,7 +240,7 @@ import Foundation
             fixture.failValidation = true
             do {
                 _ = try await starter.start(operations: fixture.operations)
-                preconditionFailure("invalid prerequisites must throw")
+                ddFail("invalid prerequisites must throw")
             } catch FixtureFailure.validation {}
             check(fixture.events == ["validate"], "invalid prerequisites never start capture")
             check(!starter.running, "validation failure clears running state")
@@ -241,7 +250,7 @@ import Foundation
             fixture.capturesSuccessfully = false
             do {
                 _ = try await starter.start(operations: fixture.operations)
-                preconditionFailure("capture refusal must throw")
+                ddFail("capture refusal must throw")
             } catch DaydreamOnboardingStartError.captureDidNotStart {}
             check(fixture.events == ["validate", "capture"], "capture refusal never claims completion")
             check(!starter.running, "capture refusal permits explicit retry")
@@ -254,7 +263,7 @@ import Foundation
             }
             do {
                 _ = try await cancelled.value
-                preconditionFailure("pre-cancelled task must not start")
+                ddFail("pre-cancelled task must not start")
             } catch is CancellationError {}
             check(fixture.events.isEmpty, "cancelled final action has no side effects")
         }
@@ -264,7 +273,7 @@ import Foundation
             fixture.inputMonitoringAllowed = grants.1
             do {
                 _ = try await starter.start(operations: fixture.operations)
-                preconditionFailure("both permissions are required at final Start")
+                ddFail("both permissions are required at final Start")
             } catch FixtureFailure.validation {}
             check(fixture.events == ["validate"], "missing permission pair \(grants) blocks final Start before capture")
         }

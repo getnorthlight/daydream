@@ -155,7 +155,8 @@ final class TypingHarness {
 
 
 enum TypingChecks {
-    static func check(_ ok:Bool,_ label:String) {if !ok {fatalError("Typing check failed: "+label)}}
+    static var failed=0
+    static func check(_ ok:Bool,_ label:String) {if !ok {print("FAIL typing: "+label);failed+=1}}
     /// Synthetic fixtures only: TYPING_DEBUG=1 prints a harness's rows to stderr.
     static func debug(_ h:TypingHarness) {
         guard ProcessInfo.processInfo.environment["TYPING_DEBUG"] != nil else {return}
@@ -174,7 +175,7 @@ enum TypingChecks {
     static func run() throws {
         paragraphs();idleSeal();edits();caretModel();chat();departures();unconfirmed();probes();labels();sizes()
         suspendAndBoundaries();keyMap();latchAndContext();splitSecrets();numbers();prose();fifoAndGeneration();redaction();appGate();lateCut();lateBacklogs();try performance()
-        print("PASS typed-unit session checks: \(passed) synthetic cases (fake clock, fake focus, no input values logged).")
+        if failed==0 {print("PASS typed-unit session checks: \(passed) synthetic cases (fake clock, fake focus, no input values logged).")}
     }
 
     /// typing-all apps track: the capture gate with each build's allowlists.

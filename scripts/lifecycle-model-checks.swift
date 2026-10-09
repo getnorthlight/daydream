@@ -331,11 +331,17 @@ struct Opened { let model: MemoryViewModel; let notices: FakeNotices; let wake: 
               && o.notices.posted.first?.body.hasPrefix("Recording didn't start again when DayDream opened.") == true
               && o.notices.posted.first?.body.hasSuffix("Choose Turn on Accessibility from DayDream in the menu bar.") == true,
               "G42", "one notice says recording didn't start again and how: \(o.notices.posted.map(\.body))")
-        check(intent(defaults) == nil && !o.model.recordingWanted, "G42", "one try only: the intent is cleared, nothing starts later by itself")
+        // rc-018 RC3 (A4, owner 10/9: recording silently off after a restart): the start gives up, and recording stays the
+        // launch intent only while the permission comeback waits, so a restart meanwhile (DayDream's own for Input
+        // Monitoring, macOS's Quit & Reopen) records again; the person's Stop, or the comeback's end, clears it.
+        check(!o.model.recordingWanted && o.model.permissionComebackWaiting && intent(defaults)?["recording"] as? Bool == true, "G42",
+              "one try only: the start gives up; recording stays the intent only while the permission comeback waits: \(intent(defaults) ?? [:])")
         check(o.model.recordingState.kind == .needsPermission, "G42", "the state says why: \(o.model.recordingState)")
         let again = try await open("blocked-again", intent: defaults)
         try await tick(0.2)
         check(again.notices.posted.isEmpty && !again.model.recording, "G42", "the next launch says nothing again")
+        again.model.stopCapture()
+        check(intent(defaults) == nil && !again.model.permissionComebackWaiting, "G42", "the person's Stop ends the comeback, and the intent with it: \(intent(defaults) ?? [:])")
     }
 
     // MARK: D. An import running when an automatic start is due

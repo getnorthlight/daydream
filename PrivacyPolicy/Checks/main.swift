@@ -2,13 +2,16 @@ import Foundation
 import PrivacyPolicy
 
 struct TextCase {let category:String;let value:String;let sensitive:Bool}
-func require(_ ok:Bool,_ label:String) {if !ok {fatalError("Synthetic check failed: "+label)}}
+// Collect, then report: a failed check prints FAIL and the run goes on; the exit is non-zero at the end.
+enum PrivacyFailures { static var count=0 }
+func require(_ ok:Bool,_ label:String) {if !ok {print("FAIL "+label);PrivacyFailures.count+=1}}
 func proof() -> FocusProof {
     var p=FocusProof();p.bundle="com.apple.Notes";p.windowID="fixture-window";p.focusID="fixture-field";p.role="AXTextArea";p.surface = .native;p.secureInput = .no;p.privateMode = .no;p.verified=true;p.fieldStateVerified=true;p.frameAccessible=true;p.navigationStable=true;p.generation=1;p.policyVersion=1;p.checkedAt=100;return p
 }
 // main.swift is top-level code once the target has a second source file.
 struct Checks {
  static func main() throws {
+    setvbuf(stdout,nil,_IOLBF,0)
     var policy=CapturePolicy();policy.typedText=true
     let base=proof()
     let cases:[TextCase]=[
@@ -141,6 +144,8 @@ struct Checks {
     timings.sort()
     let report:[String:Any]=["textCases":cases.count,"categories":stats,"median_ms":timings[timings.count/2],"max_ms":timings.last!,"scope":"synthetic only; known arbitrary-password misses retained"]
     print(String(decoding:try JSONSerialization.data(withJSONObject:report,options:[.prettyPrinted,.sortedKeys]),as:UTF8.self))
+    let failed=PrivacyFailures.count+TypingChecks.failed+SendRulesChecks.failed+ComposeSendChecks.failed
+    if failed>0 {print("\(failed) failed");exit(1)}
     print("PASS synthetic gate, classifier, IME, metadata and generation checks. No input values logged.")
  }
 }

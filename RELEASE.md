@@ -143,6 +143,10 @@ TS_INPUTS=<folder with the pinned Typesense runtime.tar.gz and typesense-server>
 TS_KIT=<path to typesense-30.2-complete-source.tar.gz>                            # its source, attached in §4
 P=(python3 -B "$REPO/scripts/developer-id-release.py")
 
+# 0. The version bump is committed: dev and Live Test builds read packaging/Info.plist, so it must say $VERSION too.
+[ "$(plutil -extract CFBundleShortVersionString raw "$REPO/packaging/Info.plist")" = "$VERSION" ] \
+    && echo "packaging/Info.plist is $VERSION" || echo "STOP: commit 'Version $VERSION' in packaging/Info.plist first"
+
 # 1. Get the pinned Sparkle (checks the archive and every file; writes nothing else).
 python3 "$REPO/scripts/bootstrap-sparkle.py"
 python3 "$REPO/scripts/release.py" validate

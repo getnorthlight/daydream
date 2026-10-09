@@ -89,9 +89,10 @@ var ax = ChromeAXAccess<Node>(frontmostPID: { 42 }, systemFocusedPID: { 42 }, se
         switch predicate { case .textFields: return fields; case .revealControls: return controls }
     })
 ax.formControlNames = { node, late in Names.read(node, late: late) }
-var checks = 0
+var checks = 0, failed = 0
+// Collect-then-report: every check prints PASS or FAIL and the run goes on; the exit is non-zero when any failed.
 func check(_ ok: Bool, _ label: String) {
-    guard ok else { print("FAIL " + label); exit(1) }
+    guard ok else { failed += 1; print("FAIL " + label); return }
     checks += 1; print("PASS " + label)
 }
 func search() -> BrowserFormScanResult { BrowserFormScan.search(chain: chain, ax: ax, late: { Names.clock > 100 }) }
@@ -141,6 +142,7 @@ group.kids = [field, control]; page.kids = [group]; Names.reset(title: 101)
 check(BrowserFormScan.scan(chain: chain, ax: ax, late: { Names.clock > 100 }) == .late && Names.reads == [.title], "strict walk uses deadline seam too")
 Names.reset(); group.kids = [field]; page.kids = [group]; controls = [control]
 check(search() == .clear, "normal positive restored after privacy and timeout negatives")
+if failed > 0 { print(String(failed) + " failed"); exit(1) }
 print("PASS " + String(checks) + " focused extracted C1 contract checks; no OS/Chrome/UI/store calls")
 '''
 assert 'AXUIElementCopy' not in swift and 'NSApplication' not in swift

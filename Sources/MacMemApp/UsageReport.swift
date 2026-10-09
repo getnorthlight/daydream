@@ -12,7 +12,10 @@ import MemoryUI
 ///   one, by mode and failure kind, plus the summaries state's problem now. Not sent when all are zero and no problem.
 /// - ai_used: what `mac-mem mcp` appended to `UsageInbox`, read each hour and when See what's sent opens.
 /// - app_opened: the menu bar's Open DayDream (and its other routes to the window), a click on the Dock icon while
-///   DayDream runs (macOS's reopen), or a launch that isn't macOS opening DayDream at login ("other").
+///   DayDream runs (macOS's reopen), or a launch the person asked for ("other": Finder, Launchpad, the Dock,
+///   Spotlight). Not a launch at login, a launch without macOS's open event, or DayDream's own restarts
+///   (`UsageLaunch`; decided in applicationDidFinishLaunching, where macOS's open event is the current Apple event).
+/// - app_updated: once per update, at the first launch of a new version or build, from and to (`UsageLaunch`).
 /// - app_search: a search in DayDream's window once it settles (3 s with no newer search), with its result count.
 /// Nothing is counted in the developer preview or the trials: only the production model calls `start`.
 @MainActor enum UsageReport {
@@ -21,8 +24,9 @@ import MemoryUI
     static let dailyKey = "DaydreamUsageDailyCheckDay"
     static let stepsKey = "DaydreamUsageSetupSteps"
     static let summaryCountsKey = "DaydreamUsageSummaryCounts"
-    /// How this launch opened the window, decided as AppKit finishes launching (nil: at login, or not decided).
+    /// How this launch counts, decided as AppKit finishes launching, waiting for `start` (nil: nothing to count).
     private static var launchHow: String?
+    private static var launchDecided = false
     private static var lastOpened: Date = .distantPast
     private static var searchWork: DispatchWorkItem?
 
@@ -36,6 +40,10 @@ import MemoryUI
         if made && !UserDefaults.standard.bool(forKey: MemoryViewModel.setupCompletedKey) {
             sender.record("installed", ["macos_version": .text(macOSVersion), "chip": .text(chip)])
         }
+        // Stored whether or not sharing is on, so turning it on later never counts an old update.
+        if let update = UsageLaunch.takeUpdate(.standard, current: currentVersion, newInstall: made) {
+            sender.record("app_updated", ["from_version": .text(update.from), "to_version": .text(update.to)])
+        }
         if let how = launchHow { launchHow = nil; opened(how) }
     }
 
@@ -48,8 +56,19 @@ import MemoryUI
 
     // MARK: App
 
-    /// AppKit finished launching: a launch macOS made at login opens nothing that counts.
-    static func launched(atLogin: Bool) { if !atLogin { launchHow = "other" } }
+    /// AppKit finished launching: only a launch the person asked for counts (`UsageLaunch.launchOpen`). Decided once;
+    /// counted now if `start` already ran, else when it does.
+    static func launched(_ kind: UsageLaunch.Kind, defaults: UserDefaults = .standard) {
+        guard !launchDecided else { return }
+        launchDecided = true
+        guard let how = UsageLaunch.launchOpen(kind, selfRelaunch: UsageLaunch.takeSelfRelaunch(defaults)) else { return }
+        if sender.home != nil { opened(how) } else { launchHow = how }
+    }
+    /// This build's "0.1.8 (12)".
+    static var currentVersion: String {
+        UsageLaunch.version(short: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+                            build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String)
+    }
     static func opened(_ how: String) {
         let now = Date()
         guard now.timeIntervalSince(lastOpened) > 2 else { return }
@@ -152,17 +171,25 @@ import MemoryUI
 /// The app delegate SwiftUI forwards to (`MacMemApplication`): only to count opens. Reopen keeps AppKit's and SwiftUI's
 /// usual behavior (true: a window opens when none is showing).
 final class DaydreamAppDelegate: NSObject, NSApplicationDelegate {
-    func applicationWillFinishLaunching(_ notification: Notification) {
-        MainActor.assumeIsolated { UsageReport.launched(atLogin: Self.launchedAtLogin) }
+    /// macOS's open event is the current Apple event here (not yet in applicationWillFinishLaunching, where it was
+    /// read before rel-018 and was always missing, so every login launch counted as an open).
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        MainActor.assumeIsolated { UsageReport.launched(Self.launchKind()) }
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         MainActor.assumeIsolated { UsageReport.opened("dock") }
-        return true
+        // rc-018 RC3 (rule 1): with the memory window held, the Dock brings setup forward (or shows the held window),
+        // never a second memory window.
+        return !MainActor.assumeIsolated { SetupFocus.shared.reopenFromDock() }
     }
-    /// macOS marks the open event of a login item (keyAELaunchedAsLogInItem).
-    static var launchedAtLogin: Bool {
-        guard let event = NSAppleEventManager.shared().currentAppleEvent, event.eventID == AEEventID(kAEOpenApplication) else { return false }
-        return event.paramDescriptor(forKeyword: AEKeyword(keyAEPropData))?.enumCodeValue == OSType(keyAELaunchedAsLogInItem)
+    /// What macOS's launch event says: an open event, and whether it is a login item's (keyAELaunchedAsLogInItem,
+    /// which SMAppService.mainApp's launch at login carries too).
+    static func launchKind(_ event: NSAppleEventDescriptor? = NSAppleEventManager.shared().currentAppleEvent) -> UsageLaunch.Kind {
+        let open = event?.eventClass == AEEventClass(kCoreEventClass) && event?.eventID == AEEventID(kAEOpenApplication)
+        let how = event?.paramDescriptor(forKeyword: AEKeyword(keyAEPropData))?.enumCodeValue
+        // A Services-menu launch (keyAELaunchedAsServiceItem) isn't the person opening DayDream either.
+        if how == OSType(keyAELaunchedAsServiceItem) { return .noOpenEvent }
+        return UsageLaunch.kind(openEvent: open, loginItem: how == OSType(keyAELaunchedAsLogInItem))
     }
 }
 

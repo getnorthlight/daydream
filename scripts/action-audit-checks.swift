@@ -1,17 +1,26 @@
 import Foundation
 import MemoryCore
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 @main struct AuditChecks {
     static var count=0
     static func check(_ test:@autoclosure () throws -> Bool,_ label:String) throws {
-        guard try test() else { throw MemError.invalid("FAIL: "+label) }
+        guard try test() else { ddFail(label); return }
         count += 1; print("PASS: "+label)
     }
     static func rejects(_ label:String,_ body:() throws -> Void) throws {
         do { try body() } catch { count += 1; print("PASS: "+label); return }
-        throw MemError.invalid("FAIL: "+label)
+        ddFail(label + " (was accepted)")
     }
     static func main() throws {
+        ddReportAtExit()
         let root=FileManager.default.temporaryDirectory.appendingPathComponent("macmem-audit-"+UUID().uuidString)
         defer { try? FileManager.default.removeItem(at:root) }
         let now=timestamp("2026-09-11T20:00:00Z")!, day="2026-09-11"

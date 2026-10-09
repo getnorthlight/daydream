@@ -3,10 +3,18 @@ import ApplicationServices
 import HistoryCore
 @testable import MemoryCore
 import PrivacyPolicy
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 @main struct ProductionCaptureChecks {
     static var checks=0
-    static func check(_ condition:Bool,_ name:String) {precondition(condition,name);checks+=1;print("PASS "+name)}
+    static func check(_ condition:Bool,_ name:String) {if !(condition) { ddFail(name); return };checks+=1;print("PASS "+name)}
     static func redundantNativeFocusNotifications() throws {
         let root=FileManager.default.temporaryDirectory.appendingPathComponent("redundant-native-focus-"+UUID().uuidString)
         defer {try? FileManager.default.removeItem(at:root)}
@@ -85,6 +93,7 @@ import PrivacyPolicy
                 let t=timers.remove(at:i);now=max(now,t.at);t.work()
             }
             now=target
+            coordinator.reconcileResume()  // the app's 0.5 s wall-time heartbeat, as websiteTypingBracketed beats
         }
         var env=EventCapture.TypingEnvironment(now:{now},proof:{generation,version in
             var p=FocusProof();p.generation=generation;p.policyVersion=version;p.checkedAt=now
@@ -175,6 +184,7 @@ import PrivacyPolicy
         coordinator.stop()
     }
     static func main() throws {
+        ddReportAtExit()
         setbuf(stdout,nil)
         try redundantNativeFocusNotifications()
         try messagesSendDetection()
@@ -234,6 +244,7 @@ import PrivacyPolicy
                 let timer=timers.remove(at:i);mono=max(mono,timer.at);timer.work()
             }
             mono=target
+            coordinator.reconcileResume()  // the app's 0.5 s wall-time heartbeat, as websiteTypingBracketed beats
         }
         let environment=EventCapture.TypingEnvironment(now:{mono},proof:{generation,version in
             proofCalls+=1
@@ -1034,6 +1045,7 @@ extension ProductionCaptureChecks {
                 let timer=timers.remove(at:i);mono=max(mono,timer.at);timer.work()
             }
             mono=target
+            coordinator.reconcileResume()  // the app's 0.5 s wall-time heartbeat, as websiteTypingBracketed beats
         }
         let env=EventCapture.TypingEnvironment(now:{mono},proof:{generation,version in
             guard known else {return nil}
@@ -1118,6 +1130,7 @@ extension ProductionCaptureChecks {
                 let timer=timers.remove(at:i);mono=max(mono,timer.at);timer.work()
             }
             mono=target
+            coordinator.reconcileResume()  // the app's 0.5 s wall-time heartbeat, as websiteTypingBracketed beats
         }
         let chrome=WebFakeChrome(url:"https://mail.google.com/mail/u/0/#inbox"),join=BrowserTypingJoin<WebFakeNode>()
         var env=WebTypingRoute.Environment(now:{mono},wall:{Date()},join:{pid,sites,enabled in
@@ -1204,6 +1217,7 @@ extension ProductionCaptureChecks {
                 let timer=timers.remove(at:i);mono=max(mono,timer.at);timer.work()
             }
             mono=target
+            coordinator.reconcileResume()  // the app's 0.5 s wall-time heartbeat, as websiteTypingBracketed beats
         }
         let chrome=WebFakeChrome(url:"https://notes.example.org/pad/7?view=1#top")
         let join=BrowserTypingJoin<WebFakeNode>()
@@ -1557,7 +1571,10 @@ extension ProductionCaptureChecks {
         }
         try store.acceptSafeTyping()
         advance(1);type("accepted again");submit()
-        check(try words().contains("accepted again") && store.typedTextPolicy().acceptedScope == .current,"website typing: accepting this build's scope types again")
+        // (It failed under load when this section's fake clock never beat the wall-time heartbeat; the detail stays.)
+        let againWords=try words(),againScope=try store.typedTextPolicy().acceptedScope
+        let typedAgain=againWords.contains("accepted again") && againScope == .current
+        check(typedAgain,"website typing: accepting this build's scope types again"+(typedAgain ? "" : " (scope \(String(describing:againScope)), last words \(Array(againWords.suffix(3))))"))
         // typingfix (owner/v1 review F3): native typing's direct-keyboard rule. Under an input method
         // a key is unproven before any join read: no join, no Apple Event, nothing read or saved.
         direct=false
@@ -1653,6 +1670,7 @@ extension ProductionCaptureChecks {
                 let timer=timers.remove(at:i);mono=max(mono,timer.at);timer.work()
             }
             mono=target
+            coordinator.reconcileResume()  // the app's 0.5 s wall-time heartbeat, as websiteTypingBracketed beats
         }
         let chrome=WebFakeChrome(url:"http://127.0.0.1:8793/plain.html")
         chrome.window.title="Plans - Google Chrome";chrome.focus=chrome.field
@@ -1767,6 +1785,7 @@ extension ProductionCaptureChecks {
                 let timer=timers.remove(at:i);mono=max(mono,timer.at);timer.work()
             }
             mono=target
+            coordinator.reconcileResume()  // the app's 0.5 s wall-time heartbeat, as websiteTypingBracketed beats
         }
         let chrome=WebFakeChrome(url:"http://127.0.0.1:8793/plain.html")
         chrome.window.title="Plans - Google Chrome - Work";chrome.focus=chrome.field
@@ -1880,6 +1899,7 @@ extension ProductionCaptureChecks {
                 let timer=timers.remove(at:i);mono=max(mono,timer.at);timer.work()
             }
             mono=target
+            coordinator.reconcileResume()  // the app's 0.5 s wall-time heartbeat, as websiteTypingBracketed beats
         }
         let chrome=WebFakeChrome(url:"https://x.com/ada/status/1839")
         let group=chrome.field.parent
@@ -1971,6 +1991,7 @@ extension ProductionCaptureChecks {
                 let timer=timers.remove(at:i);mono=max(mono,timer.at);timer.work()
             }
             mono=target
+            coordinator.reconcileResume()  // the app's 0.5 s wall-time heartbeat, as websiteTypingBracketed beats
         }
         // X's home page: the post box and its toolbar (Post, emoji) in main, the navigation's Post link, the search box.
         let chrome=WebFakeChrome(url:"https://x.com/home")

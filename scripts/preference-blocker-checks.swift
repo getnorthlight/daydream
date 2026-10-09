@@ -363,13 +363,13 @@ func makePrivateDirectory(_ url: URL) throws {
         let recorder = DaydreamMenuBarRoutes(openWindow: { routes.append("open:" + $0) }, activate: { routes.append("activate") },
                                              openURL: { routes.append("url:" + $0.absoluteString) }, terminate: { routes.append("terminate") })
         UserDefaults.standard.set(false, forKey: setupKey)
-        check(model.setupStepForStart() == .summaries, "I: setup never finished: Start goes to setup")
+        check(model.setupStepForStart() == .apps, "I: setup never finished: Start goes to setup")
         DaydreamMenuBarPanel.actions(model: model, routes: recorder).resume()
-        check(routes == ["open:onboarding", "activate"] && model.setupRequest == .summaries && !model.recording,
+        check(routes == ["open:onboarding", "activate"] && model.setupRequest == .apps && !model.recording,
               "I: the menu bar's Start opens setup and starts nothing", "\(routes)")
         model.setupRequest = nil
         model.captureActions.resume()
-        check(model.setupRequest == .summaries && !model.recording, "I: the main window's Start asks for setup and starts nothing")
+        check(model.setupRequest == .apps && !model.recording, "I: the main window's Start asks for setup and starts nothing")
         model.setupRequest = nil
         UserDefaults.standard.set(true, forKey: setupKey)
         MemoryViewModel.permissionsGranted = { false }
@@ -463,12 +463,11 @@ func makePrivateDirectory(_ url: URL) throws {
         if let coordinator = app.range(of: "coordinator = try Coordinator(store:store)"), let settle = app.range(of: "store.settleLegacyPreferences()") {
             check(coordinator.lowerBound < settle.lowerBound, "S: choices are settled only after this app holds the recorder lock")
         } else { check(false, "S: MacMemApp settles legacy choices at launch") }
-        // Each row on setup's last page is one click back to the page that changes it, with no "Edit" text.
-        // fix/setup-status: Summaries goes to its page, or carries its one fixing button. Owner 10/5: it is the last page's
-        // only row (Connect your AI); Typed text and Web pages in Chrome were chosen on the page before.
-        check(onboarding.contains("edit: button == nil ? { show(.summaries) } : nil, button: button")
-              && !onboarding.contains("\"Edit\""),
-              "S: setup's last page rows are one click to the page that changes them")
+        // claude/setup-local-summaries (owner 10/7): setup's last page (Connect your AI) has no rows at all: no Summaries
+        // row with Turn On or Add Key (summaries default silently and live in Settings › Summaries), and no "Edit" text.
+        check(!onboarding.contains("DaydreamReviewRow") && !onboarding.contains("summariesRow") && !onboarding.contains("turnOnTitle")
+              && !onboarding.contains("addKeyTitle") && !onboarding.contains("DaydreamReviewContent(rows") && !onboarding.contains("\"Edit\""),
+              "S: setup's Connect your AI page has no Summaries row (no Turn On, no Add Key)")
         // Setup can't be skipped past Permissions: no Set up later there (closing the window is later).
         check(!onboarding.contains("secondaryTitle") && !onboarding.contains("\"Set up later\" }"), "S: setup's Permissions page has no Set up later")
         check(!onboarding.contains("Recording is off. Your choices are saved."), "S: setup's last page has no standing message")

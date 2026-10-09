@@ -219,7 +219,7 @@ class Readme(unittest.TestCase):
         section = self.text.split("### Usage counts", 1)[1].split("\n## ", 1)[0]
         title = re.search(r'public static let title = "([^"]+)"', read("Sources/MemoryUI/UsageSharingSettings.swift")).group(1)
         self.assertEqual(title, "Share anonymous usage counts")
-        for needle in ["**Installed**", "**Setup**", "**Once a day**", "**AI apps**", "**Opening and searching**", "PostHog",
+        for needle in ["**Installed**", "**Setup**", "**Once a day**", "**AI apps**", "**Opening and searching**", "**Updated**", "PostHog",
                        "random ID", "Settings › Advanced", title, "See what's sent", "Copy ID", "Test and development builds never send",
                        "never sends your history, typed words, window or page titles, sites, searches", "Never what you searched"]:
             self.assertIn(needle, section, needle)
@@ -498,7 +498,9 @@ class ReviewFixes(unittest.TestCase):
         self.assertIn("press **Open System Settings**", install)
         self.assertIn("It never shows a macOS prompt for them", install)
         self.assertIn("drag its card from the setup window into the list", install)
-        self.assertIn(".onDrag {", setup)
+        # rel-018: the card's drag is AppKit's, of the installed app's URL (SwiftUI's onDrag copied the app).
+        self.assertIn("PermissionCardDrag.shared.begin(appURL: appURL", setup)
+        self.assertNotIn(".onDrag", setup)
         self.assertIn('quitAndReopenTitle = "Quit & Reopen"', setup)
         self.assertIn("**Quit & Reopen**", install)
         # The picture's alt text says what the missing cards show now (ux/perms: no Allow… button).

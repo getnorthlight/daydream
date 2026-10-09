@@ -10,13 +10,21 @@ import AppKit
 import SwiftUI
 import MemoryCore
 import MemoryUI
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 func fail(_ message: String) -> Never {
     fflush(stdout)
     FileHandle.standardError.write(Data("FAIL: \(message)\n".utf8))
     exit(1)
 }
-@MainActor func expect(_ condition: Bool, _ message: @autoclosure () -> String) { if !condition { fail(message()) } else { print("PASS: \(message())"); fflush(stdout) } }
+@MainActor func expect(_ condition: Bool, _ message: @autoclosure () -> String) { if !condition { ddFail(message()) } else { print("PASS: \(message())"); fflush(stdout) } }
 @MainActor func pump(_ s: Double = 0.1) { RunLoop.main.run(until: Date().addingTimeInterval(s)) }
 @MainActor @discardableResult func wait(_ timeout: Double, _ done: () -> Bool) -> Bool {
     let end = Date().addingTimeInterval(timeout)
@@ -52,6 +60,7 @@ func fail(_ message: String) -> Never {
 
 @main struct FirstLaunchChecks {
     @MainActor static func main() throws {
+        ddReportAtExit()
         guard let out = ProcessInfo.processInfo.environment["DD_CHECK_OUT"], !out.isEmpty else { fail("DD_CHECK_OUT is required") }
         guard ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"] != nil else { fail("CFFIXED_USER_HOME must point at a scratch folder") }
         DispatchQueue.global().asyncAfter(deadline: .now() + 300) { fail("timed out") }

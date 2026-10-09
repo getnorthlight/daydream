@@ -12,11 +12,19 @@ import Foundation
 import AppKit
 @testable import MemoryCore
 import PrivacyPolicy
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 @main struct TypingUnlockDeliveryChecks {
     static var count = 0
     static func check(_ value: Bool, _ label: String) {
-        guard value else { FileHandle.standardError.write(Data("FAIL: \(label)\n".utf8)); exit(1) }
+        guard value else { ddFail(label); return }
         count += 1; print("PASS " + label)
     }
     static func spin(_ seconds: TimeInterval, until done: () -> Bool) {
@@ -25,6 +33,7 @@ import PrivacyPolicy
     }
 
     @MainActor static func main() throws {
+        ddReportAtExit()
         setbuf(stdout, nil)
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("typing-unlock-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

@@ -130,8 +130,7 @@ if [ -z "${OWNER_UI:-}" ]; then
       scripts/$name-checks.swift $(oobjs MemoryCore HistoryCore PrivacyPolicy) -o "$OUT/owner-$name"
     step owner-$name "$OUT/owner-$name"
   done
-  # Chrome page history ships in the flagged release MacMem too: its reader and sender are there.
-  step owner-release-has-page-history bash -c "nm '$I/build-owner-release/release/MacMem' > '$OUT/owner-release-MacMem.pages.nm' 2>&1; grep -q ChromePageProbe '$OUT/owner-release-MacMem.pages.nm' && grep -q ChromeEventSender '$OUT/owner-release-MacMem.pages.nm' && echo PASS the flagged release MacMem has Chrome page history: ChromePageProbe and ChromeEventSender"
+  # Chrome page history in the flagged release MacMem: binary-features (run-checks.sh).
 else
   # The APP recipe checks (Settings, menu bar, app menu, app model, status, Chrome pages, honesty UI) with the
   # flagged app sources and objects. typing-ui-checks has its own owner step in ui-checks.sh.

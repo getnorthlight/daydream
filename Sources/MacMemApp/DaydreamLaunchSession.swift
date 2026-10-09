@@ -95,6 +95,7 @@ import os
             if !isolated {Self.moveLegacyInstall()}
             failure=nil
             guard !isolated else {return}
+            if !recordingTrial && !functionalTrial {Self.prepareFocus(UserDefaults.standard)}
             let home=MemPaths.home()
             // wal-1005: the history's journal (HistoryJournal.swift): the write-ahead log unless this Mac's setting puts
             // it back in the rollback journal.
@@ -144,6 +145,20 @@ import os
     private var pendingModel:(()->Void)?
     /// A launch whose window never appears (at login, the window closed) makes its model this long after launch.
     static let modelFallback:TimeInterval=1.0
+    /// rc-018 RC3 (A3, rules 1 and 5): this launch's relaunch context (DayDream's own restart, or macOS's Quit & Reopen
+    /// while setup was open), read once and removed; and whether the memory window is held out of sight from the start:
+    /// a setup relaunch or a first setup (setup is the only window), or a background restart (no window). A9: the 0.1.7
+    /// drag copies of the app left in ~/Library/Caches go, off the main thread.
+    static func prepareFocus(_ defaults:UserDefaults,now:Date=Date()) {
+        let context=SetupRelaunchContext.consume(defaults,now:now)
+        let focus=SetupFocus.shared
+        focus.relaunch=context
+        MemoryViewModel.relaunchWantsRecording=context?.recording == true
+        if (context != nil && context?.reason != .window) || !defaults.bool(forKey:MemoryViewModel.setupCompletedKey) {focus.holdMemoryAtLaunch()}
+        DragCopyLeftovers.cleanAtLaunch()
+    }
+    /// The model waits for a window to appear (`windowShown`) before it is made.
+    var waitsForWindow:Bool {pendingModel != nil}
     /// The "Getting ready…" window appeared: the model is made on the next turn, after this frame is drawn.
     func windowShown() {
         guard pendingModel != nil else {return}

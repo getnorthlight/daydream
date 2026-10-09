@@ -5,11 +5,6 @@ import CoreGraphics
 import MemoryCore
 import PrivacyPolicy
 
-public enum DaydreamSummaryChoice: String, CaseIterable, Identifiable {
-    case local, cloud, later
-    public var id: String { rawValue }
-}
-
 /// Setup's wording that must stay true (honesty items 21-24). One place, so the checks and the
 /// Settings pages say exactly the same thing.
 public enum DaydreamSetupText {
@@ -169,7 +164,7 @@ public struct DaydreamPermissionSettings: View {
             PermissionGrantView(enabled: enabled, appURL: appURL,
                 readAccessibility: readAccessibility, readInputMonitoring: readInputMonitoring,
                 embedded: true, recoveryExpandedInitially: recoveryExpandedInitially,
-                known: known, allowedBefore: allowedBefore)
+                known: known, allowedBefore: allowedBefore, guided: true)
         }
         .onExitCommand(perform: close)
     }
@@ -180,79 +175,10 @@ public struct DaydreamPermissionSettings: View {
     }
 }
 
-/// Setup's summaries page (owner, 9/28): two rows, one state at a time. "Summaries on this Mac" (on by default where the Mac
-/// can run the model, with its one line) and "Use an OpenRouter key instead" (its one honest line, and the key field while
-/// it is on). Turning one on turns the other off; both off is Off. No consent sheet: the switch and its line are the question.
-public struct DaydreamSummariesContent: View {
-    @Binding private var choice: DaydreamSummaryChoice
-    @Binding private var cloudKey: String
-    private let localAvailable: Bool
-    private let localLine: String
-    private let savedKey: Bool
-    private let problem: SummaryProblem?
-    private let fix: ((SummaryProblem) -> Void)?
-    private let focusRequest: Int
-
+/// Summaries' words that Settings › Summarizer shows. Setup has no summaries page (claude/setup-local-summaries, owner
+/// 10/7): summaries on this Mac start by themselves for a new install; Settings is where they are chosen.
+public enum DaydreamSummariesText {
     public static let localTitle = "Summaries on this Mac"
-    /// Row 1's tag (owner, 10/5): the private, free choice is the one to pick.
-    public static let recommendedTag = "Recommended"
-    /// Row 1's line before anything is downloaded: the size, once, and where it runs.
-    public static func localLine(size: String) -> String { "Downloads \(size) once. Runs on this Mac." }
-    public static let localReadyLine = "Runs on this Mac."
-
-    /// - `localAvailable`: this build can summarize on this Mac (every release; a test build staged without the runtime
-    ///   shows only the OpenRouter row).
-    /// - `localLine`: row 1's one line (the size before a download, or the download's own state line).
-    /// - `savedKey`: a cloud key is already saved; the empty field then says it will use it.
-    /// - `problem`, `fix`: the key Continue tried was refused (or the account can't be used): its line and one button.
-    public init(choice: Binding<DaydreamSummaryChoice>, cloudKey: Binding<String>, localAvailable: Bool = true,
-                localLine: String = DaydreamSummariesContent.localLine(size: "2.7 GB"), savedKey: Bool = false,
-                problem: SummaryProblem? = nil, fix: ((SummaryProblem) -> Void)? = nil, focusRequest: Int = 0) {
-        _choice = choice
-        _cloudKey = cloudKey
-        self.localAvailable = localAvailable
-        self.localLine = localLine
-        self.savedKey = savedKey
-        self.problem = problem
-        self.fix = fix
-        self.focusRequest = focusRequest
-    }
-
-    /// The two switches are one choice: turning one on turns the other off; both off is Off (`later`).
-    public static func choice(after current: DaydreamSummaryChoice, set value: DaydreamSummaryChoice, on: Bool) -> DaydreamSummaryChoice {
-        on ? value : current == value ? .later : current
-    }
-
-    public var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if localAvailable {
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
-                            Text(Self.localTitle).font(.system(size: 13, weight: .semibold))
-                            Text(Self.recommendedTag).font(.system(size: 10, weight: .semibold)).foregroundStyle(Color.accentColor)
-                                .padding(.horizontal, 7).padding(.vertical, 2)
-                                .background(Color.accentColor.opacity(0.12), in: Capsule())
-                        }
-                        Text(localLine).font(.system(size: 11)).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                    Toggle(Self.localTitle, isOn: Binding(get: { choice == .local }, set: { choice = Self.choice(after: choice, set: .local, on: $0) }))
-                        .labelsHidden().toggleStyle(.switch).controlSize(.small)
-                        .accessibilityLabel(Self.localTitle)
-                }
-                .accessibilityElement(children: .combine)
-                Divider().opacity(0.65)
-            }
-            CloudSummariesSwitch(isOn: Binding(get: { choice == .cloud }, set: { choice = Self.choice(after: choice, set: .cloud, on: $0) }),
-                                 key: $cloudKey, showsKey: choice == .cloud, savedKey: savedKey,
-                                 problem: choice == .cloud ? problem : nil, fix: fix, focusRequest: focusRequest, large: true)
-        }
-        .padding(16)
-        .background(DaydreamOnboardingTheme.card, in: RoundedRectangle(cornerRadius: 18))
-        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.primary.opacity(0.06)))
-        .shadow(color: .black.opacity(0.07), radius: 7, y: 3)
-    }
 }
 
 public struct DaydreamAppsContent: View {
@@ -452,31 +378,6 @@ public struct DaydreamAppsContent: View {
     }
 }
 
-/// One choice on setup's last page: its name and one value ("Typed text  Off"). A row with `edit` is one click
-/// back to the page where that choice is made.
-public struct DaydreamReviewRow: Identifiable {
-    public let id: String
-    public let title: String
-    public let value: String
-    public let systemImage: String
-    /// The value is something to fix (a permission that isn't allowed).
-    public let attention: Bool
-    public let edit: (() -> Void)?
-    /// The row's one fixing button (Add Key, Try Again), drawn after the value instead of the chevron.
-    public let button: (title: String, action: () -> Void)?
-
-    public init(id: String, title: String, value: String, systemImage: String, attention: Bool = false, edit: (() -> Void)? = nil,
-                button: (title: String, action: () -> Void)? = nil) {
-        self.id = id
-        self.title = title
-        self.value = value
-        self.systemImage = systemImage
-        self.attention = attention
-        self.edit = edit
-        self.button = button
-    }
-}
-
 /// Setup's Google Chrome step (owner, 10/1: asked for during setup, like Accessibility and Input Monitoring). One card in
 /// the permission cards' style and nothing else: the page's one main button asks macOS (the app's `askChromeAccessInSetup`).
 /// This view only draws the state it is given; it never reads Chrome or asks for anything.
@@ -547,12 +448,11 @@ public struct DaydreamChromeStepContent: View {
     }
 }
 
-/// Setup's last page under its Connect list (owner, 10/5): a status row only while something needs saying (the
-/// summaries download, or a problem with its one button), then the lines: when to come back, what connecting means, and
-/// the FileVault line only while FileVault is off. `message` is a reason recording can't start that the page's button
+/// Setup's last page under its Connect list (owner, 10/5): the lines: when to come back, what connecting means, and the
+/// FileVault line only while FileVault is off. No status row (claude/setup-local-summaries, owner 10/7: summaries start
+/// by themselves and live in Settings › Summaries). `message` is a reason recording can't start that the page's button
 /// doesn't already say.
 public struct DaydreamReviewContent: View {
-    private let rows: [DaydreamReviewRow]
     private let message: String?
     private let fileVaultOff: Bool
     private let comeBack: Bool
@@ -560,9 +460,7 @@ public struct DaydreamReviewContent: View {
 
     /// `comeBack`: recording hasn't started yet, so the page says when there will be something to ask about.
     /// `aiReads`: the page offers Connect, so it says what a connected app can read.
-    public init(rows: [DaydreamReviewRow], message: String? = nil, fileVaultOff: Bool = false, comeBack: Bool = false,
-                aiReads: Bool = false) {
-        self.rows = rows
+    public init(message: String? = nil, fileVaultOff: Bool = false, comeBack: Bool = false, aiReads: Bool = false) {
         self.message = message
         self.fileVaultOff = fileVaultOff
         self.comeBack = comeBack
@@ -571,17 +469,6 @@ public struct DaydreamReviewContent: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if !rows.isEmpty {
-                VStack(spacing: 0) {
-                    ForEach(rows) { row in
-                        DaydreamReviewRowView(row: row)
-                        if row.id != rows.last?.id { Divider() }
-                    }
-                }.padding(.horizontal, 8)
-                .background(DaydreamOnboardingTheme.card, in: RoundedRectangle(cornerRadius: 18))
-                .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.primary.opacity(0.06)))
-                .shadow(color: .black.opacity(0.07), radius: 7, y: 3)
-            }
             VStack(alignment: .leading, spacing: 6) {
                 if comeBack { notice("clock", DaydreamSetupText.comeBack) }
                 if aiReads { notice("info.circle", DaydreamSetupText.aiReads) }
@@ -650,54 +537,6 @@ public struct DaydreamConnectCard<Rows: View>: View {
             .background(DaydreamOnboardingTheme.card, in: RoundedRectangle(cornerRadius: 18))
             .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.primary.opacity(0.06)))
             .shadow(color: .black.opacity(0.07), radius: 7, y: 3)
-    }
-}
-
-/// A review row: the whole row is the button when it can be changed (a chevron says so).
-private struct DaydreamReviewRowView: View {
-    let row: DaydreamReviewRow
-    @State private var hovered = false
-
-    var body: some View {
-        if let button = row.button {
-            HStack(spacing: 14) {
-                Image(systemName: row.systemImage).font(.system(size: 17))
-                    .foregroundStyle(.secondary).frame(width: 26, height: 26).accessibilityHidden(true)
-                Text(row.title).font(.system(size: 14, weight: .semibold))
-                Spacer(minLength: 12)
-                Text(row.value).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(1)
-                Button(button.title, action: button.action).controlSize(.small)
-            }
-            .padding(.horizontal, 10).frame(height: 48)
-            .accessibilityElement(children: .contain)
-        } else if let edit = row.edit {
-            Button(action: edit) { content(chevron: true) }
-                .buttonStyle(.plain)
-                .onHover { hovered = $0 }
-                .accessibilityLabel(row.title)
-                .accessibilityValue(row.value)
-                .accessibilityHint("Change " + row.title.lowercased())
-        } else {
-            content(chevron: false).accessibilityElement(children: .combine)
-        }
-    }
-
-    private func content(chevron: Bool) -> some View {
-        HStack(spacing: 14) {
-            Image(systemName: row.systemImage).font(.system(size: 17))
-                .foregroundStyle(.secondary).frame(width: 26, height: 26).accessibilityHidden(true)
-            Text(row.title).font(.system(size: 14, weight: .semibold))
-            Spacer(minLength: 12)
-            Text(row.value).font(.system(size: 13))
-                .foregroundStyle(row.attention ? Color.orange : Color.secondary).lineLimit(1)
-            if chevron {
-                Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary)
-                    .accessibilityHidden(true)
-            }
-        }
-        .padding(.horizontal, 10).frame(height: 48)
-        .background(Color.primary.opacity(hovered ? 0.045 : 0), in: RoundedRectangle(cornerRadius: 10))
-        .contentShape(Rectangle())
     }
 }
 

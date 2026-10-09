@@ -49,7 +49,8 @@ public struct LocalApp:Identifiable,Equatable {
             for url in children.sorted(by:{$0.path < $1.path}) {
                 guard let values=try? url.resourceValues(forKeys:[.isDirectoryKey,.isSymbolicLinkKey]), values.isSymbolicLink != true else { continue }
                 if url.pathExtension.lowercased() == "app" {
-                    guard let bundle=Bundle(url:url), let id=bundle.bundleIdentifier, !id.isEmpty else { continue }
+                    // Only an app whose ID the save accepts (`SkippedAppID`): every app listed here can be skipped.
+                    guard let bundle=Bundle(url:url), let id=bundle.bundleIdentifier, SkippedAppID.accepts(id) else { continue }
                     let name=(bundle.object(forInfoDictionaryKey:"CFBundleDisplayName") as? String) ?? (bundle.object(forInfoDictionaryKey:"CFBundleName") as? String) ?? url.deletingPathExtension().lastPathComponent
                     if found[id] == nil {
                         found[id]=LocalApp(id:id,name:name,path:url.path)

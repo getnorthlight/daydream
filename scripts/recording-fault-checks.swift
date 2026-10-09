@@ -9,11 +9,19 @@ import Foundation
 import CSQLite
 import HistoryCore
 import MemoryCore
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 @main struct RecordingFaultChecks {
     static var checks = 0
     static func check(_ condition: Bool, _ name: String) {
-        guard condition else { FileHandle.standardError.write(Data("FAIL: \(name)\n".utf8)); exit(1) }
+        guard condition else { ddFail(name); return }
         checks += 1; print("PASS " + name)
     }
 
@@ -32,6 +40,7 @@ import MemoryCore
     }
 
     static func main() throws {
+        ddReportAtExit()
         setbuf(stdout, nil)
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("recording-fault-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

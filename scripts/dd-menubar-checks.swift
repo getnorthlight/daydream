@@ -199,7 +199,8 @@ struct MenuBarLivePanel: View {
     static let window: NSWindow = {
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.accessory)
-        let w = NSWindow(contentRect: NSRect(x: -4000, y: -4000, width: 360, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
+        // rc-018 RC3: stays offscreen as it is ordered in (AppKit would pull a titled window onto a screen first).
+        let w = MenuBarOffscreenWindow(contentRect: NSRect(x: -4000, y: -4000, width: 360, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
         w.acceptsMouseMovedEvents = true
         // fix/menubar-red: renders are in sRGB whatever display is attached. Unpinned, the backing store takes the main
         // display's profile (a monitor's ICC, or the headless virtual display's sRGB when the monitor is off), and the
@@ -1178,7 +1179,10 @@ struct MenuBarLivePanel: View {
                 check(l.drawnState == state.kind, "\(c.rawValue): no orange status, the state's own mark", "\(l.drawnState)")
             }
         }
-        let isolated = DaydreamMenuBarIsolatedLabel().body as? DaydreamMenuBarLabelImage
+        // rc-018 RC3: the label is the mark inside `LiveTestLabel`, which adds "TEST" only in the Live Test copy.
+        let isolatedLabel = DaydreamMenuBarIsolatedLabel().body as? LiveTestLabel
+        let isolated = isolatedLabel?.mark
+        check(isolatedLabel?.shown == false, "this build is no Live Test copy: the label is the mark alone")
         check(isolated?.drawnState == .off && isolated?.label == "DayDream: Off", "the isolated preview's label is the Off mark, DayDream: Off",
               "\(String(describing: isolated?.label))")
         let pausedOpen = DaydreamMenuBarLabelImage(state: .paused(until: nil, since: nil, reason: nil), now: now, timeZone: la)
@@ -1222,7 +1226,7 @@ struct MenuBarLivePanel: View {
         for _ in 0..<100 { if !model.history.busy { break }; try await Task.sleep(nanoseconds: 10_000_000) }
 
         // Label from the live model: the Development Trial is Off, not "setup needed".
-        let label = DaydreamMenuBarLabel(model: model).body as? DaydreamMenuBarLabelImage
+        let label = (DaydreamMenuBarLabel(model: model).body as? LiveTestLabel)?.mark
         check(label?.drawnState == .off && label?.label == "DayDream: Off", "the Development Trial label is the Off mark, DayDream: Off",
               "\(String(describing: label?.label))")
         equal(DaydreamMenuBarPanel.setupLine(model: model, now: now, timeZone: la), nil, "the Development Trial draws no \"!\"")
@@ -1680,5 +1684,17 @@ struct MenuBarLivePanel: View {
         check(!install.contains("Turn the switch back on to start again") && !install.contains("**\"Move DayDream to Applications first.\"**")
               && !install.contains("**\"Another copy of DayDream is open.\"**") && !install.contains("Quit the other DayDream first"),
               "docs/install.md quotes none of the old panel's lines")
+    }
+}
+
+/// rc-018 RC3: a window that stays where it is put (offscreen), never on the person's screen.
+final class MenuBarOffscreenWindow: NSWindow {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
+    /// macOS 26 already moves a window made at -4000 onto the screen in `init`, before `constrainFrameRect` is asked
+    /// (package B's probe, 10/9): put it back off screen right away.
+    override init(contentRect: NSRect, styleMask: NSWindow.StyleMask, backing: NSWindow.BackingStoreType, defer flag: Bool) {
+        super.init(contentRect: contentRect, styleMask: styleMask, backing: backing, defer: flag)
+        let off = contentRect.minX <= -1000 && contentRect.minY <= -1000 ? contentRect.origin : NSPoint(x: -5000, y: -5000)
+        setFrameOrigin(off)
     }
 }

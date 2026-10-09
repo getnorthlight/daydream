@@ -8,7 +8,8 @@
 //      reset of DayDream's own AppleEvents answer, then the question again, from the press); the fallback guide beside
 //      System Settings when the reset fails, when macOS answers with no question, or in a build that isn't DayDream's
 //      own (the switch turned on is picked up with no restart, the guide shows its check); Chrome not running at setup
-//      (Allow opens it in the background, then asks); Chrome not installed and Chrome excluded (no row); typing off.
+//      (Allow opens it in the background, then asks); Chrome not installed and Chrome excluded (no row); typing off;
+//      rc-018 RC3: DayDream coming to the front (a read of Chrome's access) keeps Allow under the press, which asks once.
 //      Each state is rendered light and dark into $DD_CHROME_SHOTS (default $DD_CHECK_OUT/chrome-ask-shots);
 //   C. after setup: "Chrome pages aren't being saved." with Ask again (refused) or Fix (never asked) in the menu bar
 //      panel (the app's own panel), the Settings status card and the toolbar's status popover; the one reminder when
@@ -27,6 +28,18 @@ import Carbon
 import SwiftUI
 import MemoryCore
 import MemoryUI
+
+/// The path with every symlink resolved, also for a tail that doesn't exist yet (/var/tmp/x and /private/var/tmp/x
+/// are one folder), so a scratch HOME is accepted whichever spelling the work folder was given.
+func resolvedPath(_ path: String) -> String {
+    var url = URL(fileURLWithPath: path).standardizedFileURL
+    var rest: [String] = []
+    while access(url.path, F_OK) != 0, url.path != "/" { rest.insert(url.lastPathComponent, at: 0); url.deleteLastPathComponent() }
+    guard let real = realpath(url.path, nil) else { return path }
+    defer { free(real) }
+    let head = String(cString: real)
+    return rest.isEmpty ? head : (head == "/" ? "" : head) + "/" + rest.joined(separator: "/")
+}
 
 var passed = 0
 var failed = 0
@@ -61,6 +74,7 @@ final class FakeChrome: @unchecked Sendable {
     private var counts: [String: Int] = [:]
     private var activations: [() -> Void] = []
     private var gate: DispatchSemaphore?
+    private var statusGate: DispatchSemaphore?
     private var _resetExit: Int32 = 0, _quick = false, _ownID: String? = "com.getnorthlight.daydream"
     private var _resets: [[String]] = []
     private var _order: [String] = []
@@ -84,13 +98,16 @@ final class FakeChrome: @unchecked Sendable {
     /// The next question stays on screen until `release()`.
     func hold() { locked { gate = DispatchSemaphore(value: 0) } }
     func release() { let g = locked { () -> DispatchSemaphore? in let g = gate; gate = nil; return g }; g?.signal() }
+    /// The next reads of Chrome's status wait (a read still running) until `releaseStatus()`.
+    func holdStatus() { locked { statusGate = DispatchSemaphore(value: 0) } }
+    func releaseStatus() { let g = locked { () -> DispatchSemaphore? in let g = statusGate; statusGate = nil; return g }; g?.signal() }
     func environment(setupFinished: @escaping () -> Bool) -> ChromeAccessEnvironment {
         ChromeAccessEnvironment(
             running: { [self] in note("running"); return locked { _pid } },
             verify: { [self] _ in note("verify"); return true },
             setupFinished: setupFinished,
             cardShown: { true },
-            status: { [self] _ in note("status"); return locked { _status } },
+            status: { [self] _ in note("status"); locked { statusGate }?.wait(); return locked { _status } },
             ask: { [self] _ in
                 note("ask")
                 locked { gate }?.wait()
@@ -119,6 +136,12 @@ final class FakeChrome: @unchecked Sendable {
 /// Drawn as the front window, 4000 points off every screen (as onboarding-screen-checks' window).
 final class KeyWindow: NSWindow {
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
+    /// rc-018 RC3: macOS 26 already moves a window made at -4000 onto the screen in `init` (480,160 on the owner's Mac,
+    /// probe 10/9), before `constrainFrameRect` is ever asked: put it straight back where it was asked for.
+    override init(contentRect: NSRect, styleMask: NSWindow.StyleMask, backing: NSWindow.BackingStoreType, defer flag: Bool) {
+        super.init(contentRect: contentRect, styleMask: styleMask, backing: backing, defer: flag)
+        setFrameOrigin(contentRect.minX <= -1000 && contentRect.minY <= -1000 ? contentRect.origin : NSPoint(x: -5000, y: -5000))
+    }
     override var isKeyWindow: Bool { true }
     override var isMainWindow: Bool { true }
     override var canBecomeKey: Bool { true }
@@ -139,11 +162,17 @@ final class Elements { var frames: [String: CGRect] = [:] }
         setbuf(stdout, nil)
         let env = ProcessInfo.processInfo.environment
         guard let out = env["DD_CHECK_OUT"], !out.hasPrefix("/private/tmp/daydream-"), !out.hasPrefix("/tmp/") else { fatal("DD_CHECK_OUT must be a scratch folder") }
-        guard let home = env["CFFIXED_USER_HOME"], env["HOME"] == home, !home.hasPrefix("/Users/") else {
-            fatal("HOME and CFFIXED_USER_HOME must be the same scratch folder")
+        // Any scratch HOME but the person's real one, a folder above it or its Library. The runner keeps it in the work
+        // folder, which lives under ~/DaydreamReleases (uninstall-plan refuses /var and /tmp), so not "/Users/" in general.
+        let realHome = URL(fileURLWithPath: getpwuid(getuid()).map { String(cString: $0.pointee.pw_dir) } ?? "/Users/" + NSUserName()).resolvingSymlinksInPath().path
+        guard let home = env["CFFIXED_USER_HOME"], env["HOME"] == home, home.hasPrefix("/"),
+              case let scratch = URL(fileURLWithPath: home).resolvingSymlinksInPath().path, scratch != "/",
+              !(realHome + "/").hasPrefix(scratch + "/"), !(scratch + "/").hasPrefix(realHome + "/Library/") else {
+            fatal("HOME and CFFIXED_USER_HOME must be the same scratch folder, not your own home")
         }
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].path
-        guard appSupport.hasPrefix(home) else { fatal("REFUSING: Application Support resolves to \(appSupport)") }
+        // Resolved on both sides: FileManager spells /private/var/tmp/... as /var/tmp/...; either is the same scratch HOME.
+        guard resolvedPath(appSupport).hasPrefix(resolvedPath(home) + "/") else { fatal("REFUSING: Application Support resolves to \(appSupport)") }
         DispatchQueue.global().asyncAfter(deadline: .now() + 500) { fatal("chrome-ask-checks timed out") }
         _ = NSApplication.shared
         // Accessory (no Dock icon, no menu bar), as the checks that click SwiftUI buttons run: a prohibited app's
@@ -167,6 +196,7 @@ final class Elements { var frames: [String: CGRect] = [:] }
         resetSafety()
         for dark in [false, true] {
             try allowPath(dark: dark)
+            try activationPath(dark: dark)
             try deniedPath(dark: dark)
             try fallbackPath(dark: dark)
             try notRunningPath(dark: dark)
@@ -186,7 +216,7 @@ final class Elements { var frames: [String: CGRect] = [:] }
 
     @MainActor static func words() {
         typealias Row = PermissionChromeRow
-        check(Row.primer == "macOS will ask once. Click Allow so DayDream knows which page you're typing on.", "A1 primer: the owner's words")
+        check(Row.primer == "macOS will ask once.", "A1 primer: the owner's words (10/8)")
         check(Row.offLine == "Chrome pages are off." && Row.askAgainTitle == "Ask again", "A2 refused: \"Chrome pages are off.\" with Ask again")
         check(ChromeAccessNotice.line == "Chrome pages aren't being saved." && ChromeAccessNotice.askAgainTitle == "Ask again"
               && ChromeAccessNotice.fixTitle == "Fix", "A3 the calm line, Ask again (refused) and Fix (never asked)")
@@ -327,6 +357,7 @@ final class Elements { var frames: [String: CGRect] = [:] }
             host.frame = NSRect(x: 0, y: 0, width: 660, height: 600)
             window.contentView = host
             window.orderFrontRegardless()
+            if NSScreen.screens.contains(where: { $0.frame.intersects(window.frame) }) { check(false, "rc-018 RC3: the check's window stays off every screen", "\(window.frame)") }
             settle(1.2)
         }
         func settle(_ s: Double = 0.4) { pump(s); host.layoutSubtreeIfNeeded(); pump(0.1) }
@@ -412,9 +443,39 @@ final class Elements { var frames: [String: CGRect] = [:] }
         check(page.page == .permissions && page.has("chrome.icon"), "B1 the row shows Allowed (Chrome's icon) before the page moves on")
         page.sameAsOtherRows("B1 allowed")
         page.shoot("3-allow-allowed", settleFirst: 0)
-        check(wait(4) { page.page == .summaries }, "B1 allowed: the page moves on by itself")
+        check(wait(4) { page.page == .apps }, "B1 allowed: the page moves on by itself")
         check(fake.count("ask") == 1 && fake.count("openChrome") == 0 && fake.count("openPane") == 0 && fake.waitingActivations == 0,
               "B1 one question, Chrome not opened, nothing waiting to ask later")
+        page.close()
+    }
+
+    /// 1b. rc-018 RC3 (owner 10/9: "after restart had to click the connect the chrome button twice"): the click on Allow
+    /// that brings DayDream to the front. DayDream becoming active reads Chrome's access again (setup's `rereadChrome`
+    /// and the model's own observer: `checkChromeAccess`, a read, never a question); the row used to turn Allow into a
+    /// spinner for that read, under the press, so the click did nothing. The row keeps Allow through the read, and the
+    /// press asks once.
+    @MainActor static func activationPath(dark: Bool) throws {
+        let model = try makeModel("activation-\(dark)")
+        fake.set(pid: 4242, status: -1744, answer: 0)
+        let page = Page(model, dark: dark)
+        check(page.page == .permissions && page.has("allow.chrome") && model.chromeRowAccess == .notAsked,
+              "B1b (\(dark ? "dark" : "light")) the row shows Allow (Chrome running, not asked)")
+        let readsBefore = fake.count("status")
+        fake.holdStatus()
+        NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: NSApp)
+        page.settle(0.3)
+        check(fake.count("status") > readsBefore || model.chromeAccess == .checking, "B1b DayDream came to the front: Chrome's access is read again (a read)",
+              "\(model.chromeAccess) reads \(fake.count("status") - readsBefore)")
+        check(model.chromeAccess == .checking && model.chromeRowAccess == .notAsked && page.has("allow.chrome") && fake.count("ask") == 0,
+              "B1b while that read runs, the row keeps Allow (no spinner under the press), and nothing is asked",
+              "access \(model.chromeAccess) row \(model.chromeRowAccess) keys \(page.elements.frames.keys.sorted())")
+        check(page.click("allow.chrome"), "B1b Allow is pressed during the read")
+        check(model.chromeRowAccess == .checking, "B1b the press itself (a question on its way) shows the spinner", "\(model.chromeRowAccess)")
+        fake.releaseStatus()
+        check(wait(3) { fake.count("ask") == 1 }, "B1b the press asks macOS once", "\(fake.count("ask"))")
+        check(wait(3) { model.chromeAccess == .allowed }, "B1b Allow in macOS's question: Allowed", "\(model.chromeAccess)")
+        page.settle(0.2)
+        check(fake.count("ask") == 1, "B1b one question for one press")
         page.close()
     }
 
@@ -461,7 +522,7 @@ final class Elements { var frames: [String: CGRect] = [:] }
         page.settle(0.2)
         check(page.page == .permissions && !page.has("askagain.chrome"), "B2 the row shows Allowed before the page moves on")
         page.shoot("5b-askagain-allowed", settleFirst: 0)
-        check(wait(4) { page.page == .summaries }, "B2 allowed: the page moves on by itself")
+        check(wait(4) { page.page == .apps }, "B2 allowed: the page moves on by itself")
         check(fake.count("openPane") == 0 && guideShows == 0 && fake.count("openChrome") == 0, "B2 no guide, no pane, Chrome not opened")
         page.close()
     }

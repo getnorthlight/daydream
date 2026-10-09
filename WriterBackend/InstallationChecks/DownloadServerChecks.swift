@@ -172,10 +172,17 @@ func downloadServerChecks() async throws {
     }
 
     // 1. The network drops twice mid-body: resumed from the partial file each time, never shown as stopped.
-    var (result, log, progress, dir) = try await run("drop") { index, _ in index < 2 ? .serve(cut: 700_000) : .serve() }
-    // (A cut connection can lose bytes still in flight: each try resumes from what the partial file holds.)
+    // (A cut connection can lose bytes still in flight, even all of them: each try resumes from what the partial file
+    // holds. So the server keeps cutting until two drops have happened and one of them was a Range request.)
+    final class Drops { var cuts = 0; var rangedCut = false }
+    let drops = Drops()
+    var (result, log, progress, dir) = try await run("drop") { _, start in
+        guard drops.cuts < 2 || !drops.rangedCut else { return .serve() }
+        drops.cuts += 1; if start != nil { drops.rangedCut = true }
+        return .serve(cut: 700_000)
+    }
     let dropStarts = log.map { $0.start ?? 0 }
-    require(finished(result) && log.count == 3 && log[0].start == nil && dropStarts == dropStarts.sorted() && dropStarts[2] > 0 && !progress.failedShown,
+    require(finished(result) && log.count >= 3 && log[0].start == nil && dropStarts == dropStarts.sorted() && dropStarts.last! > 0 && !progress.failedShown,
             "two network drops: each resumed with Range where the partial file ended, finished, never shown stopped (\(dropStarts))")
     let seen = progress.all.compactMap { if case .downloading(let r, _) = $0 { return r }; return nil }
     require(seen == seen.sorted(), "progress only moves forward across drops")
@@ -189,12 +196,26 @@ func downloadServerChecks() async throws {
     (result, log, progress, _) = try await run("stall", stall: 1) { index, _ in index == 0 ? .serve(cut: 500_000, stall: 4) : .serve() }
     require(finished(result) && log.map(\.start) == [nil, 500_000] && !progress.failedShown, "a stalled transfer times out and resumes at 500,000 (\(log.map(\.start)))")
     // 5. A server that ignores Range (200 with the whole file): the partial file starts over and the file is right.
-    (result, log, _, _) = try await run("norange") { index, _ in index == 0 ? .serve(cut: 600_000) : .serve(range: false) }
-    require(finished(result) && log.count == 3 && log[0].start == nil && (log[1].start ?? 0) > 0 && log[2].start == nil,
+    // A cut connection can keep none of its bytes (the in-flight case above), and then the next request asks for no Range.
+    // So 5 and 6 cut at the start until the partial file holds bytes, and play their scenario at the first Range request.
+    final class FirstRange { var index: Int? }
+    let ranged = FirstRange()
+    (result, log, _, _) = try await run("norange") { index, start in
+        if start != nil, ranged.index == nil { ranged.index = index }
+        return ranged.index == nil ? .serve(cut: 600_000) : .serve(range: false)
+    }
+    let r5 = ranged.index ?? -1
+    require(finished(result) && r5 >= 1 && log.count == r5 + 2 && (log[r5].start ?? 0) > 0 && log[r5 + 1].start == nil,
             "a server without Range: the partial starts over once, the file is right (\(log.map(\.start)))")
     // 6. A 206 with the wrong Content-Range is never appended: tried again, then right.
-    (result, log, _, _) = try await run("wrongrange") { index, _ in index == 0 ? .serve(cut: 300_000) : index == 1 ? .serve(wrongRange: true) : .serve() }
-    require(finished(result) && log.count == 3 && (log[1].start ?? 0) > 0 && log[1].start == log[2].start, "a wrong Content-Range is refused and tried again (\(log.map(\.start)))")
+    let wrong = FirstRange()
+    (result, log, _, _) = try await run("wrongrange") { index, start in
+        if start != nil, wrong.index == nil { wrong.index = index; return .serve(wrongRange: true) }
+        return wrong.index == nil ? .serve(cut: 300_000) : .serve()
+    }
+    let r6 = wrong.index ?? -1
+    require(finished(result) && r6 >= 1 && log.count == r6 + 2 && (log[r6].start ?? 0) > 0 && log[r6].start == log[r6 + 1].start,
+            "a wrong Content-Range is refused and tried again (\(log.map(\.start)))")
     // 7. A damaged file once: deleted and downloaded once more from the start, by itself.
     (result, log, progress, _) = try await run("damagedonce") { index, _ in .serve(damage: index == 0) }
     require(finished(result) && log.map(\.start) == [nil, nil] && !progress.failedShown, "a damaged file is downloaded once more from the start by itself")
@@ -213,7 +234,12 @@ func downloadServerChecks() async throws {
     require(log.count == 1, "a refused redirect stops at once")
     // 11. Out of patience: 503 forever, stopped after the patience ran out, with the bytes already here kept for Try Again.
     let short = DownloadPatience(firstWait: 0.01, maximumWait: 0.05, giveUpAfter: 0.4)
-    (result, log, progress, dir) = try await run("down", patience: short) { index, _ in index == 0 ? .serve(cut: 800_000) : .status(503) }
+    // (Cut until the partial file holds bytes, as in 5 and 6, then 503 from the first Range request on.)
+    let down = FirstRange()
+    (result, log, progress, dir) = try await run("down", patience: short) { index, start in
+        if start != nil, down.index == nil { down.index = index }
+        return down.index == nil ? .serve(cut: 800_000) : .status(503)
+    }
     let kept = (try? fm.attributesOfItem(atPath: dir.appendingPathComponent(hash + ".partial").path)[.size] as? NSNumber)?.intValue
     if case .failure(DownloadInterruption.status(503, _)) = result {} else { require(false, "503 forever stops: \(result)") }
     require(log.count > 3 && (kept ?? 0) > 0 && progress.failedShown, "503 forever: tried \(log.count) times, then stopped with \(kept ?? 0) bytes kept")

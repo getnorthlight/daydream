@@ -6,15 +6,18 @@ import MemoryUI
 import WriterBackend
 
 /// Setup (owner, 9/28): forced and proper, and every page works while recording.
-/// - A first setup: Permissions, Summaries, Apps, then Connect your AI (`.review`, owner 10/5: the AI apps on this Mac
+/// - A first setup: Permissions, Apps, then Connect your AI (`.review`, owner 10/5: the AI apps on this Mac
 ///   with Connect, as in Settings › Connections), whose Start Recording starts recording at once. The
 ///   Permissions card has a Google Chrome row while Chrome is installed and its access isn't decided
 ///   (`DaydreamOnboardingChromeRow`, owner 10/2); its Allow asks macOS on the press, and it never holds Continue.
 /// - Once, for someone who finished setup before that row (`DaydreamChromeCard`): the Permissions card alone, with Done.
 /// - After an update from a test build whose setup was finished before version 2 (`DaydreamSetupVersion`): the short
-///   "What's new", from Summaries (Permissions only while one is missing), then Apps, then the review with Done.
-/// Summaries turn on at the Summaries page's Continue: on this Mac the download runs in the background and the writer
-/// turns summaries on once the model is verified, even if this window closes; an OpenRouter key is tried at Continue.
+///   "What's new", from Apps (Permissions only while one is missing), then the review with Done.
+/// claude/setup-local-summaries (owner 10/7): setup has no summaries page. Once a first setup is past Permissions,
+/// summaries on this Mac start by themselves for someone who never chose (`WriterIntegration.chooseLocalByDefault`: a
+/// Mac that can run the model, 5 GB free or more): the download runs in the background, silently, and the writer turns
+/// summaries on once the model is verified, even if this window closes. A choice already made (OpenRouter, on this Mac,
+/// or off) is never touched. OpenRouter, and turning summaries on or off later, are in Settings › Summarizer.
 /// Typing and Web pages in Chrome are on unless the person turned them off (`SetupChoices`); Continue on Apps saves both.
 struct DaydreamOnboarding: View {
     @ObservedObject var model: MemoryViewModel
@@ -29,15 +32,8 @@ struct DaydreamOnboarding: View {
     @State private var route = DaydreamOnboardingRoute()
     /// The short what's-new for an upgrade (set as setup opens).
     @State private var whatsNew: Bool
-    @State private var choice: DaydreamSummaryChoice
-    /// fix/bugs7: the person picked a summaries row. Until then the rows follow the writer as its state settles: at launch
-    /// a saved OpenRouter choice reads as Checking (the local row's state) until the cloud is back on, and Continue on that
-    /// stale row turned OpenRouter off and started the 2.7 GB download.
-    @State private var choiceTouched = false
-    @State private var key = ""
-    /// The answer to the key Continue tried (its line and one button under the field; the page stays).
-    @State private var cloudProblem: SummaryProblem?
-    @State private var focusKey = 0
+    /// This setup already asked the writer for summaries on this Mac by default (once per opening).
+    @State private var defaultSummariesAsked = false
     @State private var exclusions: Set<String>
     @State private var typedText: Bool
     /// "Web pages in Chrome" (on unless turned off, like typing).
@@ -84,22 +80,17 @@ struct DaydreamOnboarding: View {
     @State private var chromeAllowedAt: Date?
     /// The Permissions card alone, once, for someone who finished setup before the Chrome row (`DaydreamChromeCard`).
     @State private var chromeCard = false
+    /// rc-018 RC3 (A5): setup's first permission reads ran, so a permission that turns Allowed from now on is a grant made
+    /// beside setup (`SetupFocus.handBack`).
+    @State private var handBackArmed = false
+    /// A8: the running System Settings opened before this copy was installed (`SystemSettingsAge`).
+    @State private var settingsStale = false
     private let permissionTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     /// Both recording permissions, each read without a prompt. The checks stand in a read.
     static var readPermissions: () -> (accessibility: Bool, inputMonitoring: Bool) = { (AXIsProcessTrusted(), CGPreflightListenEventAccess()) }
-    /// This Mac can run the model: Apple silicon with 8 GB of memory (`WriterCandidates.recommended`). Otherwise the
-    /// OpenRouter row is setup's default.
-    #if DEVELOPMENT_SOURCE_CHECKS
-    /// A saved OpenRouter choice (setup-upgrade-checks); nil reads the writer.
-    static var cloudChosenForChecks: Bool?
-    #endif
-    static func cloudChosen(_ writer: WriterIntegration) -> Bool {
-        #if DEVELOPMENT_SOURCE_CHECKS
-        if let cloudChosenForChecks { return cloudChosenForChecks }
-        #endif
-        return writer.cloudIntended
-    }
+    /// This Mac can run the model: Apple silicon with 8 GB of memory (`WriterCandidates.recommended`). Otherwise setup
+    /// starts nothing (summaries stay off; Settings › Summaries turns them on or takes a key).
     static var macQualifies: Bool {
         #if DEVELOPMENT_SOURCE_CHECKS
         if let qualifiesForChecks { return qualifiesForChecks }
@@ -114,17 +105,12 @@ struct DaydreamOnboarding: View {
     /// A Mac that can't run the model (setup-upgrade-checks); nil reads this Mac.
     static var qualifiesForChecks: Bool?
     #endif
-    /// The model's size, as the line says it ("2.7 GB").
-    static var modelSize: String { SummaryPhaseReading.gigabytes(WriterCandidates.recommended?.asset.bytes ?? 2_740_937_888) }
-
     init(model: MemoryViewModel) {
         self.model = model
         writer = model.noteWriter
         typing = model.typing
         connection = model.connection
         _whatsNew = State(initialValue: model.setupIsWhatsNew)
-        _choice = State(initialValue: Self.initialChoice(phase: SummaryControls.phase(model.noteWriter), localOffered: model.noteWriter.localOffered,
-                                                         qualifies: Self.macQualifies, cloudChosen: Self.cloudChosen(model.noteWriter)))
         let excluded = Self.appIDs(model.blockedApps)
         _exclusions = State(initialValue: excluded)
         _baselineExclusions = State(initialValue: excluded)
@@ -150,18 +136,6 @@ struct DaydreamOnboarding: View {
                                                  preview: model.development?.preview == true)
     }
 
-    /// Where the summaries switches start: what is on (or downloading) now; else "Summaries on this Mac" where this Mac
-    /// can run it, and the OpenRouter row where it can't.
-    /// fix/sx-all round 2: a person who chose OpenRouter with a saved key (`WriterIntegration.cloudIntended`) starts on the
-    /// OpenRouter row, also while the key is still being checked at launch (drawn as `.checking`) or cloud stopped after
-    /// an update; never on "Summaries on this Mac", which would turn their choice off at Continue.
-    static func initialChoice(phase: SummaryPhase, localOffered: Bool, qualifies: Bool, cloudChosen: Bool = false) -> DaydreamSummaryChoice {
-        if SummaryPhaseReading.cloudOn(phase) { return .cloud }
-        if cloudChosen && phase != .on(.local) { return .cloud }
-        if SummaryPhaseReading.localOn(phase) && localOffered { return .local }
-        return localOffered && qualifies ? .local : .cloud
-    }
-
     /// Both switches on, unless the person turned one off (SetupChoices) and it is off now. DayDream Preview: both on.
     private static func seeds(_ model: MemoryViewModel) -> (typing: Bool, chrome: Bool) {
         let choices = model.development == nil ? model.setupChoicesRead() : SetupChoices()
@@ -177,12 +151,6 @@ struct DaydreamOnboarding: View {
     /// asked for and Start Recording only closes it (`PreviewSample`).
     private var preview: Bool { model.development?.preview == true }
     private var summariesAvailable: Bool { available && !model.recordingTrial }
-    private var phase: SummaryPhase { SummaryControls.phase(writer) }
-    /// A key is already saved and cloud summaries are on with it (nothing reads the Keychain to find out).
-    private var savedKey: Bool { phase == .on(.cloud) }
-    /// fix/sx-all round 2: OpenRouter was chosen with a key that is still saved (cloud may be off after an update, or still
-    /// being checked): Continue with the field empty tries that key (`chooseCloud` with no key uses the saved one).
-    private var keyKept: Bool { Self.cloudChosen(writer) }
 
     #if DEVELOPMENT_SOURCE_CHECKS
     /// What the page drew last (setup-upgrade-checks and the renders read it: offscreen SwiftUI text has no
@@ -192,14 +160,17 @@ struct DaydreamOnboarding: View {
         var title: String
         var button: String
         var back: Bool
-        var localLine: String
-        var cloudProblem: SummaryProblem?
         /// The line at the top of the page (a problem Continue ran into), and the typing switch.
         var error: String?
         var typedText: Bool
-        var rows: [(title: String, value: String, button: String?)]
         /// chromeask-1005: the Chrome row as drawn (its words and its button's own closures; chrome-ask-checks presses it).
         var chromeRow: PermissionChromeRow? = nil
+        /// rc-018 RC3: the main button can be pressed; the reopen line under the cards; the stale-System-Settings line
+        /// (A8) and its Quit button's own action.
+        var canContinue = true
+        var reopenLine = false
+        var settingsLine: String? = nil
+        var quitSettings: (() -> Void)? = nil
     }
     static var drawnForChecks: Drawn?
     /// claude/permflash-015: the page of every draw, in order; nil for a draw before the page was decided
@@ -220,10 +191,12 @@ struct DaydreamOnboarding: View {
 
     var body: some View {
         #if DEVELOPMENT_SOURCE_CHECKS
-        let _ = Self.drawnForChecks = Drawn(page: page, title: title, button: continueTitle, back: backAction != nil, localLine: localLine,
-                                            cloudProblem: cloudProblem, error: error, typedText: typedText,
-                                            rows: page == .review ? reviewRows.map { ($0.title, $0.value, $0.button?.title) } : [],
-                                            chromeRow: page == .permissions ? chromeRow : nil)
+        let _ = Self.drawnForChecks = Drawn(page: page, title: title, button: continueTitle, back: backAction != nil,
+                                            error: error, typedText: typedText,
+                                            chromeRow: page == .permissions ? chromeRow : nil, canContinue: canContinue,
+                                            reopenLine: page == .permissions && relaunchPending && !model.permissionAutoRelaunch,
+                                            settingsLine: page == .permissions && settingsStale && !permitted ? SystemSettingsAge.line : nil,
+                                            quitSettings: page == .permissions && settingsStale && !permitted ? quitSettingsPressed : nil)
         let _ = Self.drawnPagesForChecks.append(opened ? page : nil)
         #endif
         // Before the page is decided (`opened`): the window and nothing on it.
@@ -232,7 +205,7 @@ struct DaydreamOnboarding: View {
             back: opened ? backAction : nil,
             continueTitle: continueTitle,
             canContinue: opened && canContinue, working: working,
-            // The icon opens setup; the summaries, apps and connect steps use its room for their controls.
+            // The icon opens setup; the apps and connect steps use its room for their controls.
             showsIcon: opened && page == .permissions,
             continueAction: proceed
         ) {
@@ -245,14 +218,29 @@ struct DaydreamOnboarding: View {
                 pageContent
             }
         }
-        .onAppear { resetForReview(); applySetupRequest(); readChrome(); applyChromeCard(); refreshPermissions() }
+        // rc-018 RC3: setup's window for the focus policy (`SetupFocus`): its page, and after DayDream's own relaunch, its
+        // saved frame and the one activation that puts it in front, key (rule 5).
+        .background(WindowReader { window in
+            SetupFocus.shared.setupShown(window, page: page, unfinished: !completed && !preview)
+            SetupFocus.shared.placeAfterRelaunch(window)
+        })
+        .onAppear {
+            resetForReview(); applyRelaunchPage(); applySetupRequest(); readChrome(); applyChromeCard(); refreshPermissions(); readSettingsAge()
+        }
         .onChange(of: model.chromeCardRequested) { _ in applyChromeCard() }
         // A Start control elsewhere sent the person here (MemoryViewModel.requestStart).
         .onChange(of: model.setupRequest) { _ in applySetupRequest() }
-        .onChange(of: page) { _ in settleUneditedChoices() }
-        .onReceive(permissionTimer) { _ in refreshPermissions(); settleUneditedChoices() }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refreshPermissions() }
-        .onChange(of: choice) { _ in error = nil; cloudProblem = nil }
+        .onChange(of: page) { next in
+            SetupFocus.shared.setupShown(nil, page: next, unfinished: !completed && !preview)
+            settleUneditedChoices(); if next != .permissions { startDefaultSummaries() }
+        }
+        .onReceive(permissionTimer) { _ in refreshPermissions(); settleUneditedChoices(); readSettingsAge() }
+        // rc-018 RC3 (rule 8): the read that coming to the front starts applies once the press that brought DayDream
+        // forward is over, so the page never moves on (or a switch flips) under that click.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            SetupFocus.shared.afterMouseUp { refreshPermissions() }
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didTerminateApplicationNotification)) { _ in readSettingsAge() }
         // The Chrome row, once shown, stays and shows its answer.
         .onChange(of: model.chromeAccess) { access in
             latchChromeRow()
@@ -263,12 +251,11 @@ struct DaydreamOnboarding: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in rereadChrome() }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didLaunchApplicationNotification)) { _ in readChromeRunning() }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didTerminateApplicationNotification)) { _ in readChromeRunning() }
-        .onChange(of: phase) { _ in followPhase() }
         // Typing switched on again after the key failed: the "typing stays off" line no longer matches the switch.
         .onChange(of: typedText) { on in if on && error == TypingSettingsText.keyError { error = nil } }
         .task { fileVaultOff = await FileVaultStatus.current() == false }
         .onDisappear {
-            key = ""
+            SetupFocus.shared.setupClosed()
             startTask?.cancel()
             // Closing setup never stops summaries: a download that started runs on, and the writer turns summaries on
             // once the model is verified.
@@ -289,14 +276,20 @@ struct DaydreamOnboarding: View {
             PermissionGrantView(enabled: available, readAccessibility: { Self.readPermissions().accessibility },
                                 readInputMonitoring: { Self.readPermissions().inputMonitoring }, embedded: true, showsRelaunchRow: false,
                                 dragHint: dragHintInitially, known: shownPermissions.snapshot, allowedBefore: model.permissionsAllowedBefore,
-                                chromeRow: chromeRow, onStatusChange: permissionChanged)
-        case .summaries:
-            DaydreamSummariesContent(choice: Binding(get: { choice }, set: { choice = $0; choiceTouched = true }), cloudKey: $key, localAvailable: writer.localOffered, localLine: localLine,
-                                     savedKey: savedKey || keyKept, problem: cloudProblem, fix: fixCloudProblem, focusRequest: focusKey)
-                .disabled(!(summariesAvailable || preview) || working)
-            if !summariesAvailable && !preview {
-                Text("Summaries are unavailable in this recording-only preview. You can continue without changing them.")
-                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                                chromeRow: chromeRow, onStatusChange: permissionChanged, sideBySide: true)
+            // Under the cards, never above them (rule 8): the reopen line while DayDream won't restart by itself (its
+            // cooldown, or no restart allowed now), and System Settings opened before this copy was installed (A8).
+            if relaunchPending && !model.permissionAutoRelaunch {
+                Text(PermissionRelaunch.inputMonitoringTurnedOn.text).font(.system(size: 12)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if settingsStale && !permitted {
+                HStack(spacing: 10) {
+                    Text(SystemSettingsAge.line).font(.system(size: 12)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button(SystemSettingsAge.quitTitle) { quitSettingsPressed() }
+                        .font(.system(size: 12))
+                }
             }
         case .apps:
             // The launch notice has been seen once this page closes.
@@ -323,7 +316,8 @@ struct DaydreamOnboarding: View {
                     if let app = connection.lastConnected { UsageReport.setupStep("ai_connected", ["ai_app": .text(UsageReport.aiApp(app))]) }
                 }
             // A blocker setup fixes is said by the button ("Allow Permissions"); only the others need a sentence.
-            DaydreamReviewContent(rows: reviewRows, message: startBlocker.flatMap { $0.fix == nil ? $0.text : nil },
+            // claude/setup-local-summaries (owner 10/7): no Summaries row here; summaries are in Settings › Summaries.
+            DaydreamReviewContent(message: startBlocker.flatMap { $0.fix == nil ? $0.text : nil },
                                   fileVaultOff: fileVaultOff, comeBack: !model.recording, aiReads: true)
             // Only what setup can't fix itself goes to Settings; Start Recording goes to every other fix.
             if let issue = startBlocker, issue.settings {
@@ -367,45 +361,31 @@ struct DaydreamOnboarding: View {
 
     private var title: String {
         switch page {
-        case .permissions: return "Grant DayDream Permissions"
-        case .summaries: return whatsNew ? Self.whatsNewTitle : "Set up summaries"
-        case .apps: return "Apps to remember"
+        case .permissions: return "Turn on DayDream"
+        // What's-new opens on Apps (it has no summaries choice since claude/setup-local-summaries).
+        case .apps: return whatsNew ? Self.whatsNewTitle : "Apps to remember"
         case .review: return Self.connectTitle
-        }
-    }
-
-    /// Row 1's one line: the size before anything is downloaded, the download's own state while it runs, or where it
-    /// runs once the model is here.
-    private var localLine: String {
-        switch phase {
-        // A saved OpenRouter choice being checked at launch is the key's check, not this Mac's model.
-        case .checking where keyKept: return writer.modelOnMac ? DaydreamSummariesContent.localReadyLine : DaydreamSummariesContent.localLine(size: Self.modelSize)
-        case .downloading, .checking: return phase.line ?? DaydreamSummariesContent.localReadyLine
-        case .on(.local): return DaydreamSummariesContent.localReadyLine
-        case .failed(let problem) where !SummaryPhaseReading.isCloud(problem): return problem.line
-        default: return writer.modelOnMac ? DaydreamSummariesContent.localReadyLine : DaydreamSummariesContent.localLine(size: Self.modelSize)
         }
     }
 
     // MARK: Buttons
 
-    /// Back, except on setup's first page (Permissions, or what's-new's Summaries).
+    /// Back, except on setup's first page (Permissions, or what's-new's Apps).
     private var backAction: (() -> Void)? {
         if page == .permissions { return nil }
-        if whatsNew && page == .summaries { return nil }
+        if whatsNew && page == .apps { return nil }
         return { goBack() }
     }
 
     private var canContinue: Bool {
         guard !working else { return false }
         if preview { return true }
+        // rc-018 RC3 (A2): DayDream is about to restart itself: "Restarting…", disabled.
+        if restarting { return false }
         if relaunchPending && (page == .permissions || page == .review) { return true }
         switch page {
         // The Chrome row never holds Continue; the Chrome card alone (permissions already settled) always has Done.
         case .permissions: return permitted || chromeCard
-        // fix/sx-all round 1: the key switch on with no key pasted (and none saved) can't continue: before, Continue went
-        // on and the review said Summaries Off. Turning the switch off (or pasting a key) is the way on.
-        case .summaries: return !(summariesAvailable && choice == .cloud && key.isEmpty && !savedKey && !keyKept && !SummaryPhaseReading.cloudOn(phase))
         case .apps: return available && appsLoaded && model.preferencesAvailable && appsProblem == nil
         // Start Recording also runs when setup can fix what stands: it goes to that page. Done always runs.
         case .review: return model.recording || (startBlocker.map { $0.fix != nil } ?? true)
@@ -434,6 +414,7 @@ struct DaydreamOnboarding: View {
 
     /// The one main button. Setup has no way past Permissions but allowing them: closing the window is "later".
     private var continueTitle: String {
+        if restarting { return Self.restartingTitle }
         if relaunchPending && (page == .permissions || page == .review) { return PermissionRequestActions.quitAndReopenTitle }
         if chromeCard && page == .permissions { return Self.doneTitle }
         guard page == .review else { return "Continue" }
@@ -446,6 +427,15 @@ struct DaydreamOnboarding: View {
         }
     }
     static let doneTitle = "Done"
+    /// rc-018 RC3 (A2): the main button while DayDream restarts itself.
+    static let restartingTitle = "Restarting…"
+    /// DayDream decided to restart itself (`MemoryViewModel.permissionAutoRelaunch`), in a real setup.
+    private var restarting: Bool { available && !preview && model.permissionAutoRelaunch }
+    /// A8: quits System Settings, only from the person's press (the checks stand in a counter).
+    static var quitSystemSettings: () -> Void = { SystemSettingsRead.quit() }
+    /// A8: when the running System Settings opened (nil: it doesn't run), and this app's install dates. The checks stand in.
+    static var settingsLaunchDate: () -> Date? = { SystemSettingsRead.launchDate() }
+    static var bundleDates: () -> [Date?] = { SystemSettingsAge.bundleDates(Bundle.main.bundleURL) }
 
     private func show(_ next: DaydreamOnboardingPage) {
         guard !working else { return }
@@ -465,8 +455,7 @@ struct DaydreamOnboarding: View {
         if preview {
             // Click-through only: no download, no save, no permission, no recording.
             switch page {
-            case .permissions: show(.summaries)
-            case .summaries: show(.apps)
+            case .permissions: show(.apps)
             case .apps: show(.review)
             case .review: dismiss()
             }
@@ -475,8 +464,7 @@ struct DaydreamOnboarding: View {
         switch page {
         case .permissions:
             if chromeCard { finishChromeCard(); return }
-            show(.summaries)
-        case .summaries: continueSummaries()
+            show(.apps)
         case .apps: saveApps()
         case .review:
             if model.recording { finish() }
@@ -487,63 +475,18 @@ struct DaydreamOnboarding: View {
 
     // MARK: Summaries
 
-    /// Continue on Summaries. On this Mac: the download starts (or the model is checked) and the page moves on at once.
-    /// OpenRouter: the key is tried here, with a spinner on Continue; a problem shows under the field with its one button
-    /// and the page stays. An empty field (no key saved) leaves summaries off: the review says so, with Add Key.
-    private func continueSummaries() {
-        guard summariesAvailable else { show(.apps); return }
-        func chosen(_ summaries: String) { UsageReport.setupStep("summaries_chosen", ["summaries": .text(summaries)]) }
-        cloudProblem = nil
-        switch choice {
-        case .local:
-            guard writer.localOffered else { error = DaydreamSetupText.localUnavailable; return }
-            // Already on, downloading or checking: nothing to start. A problem is tried again.
-            if !SummaryPhaseReading.localOn(phase) || SummaryPhaseReading.problem(phase) != nil { SummaryControls.current.chooseLocal(writer) }
-            chosen("local")
-            show(.apps)
-        case .cloud:
-            if key.isEmpty && savedKey { chosen("openrouter"); show(.apps); return }
-            guard key.utf8.count <= 4096, !key.contains("\n"), !key.contains("\r") else {
-                error = "Enter an OpenRouter API key on a single line."
-                return
-            }
-            if key.isEmpty && !keyKept {
-                // No key: summaries are off (turning this row on turned the other off).
-                if phase != .off { SummaryControls.current.turnOff(writer) }
-                chosen("off")
-                show(.apps)
-                return
-            }
-            let secret = key
-            working = true
-            model.writerControlsBusy = true
-            Task { @MainActor in
-                let problem = await SummaryControls.current.chooseCloud(writer, secret)
-                working = false
-                model.writerControlsBusy = false
-                if let problem {
-                    cloudProblem = problem
-                    if problem == .cloudKey { focusKey += 1 }
-                } else {
-                    key = ""
-                    chosen("openrouter")
-                    show(.apps)
-                }
-            }
-        case .later:
-            if phase != .off { SummaryControls.current.turnOff(writer) }
-            chosen("off")
-            show(.apps)
-        }
-    }
-
-    /// A problem's one button under the key field: Change Key puts the cursor in the field; Add Credits opens OpenRouter;
-    /// Try Again tries the key again.
-    private func fixCloudProblem(_ problem: SummaryProblem) {
-        switch problem {
-        case .cloudKey: key = ""; focusKey += 1
-        case .cloudCredits: NSWorkspace.shared.open(CloudSummariesText.creditsURL)
-        default: continueSummaries()
+    /// claude/setup-local-summaries (owner 10/7): once a first setup is past Permissions, summaries on this Mac start by
+    /// themselves for someone who never chose (the writer decides: `WriterIntegration.chooseLocalByDefault`, which never
+    /// touches a choice already made and skips a Mac that can't run the model or has under 5 GB free). Silent: nothing on
+    /// these pages changes, and no page shows the download (Settings › Summaries does). Never in what's-new, the
+    /// Chrome card, a setup already finished, Preview or a trial.
+    private func startDefaultSummaries() {
+        guard !defaultSummariesAsked, available, !preview, summariesAvailable, !completed, !whatsNew, !chromeCard else { return }
+        defaultSummariesAsked = true
+        switch SummaryControls.current.chooseLocalByDefault(writer, Self.macQualifies) {
+        case .started: UsageReport.setupStep("summaries_chosen", ["summaries": .text("local")])
+        case .lowSpace, .unavailable: UsageReport.setupStep("summaries_chosen", ["summaries": .text("off")])
+        case .waiting, .alreadyChosen: break
         }
     }
 
@@ -610,8 +553,9 @@ struct DaydreamOnboarding: View {
         model.setupRequest = nil
         switch request {
         // Setup already finished: once both are allowed, straight to the last page (the choices are kept).
-        case .permissions: route = DaydreamOnboardingRoute(afterPermissions: completed && !whatsNew ? .review : .summaries)
-        case .summaries: break
+        case .permissions: route = DaydreamOnboardingRoute(afterPermissions: completed && !whatsNew ? .review : .apps)
+        // Setup not finished yet: an open setup stays where it is.
+        case .apps where !completed: break
         default: show(request)
         }
     }
@@ -684,45 +628,6 @@ struct DaydreamOnboarding: View {
 
     // MARK: Status
 
-    /// The Connect page's one status row, only while summaries aren't simply on (owner, 10/5): the download while it runs
-    /// (Downloading 1.2 of 2.7 GB), Off with Turn On or Add Key, or a problem with its one button. Typed text and Web
-    /// pages in Chrome were just chosen on the page before.
-    private var reviewRows: [DaydreamReviewRow] {
-        guard !preview, summariesAvailable else { return [] }
-        if case .on = phase { return [] }
-        return [summariesRow]
-    }
-
-    static let addKeyTitle = "Add Key"
-    static let turnOnTitle = "Turn On"
-
-    private var summariesRow: DaydreamReviewRow {
-        let value = preview ? SummaryPhaseReading.localValue : SummaryPhaseReading.value(phase)
-        var button: (title: String, action: () -> Void)?
-        if !preview && summariesAvailable {
-            switch phase {
-            case .off:
-                // A Mac that can't run the model (Intel, under 8 GB) is offered the key, never a Turn On that can't work.
-                button = choice == .cloud || !writer.localOffered || !Self.macQualifies
-                    ? (Self.addKeyTitle, { choice = .cloud; show(.summaries); focusKey += 1 })
-                    : (Self.turnOnTitle, { show(.summaries) })
-            case .failed(let problem):
-                button = (problem.button, { reviewFix(problem) })
-            default: break
-            }
-        }
-        return DaydreamReviewRow(id: "summaries", title: "Summaries", value: value, systemImage: "text.alignleft",
-                                 edit: button == nil ? { show(.summaries) } : nil, button: button)
-    }
-
-    private func reviewFix(_ problem: SummaryProblem) {
-        switch problem {
-        case .cloudKey, .noMemory: choice = .cloud; key = ""; show(.summaries); focusKey += 1
-        case .cloudCredits: NSWorkspace.shared.open(CloudSummariesText.creditsURL)
-        default: SummaryControls.current.retry(writer)
-        }
-    }
-
     /// Why recording can't start from the last page yet; nil when Start Recording starts it (or recording is on).
     private var startIssue: String? { startBlocker?.text }
     private var startBlocker: StartBlocker? { model.recording && !preview ? nil : prerequisite() }
@@ -794,6 +699,8 @@ struct DaydreamOnboarding: View {
         model.setupFinished()
         UsageReport.setupStep("setup_done")
         whatsNew = false
+        // rc-018 RC3 (rule 1): the memory window appears now, in front.
+        SetupFocus.shared.setupFinished()
         dismiss()
     }
 
@@ -803,20 +710,26 @@ struct DaydreamOnboarding: View {
     private var chromeRowShown: Bool {
         guard available, !preview else { return false }
         return DaydreamOnboardingChromeRow.shown(release: ReleaseFeatures.chromePageHistory, installed: chromeInstalled,
-                                                 chromeExcluded: model.chromeExcluded, answered: MemoryViewModel.chromeAnswered(model.chromeRowAccess),
-                                                 reading: model.chromeRowAccess == .checking, latched: chromeRowLatched)
+                                                 chromeExcluded: model.chromeExcluded, answered: MemoryViewModel.chromeAnswered(chromeAccess),
+                                                 reading: chromeAccess == .checking, latched: chromeRowLatched)
     }
     /// chromeask-1005 (owner 10/5): before the press the row says what macOS will ask (with typing in mind while
     /// setup's typing switch is on) and, with Chrome closed, that Allow opens it in the background to ask.
     private var chromeRow: PermissionChromeRow? {
         guard chromeRowShown else { return nil }
-        return PermissionChromeRow(icon: chromeIcon, access: model.chromeRowAccess, asked: chromeAsked,
-                                   allow: { chromeRowLatched = true; chromeAsked = true; model.askChromeAccessInSetup() },
-                                   openSettings: { model.openChromeAutomationSettings() },
-                                   // Once pressed, the line under the row says what to do instead.
-                                   typing: typedText, opensChrome: !chromeRunning && !chromeAsked,
-                                   askAgain: { chromeRowLatched = true; chromeAsked = true; model.askChromeAgain() })
+        var row = PermissionChromeRow(icon: chromeIcon, access: chromeAccess, asked: chromeAsked,
+                                      allow: { chromeRowLatched = true; chromeAsked = true; model.askChromeAccessInSetup() },
+                                      openSettings: { model.openChromeAutomationSettings() },
+                                      // Once pressed, the line under the row says what to do instead.
+                                      typing: typedText, opensChrome: !chromeRunning && !chromeAsked,
+                                      askAgain: { chromeRowLatched = true; chromeAsked = true; model.askChromeAgain() })
+        row.disabled = restarting
+        return row
     }
+    /// rc-018 RC3 (A7, state audit #5): a first setup reads Chrome's access from macOS alone; an answer saved by an earlier
+    /// install or copy never decides its row (a finished setup's Chrome card keeps the saved answer). macOS's answer in
+    /// this launch does: a refusal made here keeps Ask again after Chrome closes.
+    private var chromeAccess: ChromeAccessState { model.chromeRowAccess(lastAnswer: completed || model.chromeAnsweredThisLaunch) }
     private func readChromeRunning() {
         guard available, !preview, ReleaseFeatures.chromePageHistory, chromeInstalled else { return }
         chromeRunning = model.chromeRunning
@@ -831,12 +744,12 @@ struct DaydreamOnboarding: View {
     /// Allowed, and (when it turned Allowed here) shown as Allowed for a moment, so the person sees it before the page
     /// moves on.
     private var chromeAllowedSeen: Bool {
-        model.chromeRowAccess == .allowed && (chromeAllowedAt.map { Date().timeIntervalSince($0) >= 1.5 } ?? true)
+        chromeAccess == .allowed && (chromeAllowedAt.map { Date().timeIntervalSince($0) >= 1.5 } ?? true)
     }
     /// chromeask-1005: the first read of Chrome's access is still running for an installed, recorded Chrome: the page
     /// doesn't move on by itself yet (with both permissions already allowed it did, before the row could show).
     private var chromeRowReading: Bool {
-        available && !preview && ReleaseFeatures.chromePageHistory && chromeInstalled && !model.chromeExcluded && model.chromeRowAccess == .checking
+        available && !preview && ReleaseFeatures.chromePageHistory && chromeInstalled && !model.chromeExcluded && chromeAccess == .checking
     }
     /// As the card opens: whether Chrome is installed (and its icon), and a read of its access (never a question).
     private func readChrome() {
@@ -869,6 +782,28 @@ struct DaydreamOnboarding: View {
     // MARK: Permissions
 
     private func permissionChanged(_ accessibility: Bool, _ inputMonitoring: Bool) {
+        // rc-018 RC3 (rule 8, A5): a change read while the left button is down applies once it is up (at most 300 ms), so
+        // the page never moves on to Apps under a click (a Toggle there would flip).
+        if available && !preview && SetupFocus.shared.mouseDown() {
+            SetupFocus.shared.afterMouseUp { applyPermissionChange(accessibility, inputMonitoring) }
+            return
+        }
+        applyPermissionChange(accessibility, inputMonitoring)
+    }
+    private func applyPermissionChange(_ accessibility: Bool, _ inputMonitoring: Bool) {
+        // A5: a permission turned Allowed beside setup (System Settings in front, no sheet): setup comes back, key, once.
+        if handBackArmed && available && !preview {
+            let reopen = relaunchPending(accessibility: accessibility, inputMonitoring: inputMonitoring)
+            // Held back by a closing password window, a sheet or System Settings not in front yet: it waits for that to
+            // clear while the permission still reads Allowed (review 10/9).
+            if accessibility && !self.accessibility {
+                SetupFocus.shared.handBack("accessibility", needsReopen: reopen, stillAllowed: { Self.readPermissions().accessibility })
+            }
+            if inputMonitoring && !self.inputMonitoring {
+                SetupFocus.shared.handBack("inputMonitoring", needsReopen: reopen, stillAllowed: { Self.readPermissions().inputMonitoring })
+            }
+        }
+        handBackArmed = true
         // Usage counts: each permission allowed during setup, once per install (UsageReport.setupStep).
         if available && !preview {
             if accessibility { UsageReport.setupStep("accessibility_allowed") }
@@ -884,20 +819,26 @@ struct DaydreamOnboarding: View {
                                                                                        allowed: chromeAllowedSeen))
     }
 
-    /// fix/bugs7: an untouched summaries choice follows the writer's settled state (see `choiceTouched`).
-    private func followPhase() {
-        guard !choiceTouched, !working else { return }
-        choice = Self.initialChoice(phase: phase, localOffered: writer.localOffered, qualifies: Self.macQualifies, cloudChosen: Self.cloudChosen(writer))
+    /// rc-018 RC3 (rule 5): DayDream's own relaunch from setup goes back to the page it was on (Permissions moves on to
+    /// Apps by itself once both are allowed).
+    private func applyRelaunchPage() {
+        guard let saved = SetupFocus.shared.takeRelaunchPage(), saved != .permissions, !working else { return }
+        route = DaydreamOnboardingRoute(afterPermissions: saved)
+    }
+    /// A8: the person pressed Quit beside "Quit System Settings and open it again.".
+    private func quitSettingsPressed() { Self.quitSystemSettings(); readSettingsAge() }
+    /// A8: whether the running System Settings opened before this copy of DayDream was installed or replaced.
+    private func readSettingsAge() {
+        guard available, !preview else { return }
+        let stale = SystemSettingsAge.stale(settingsLaunched: Self.settingsLaunchDate(), bundleDates: Self.bundleDates())
+        if stale != settingsStale { settingsStale = stale }
     }
 
     private func resetForReview() {
         guard !working else { return }
         whatsNew = model.setupIsWhatsNew
         route = DaydreamOnboardingRoute()
-        choiceTouched = false
-        choice = Self.initialChoice(phase: phase, localOffered: writer.localOffered, qualifies: Self.macQualifies, cloudChosen: Self.cloudChosen(writer))
-        key = ""
-        cloudProblem = nil
+        defaultSummariesAsked = false
         baselineExclusions = Self.appIDs(model.blockedApps)
         baselineTypedText = model.captureText
         baselineChromePages = model.browserPages

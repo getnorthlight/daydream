@@ -297,6 +297,11 @@ final class FakeConnectionCommand: ConnectionCommandRunning, @unchecked Sendable
         let claudeCodeFile = AIAppConnect.file(claudeCode, env)
         try JSONSerialization.data(withJSONObject: ["mcpServers": ["daydream": ["type": "stdio", "command": cli.path,
             "args": AIAppConnect.arguments(claudeCode, home: nil), "env": ["MAC_MEM_CAPABILITY": codeKey]]], "keep": true]).write(to: claudeCodeFile)
+        // Cursor has a bundle identifier (since 10/02), so it is on this Mac only when macOS finds it; its settings file
+        // alone no longer counts (a settings folder can outlive the app). Installed, not running.
+        let scratchCursorApp = user.appendingPathComponent("Applications/Cursor.app", isDirectory: true)
+        try fm.createDirectory(at: scratchCursorApp, withIntermediateDirectories: true)
+        control.install("cursor", at: scratchCursorApp)
         let cursorFile = AIAppConnect.file(cursor, env)
         try fm.createDirectory(at: cursorFile.deletingLastPathComponent(), withIntermediateDirectories: true)
         let cursorText = #"{"mcpServers": {"other": {"command": "/bin/echo"}}, "keep": [1, 2]}"#

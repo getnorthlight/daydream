@@ -33,8 +33,8 @@ authors. The derived portions have since been modified. They are:
   `Sources/MacMemApp/AccessibilitySnapshot.swift` and
   `Sources/MacMemApp/Coordinator.swift` (for example the browser address
   lookup, terminal capture, and key and mouse naming), and
-- test cases in `Tests/HistoryCoreTests/` (`PolicyTests.swift`,
-  `TextBufferTests.swift` and `FrameTests.swift`).
+- checks in `Checks/HistoryPolicyChecks.swift` (ported from the earlier
+  `PolicyTests.swift`, `TextBufferTests.swift` and `FrameTests.swift` tests).
 
 Each of these files has a header that points to this notice.
 DayDream's changes to the derived code are licensed under the MIT License. The

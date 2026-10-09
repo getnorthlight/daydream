@@ -1,5 +1,13 @@
 import Foundation
 @testable import MemoryCore
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 /// claude/summary-1003 (owner decision 2026-10-03): "Let AI apps see your typed words". Synthetic store, made-up words,
 /// in-memory typing keys only (never the Keychain); the bridge socket lives in a scratch folder. Covers: the setting on
@@ -9,7 +17,7 @@ import Foundation
 /// Prints labels and counts only, never a typed word.
 @main struct AIReadTypedChecks {
     static var count = 0
-    static func check(_ value: Bool, _ label: String) { precondition(value, "FAILED: " + label); count += 1; print("PASS " + label) }
+    static func check(_ value: Bool, _ label: String) { if !(value) { ddFail(label); return }; count += 1; print("PASS " + label) }
 
     /// Fixture replies saved for the evidence notes (AI_READ_SAMPLES, optional). Made-up words only.
     static func sample(_ name: String, _ replies: [String]) {
@@ -35,6 +43,7 @@ import Foundation
     }
 
     static func main() throws {
+        ddReportAtExit()
         let root = URL(fileURLWithPath: ProcessInfo.processInfo.environment["AI_READ_CHECK_ROOT"] ?? NSTemporaryDirectory())
             .appendingPathComponent("ai-read-\(getpid())", isDirectory: true)
         try? FileManager.default.removeItem(at: root)

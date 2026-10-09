@@ -2,14 +2,23 @@ import Foundation
 @testable import MemoryCore
 import CoreIntegration
 import PrivacyPolicy
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 @main struct Checks {
     static func main() throws {
+        ddReportAtExit()
         let root=URL(fileURLWithPath:"/private/tmp/daydream-native-receipts-"+UUID().uuidString)
         let store=try MemoryStore(home:root,writable:true,automaticallySyncSearch:false)
         try store.attachVault(TypedTextVault(keyStore:InMemoryTypedKeyStore()));try store.setUpTypedVault();try store.acceptSafeTyping()
         let ledger=NativeCaptureReceipts();let now=Date();var checks=0
-        func check(_ result:Bool,_ label:String) {precondition(result,label);checks+=1;print("PASS "+label)}
+        func check(_ result:Bool,_ label:String) {if !(result) { ddFail(label); return };checks+=1;print("PASS "+label)}
         func evidence(_ id:String,synthetic:Bool=false)->Evidence {Evidence(id:id,at:iso(now),kind:"window.changed",app:"TextEdit",bundle:"com.apple.TextEdit",title:"Dummy trial",synthetic:synthetic)}
         check(try ledger.commit(store:store,path:.metadata,write:{_ in fatalError("inactive closure")})==nil,"inactive never writes")
         ledger.begin()
@@ -26,7 +35,7 @@ import PrivacyPolicy
             _=try ledger.commit(store:store,path:.metadata) {id in
                 rolledID=id
                 return try store.transaction {try store.ingest(evidence(id));throw MemError.denied}
-            };fatalError("rollback not thrown")
+            };ddFail("rollback not thrown")
         } catch {check(try store.action(rolledID)==nil && ledger.validated(store:store)==nil,"actual transaction rollback has no receipt")}
         let second=try ledger.commit(store:store,path:.metadata) {try store.ingest(evidence($0))}!
         try store.delete(second.actionID)

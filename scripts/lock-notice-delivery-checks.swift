@@ -12,6 +12,14 @@
 //   swiftc -parse-as-library Sources/MacMemApp/WakeSystem.swift Sources/MacMemApp/WakeResume.swift \
 //     Sources/MacMemApp/LaunchLocation.swift scripts/lock-notice-delivery-checks.swift -o lock-notice && ./lock-notice
 import AppKit
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 /// An observer with the default suspension behavior (`.coalesce`), for comparison. In an app, the block API's
 /// observers behaved the same way (held while suspended, then delivered together, unlock first).
@@ -23,7 +31,7 @@ final class DefaultObserver: NSObject {
 @main enum LockNoticeDeliveryChecks {
     static var passes = 0
     static func check(_ ok: Bool, _ name: String) {
-        guard ok else { FileHandle.standardError.write(Data("FAIL: \(name)\n".utf8)); exit(1) }
+        guard ok else { ddFail(name); return }
         passes += 1; print("PASS " + name)
     }
     /// Runs the main run loop until `done` or `seconds` pass.
@@ -33,6 +41,7 @@ final class DefaultObserver: NSObject {
     }
 
     static func main() {
+        ddReportAtExit()
         let center = DistributedNotificationCenter.default()
         let tag = UUID().uuidString
         let lock = Notification.Name("com.getnorthlight.daydream.checks.lock-" + tag)

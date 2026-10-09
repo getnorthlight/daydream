@@ -1,5 +1,13 @@
 import Foundation
 @testable import MemoryCore
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 /// perf2-1005 (owner laptop, public 0.1.4 on 10/04: "Input tap turned off by macOS (timeout)" seven times in an hour, each
 /// after a main-thread stall of about a second). Headless, no tap, no key, no Keychain:
@@ -12,7 +20,7 @@ import Foundation
 @main enum TapHandoffChecks {
     static var checks = 0
     static func require(_ ok: Bool, _ reason: String, _ got: @autoclosure () -> String = "") {
-        guard ok else { FileHandle.standardError.write(Data("FAIL: \(reason) \(got())\n".utf8)); exit(1) }
+        guard ok else { ddFail("\(reason) \(got())"); return }
         checks += 1
         print("PASS \(reason)")
     }
@@ -66,6 +74,7 @@ import Foundation
     }
 
     static func main() {
+        ddReportAtExit()
         // 1. A free main thread: every event handled, in order, its result back on the tap thread; nothing missed.
         var r = run(count: 200, spacing: 0.002, stall: 0, stallAt: 0, bounded: true)
         require(handled == Array(0..<200) && gaps.isEmpty, "a free main thread handles every event in the tap's order", "\(handled.count) handled, \(gaps.count) gaps")

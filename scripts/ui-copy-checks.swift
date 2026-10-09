@@ -519,8 +519,10 @@ import SwiftUI
         let onboarding = source("Sources/MacMemApp/DaydreamOnboarding.swift")
         check(!onboarding.contains("Stop recording before changing setup") && !onboarding.contains("recordingNote"),
               "G68 setup never asks to stop recording first")
-        check(!block(onboarding, from: "case .summaries:\n", to: "case .apps:").contains("|| model.recording)"),
-              "G68 the summary choices can be changed while recording")
+        // claude/setup-local-summaries: setup has no summaries page; the Apps page's choices stay usable while recording.
+        let appsPage = block(onboarding, from: "case .apps:\n", to: "case .review:")
+        check(!appsPage.isEmpty && !appsPage.contains("model.recording") && !onboarding.contains("case .summaries"),
+              "G68 the app choices can be changed while recording (no summaries page)")
         check(onboarding.contains("if model.recording { return Self.doneTitle }"),
               "G68 while recording the last page's one button is Done")
     }
@@ -839,11 +841,11 @@ import SwiftUI
               "C1 macOS's box explains in the owner's words")
         // Before the press: the primer (typing on, typing off, Chrome closed).
         equal(Row.subtitle(access: .notAsked, typing: true, opensChrome: false),
-              "macOS will ask once. Click Allow so DayDream knows which page you're typing on.", "C1 before: the primer")
+              "macOS will ask once.", "C1 before: the primer")
         equal(Row.subtitle(access: .notAsked, typing: false, opensChrome: false),
-              "macOS will ask once. Click Allow so DayDream knows which Chrome page you're on.", "C1 before, typing off: the primer without typing")
+              "macOS will ask once.", "C1 before, typing off: the primer without typing")
         equal(Row.subtitle(access: .chromeNotRunning, typing: true, opensChrome: true),
-              "macOS will ask once. Click Allow so DayDream knows which page you're typing on. Chrome opens in the background to ask.",
+              "macOS will ask once. Chrome opens in the background to ask.",
               "C1 before, Chrome closed: Allow says it opens Chrome in the background")
         check(Row.trailing(access: .notAsked) == .allow && Row.allowTitle == "Allow",
               "C1 before: one Allow (owner 10/6: beside Chrome's icon, no drawing of macOS's box)")

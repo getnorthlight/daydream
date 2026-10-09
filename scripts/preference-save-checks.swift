@@ -1,11 +1,20 @@
 import Foundation
 @testable import MemoryCore
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 @main struct PreferenceSaveChecks {
     static var count=0
-    static func check(_ value:Bool,_ name:String) {precondition(value,name);count += 1;print("PASS "+name)}
-    static func rejects(_ name:String,_ work:() throws -> Void) {do{try work();fatalError(name)}catch{check(true,name)}}
+    static func check(_ value:Bool,_ name:String) {if !(value) { ddFail(name); return };count += 1;print("PASS "+name)}
+    static func rejects(_ name:String,_ work:() throws -> Void) {do{try work();ddFail(name + " (was accepted)")}catch{check(true,name)}}
     static func main() throws {
+        ddReportAtExit()
         let root=FileManager.default.temporaryDirectory.appendingPathComponent("preferences-synthetic-"+UUID().uuidString)
         try FileManager.default.createDirectory(at:root,withIntermediateDirectories:false)
         defer{try? FileManager.default.removeItem(at:root)}
@@ -71,7 +80,10 @@ import Foundation
         let noop=try session.savePreferences(MemoryPreferences(blockedApps:[],nativeTyping:true),expectedRevision:restored.policy.revision,now:now)
         check(try !noop.changed && store.rows("SELECT * FROM metadata ORDER BY id")==before,"no-op has no revision or metadata churn")
         rejects("stale expected revision denied") {_=try store.savePreferences(MemoryPreferences(blockedApps:[],nativeTyping:false),expectedRevision:initial.revision)}
-        rejects("invalid app identifier denied") {_=try store.savePreferences(MemoryPreferences(blockedApps:["*"],nativeTyping:false),expectedRevision:restored.policy.revision)}
+        // rel-018: any real bundle ID saves (SkippedAppID; scripts/skipped-app-id-checks.swift); these can't.
+        for bad in ["","a,b","tab\tid"," padded",String(repeating:"a",count:257)] {
+            rejects("invalid app identifier denied: \(bad.debugDescription.prefix(20))") {_=try store.savePreferences(MemoryPreferences(blockedApps:[bad],nativeTyping:false),expectedRevision:restored.policy.revision)}
+        }
         // Inject SQLite transaction failure after policy write, proving rollback.
         try store.exec("CREATE TRIGGER fail_preferences BEFORE INSERT ON metadata WHEN NEW.id='disclosure_revision' BEGIN SELECT RAISE(ABORT,'synthetic failure'); END")
         _=try store.grant(client:"failure",recipient:"fixture",scopes:["context"])
@@ -96,7 +108,7 @@ import Foundation
             defer{group.leave()}
             do{_=try connection.savePreferences(MemoryPreferences(blockedApps:["com.apple.Notes"],nativeTyping:false),expectedRevision:restored.policy.revision);resultLock.lock();successes += 1;resultLock.unlock()}
             catch PreferenceSaveError.revisionConflict{resultLock.lock();conflicts += 1;resultLock.unlock()}
-            catch{fatalError("unexpected race error")}
+            catch{ddFail("unexpected race error: \(error)")}
         }}
         group.wait();check(successes==1 && conflicts==1,"independent connections serialize with one expected-revision winner")
         // Chrome page history: the switch and the owner's sites take the same

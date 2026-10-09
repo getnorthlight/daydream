@@ -875,8 +875,10 @@ final class FlagBox: @unchecked Sendable { var open = false; var fail = false }
         let code = snapshot(day(todayKey, cases.map { spec($0.id, $0.app, $0.bundle, $0.title, [$0.line], gen: fb.gen, ver: fb.ver) }))
         for c in cases {
             let m = code.moments.first { $0.id == c.id }!
-            equal(m.bullets.map(\.text), [c.line], "fallback summary (\(c.app)): code's line is the moment's one bullet")
-            equal(MomentSubtitle.text(for: m), String(c.line.dropLast()), "fallback summary (\(c.app)): collapsed, the line is the subtitle")
+            // Never "draft" on screen (759c44c): code's line shows undrafted.
+            let shown = DisplayWords.undraft(c.line)
+            equal(m.bullets.map(\.text), [shown], "fallback summary (\(c.app)): code's line is the moment's one bullet")
+            equal(MomentSubtitle.text(for: m), String(shown.dropLast()), "fallback summary (\(c.app)): collapsed, the line is the subtitle")
             check(E.showsSummary(m) && E.summaryStatus(for: m, provider: .local) == nil,
                   "fallback summary (\(c.app)): expanded, the Summary section shows the line (no status line)")
             check(m.hasSummary, "fallback summary (\(c.app)): Copy Summary has the line to copy")
@@ -901,7 +903,7 @@ final class FlagBox: @unchecked Sendable { var open = false; var fail = false }
                                                  ["Typed a draft in TextEdit.", "Used TextEdit.", "In TextEdit."], gen: fb.gen, ver: fb.ver),
                                             spec("mx-x", "Google Chrome", "com.google.Chrome", "Post on X",
                                                  ["Typed a draft in X.", "Used the send key in X."], gen: fb.gen, ver: fb.ver, site: "x.com")]))
-        equal(mixed.moments.first { $0.id == "mx" }!.bullets.map(\.text), ["Typed a draft in TextEdit."],
+        equal(mixed.moments.first { $0.id == "mx" }!.bullets.map(\.text), [DisplayWords.undraft("Typed a draft in TextEdit.")],
               "fallback summary: code's note keeps its own line and still drops other filler")
         // 0.1.7 (owner 10/06): "Used the send key in <App>." never shows, and "draft" never shows (undraft).
         equal(mixed.moments.first { $0.id == "mx-x" }!.bullets.map(\.text), ["Typed in X."],

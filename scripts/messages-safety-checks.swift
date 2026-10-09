@@ -60,7 +60,7 @@ enum AccessibilityReader {
         check(map.intent(KeyStroke(keyCode:36),pressAndHold:false) == .submit,"plain-return-intent-still-seals")
         check(SendRules.facts(bundle:bundle,title:"Fixture Name",field:"message",seal:.submit).send != "sent","gesture-not-confirmed-delivery")
         MessagesConversation.forget()
-        print("checks=\(checks) failures=\(failures.count)")
+        print("\(failures.isEmpty ? "PASS" : "FAIL") messages-safety: \(checks) checks, \(failures.count) failed")
         for failure in failures {print("FAIL \(failure)")}
         if !failures.isEmpty && !CommandLine.arguments.contains("--baseline") {exit(1)}
     }

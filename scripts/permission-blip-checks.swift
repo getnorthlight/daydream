@@ -61,7 +61,13 @@ func makePrivateDirectory(_ url: URL) throws {
 enum Seams {
     nonisolated(unsafe) static var granted = true
     nonisolated(unsafe) static var blipUntil: Date?
-    static var now: Bool { granted && (blipUntil.map { Date() >= $0 } ?? true) }
+    /// A blip of this many seconds that starts at the next read (a launch's first read), not at a wall time set before
+    /// `open`: on a loaded machine `open` can take longer than a short blip (Phase 1: the 250 ms launch case).
+    nonisolated(unsafe) static var blipFromFirstRead: TimeInterval?
+    static var now: Bool {
+        if let w = blipFromFirstRead { blipUntil = Date().addingTimeInterval(w); blipFromFirstRead = nil }
+        return granted && (blipUntil.map { Date() >= $0 } ?? true)
+    }
     nonisolated(unsafe) static var reads = 0
     /// The recorder the last start made (the seam starts no tap), so a row can hand it a key as the tap would.
     nonisolated(unsafe) static var capture: EventCapture?
@@ -354,11 +360,11 @@ struct Opened { let model: MemoryViewModel; let notices: FakeNotices; let wake: 
     static func launchBlipNoIntent(_ w: Double) async throws {
         let ms = Int(w * 1000)
         let t0 = Date()
-        Seams.blipUntil = t0.addingTimeInterval(w)
+        Seams.blipFromFirstRead = w
         let o = try await open("launch-nointent-\(ms)", settle: false)
         check(o.model.permissionsAtLaunch?.inputMonitoring == false, "harness", "launch-nointent-\(ms): the first read fell inside the blip")
         while Date() < t0.addingTimeInterval(2.4) { try await tick(0.05) }
-        Seams.blipUntil = nil
+        Seams.blipUntil = nil; Seams.blipFromFirstRead = nil
         let state = o.model.recordingState
         let step = o.model.setupStepForStart()
         check(step == nil && o.model.permissionsAtLaunch?.inputMonitoring == true, "G-launch-nointent",
@@ -387,9 +393,11 @@ struct Opened { let model: MemoryViewModel; let notices: FakeNotices; let wake: 
         check(o.model.permissionAutoRelaunch && o.model.permissionRequests?.autoRelaunch == true, "perm-1004-auto",
               "…both on: the permission page says DayDream restarts by itself: \(o.model.permissionAutoRelaunch)")
         let before = Seams.autoRelaunches
-        _ = try await waitFor(PermissionRelaunch.autoDelay + 1.5) { Seams.autoRelaunches > before }
+        // rc-018 RC3 review (FIX-PLAN A1): with no macOS sheet seen (check builds read none), the restart waits about
+        // 10 s (`SelfRestartGate.limit`), never the old 1.5 s that raced macOS's Quit & Reopen sheet.
+        _ = try await waitFor(SelfRestartGate.limit + 1.5) { Seams.autoRelaunches > before }
         check(Seams.autoRelaunches == before + 1, "perm-1004-auto",
-              "…and restarts itself once, \(PermissionRelaunch.autoDelay) s later: \(Seams.autoRelaunches - before) restart(s)")
+              "…and restarts itself once, about \(SelfRestartGate.limit) s later (no sheet seen): \(Seams.autoRelaunches - before) restart(s)")
         o.model.refreshCaptureStatus(); try await tick(PermissionRelaunch.autoDelay + 0.5)
         check(Seams.autoRelaunches == before + 1, "perm-1004-auto", "…never twice (cooldown): \(Seams.autoRelaunches - before) restart(s)")
     }
@@ -591,7 +599,7 @@ struct Opened { let model: MemoryViewModel; let notices: FakeNotices; let wake: 
         Seams.granted = true
         o.model.refreshCaptureStatus()
         check(o.model.permissionAutoRelaunch, "perm-1004-auto", "a restart that will fail is still tried: \(o.model.permissionAutoRelaunch)")
-        try await tick(PermissionRelaunch.autoDelay + 0.6)
+        try await tick(SelfRestartGate.limit + 0.6)
         check(!o.model.permissionAutoRelaunch && o.model.permissionRequests?.autoRelaunch == false && o.model.setupStepForStart() == .permissions,
               "perm-1004-auto", "…it couldn't start: no restart line, Start goes to Quit & Reopen: \(o.model.permissionAutoRelaunch), \(String(describing: o.model.setupStepForStart()))")
     }

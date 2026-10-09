@@ -1,4 +1,5 @@
 import AppKit
+import MemoryCore
 import MemoryUI
 
 // The permission page's actions (SPEC 6.3 R2). DayDream never asks macOS for a permission: each card on the page
@@ -14,6 +15,9 @@ struct PermissionRequestEnvironment {
     /// Starts a helper that waits for this process to end, then opens the app again. Returns false when
     /// it couldn't start (then DayDream stays open).
     var relaunch: (_ app: URL, _ pid: pid_t) -> Bool
+    /// rc-018 RC3 (A6): the same helper for a restart nobody asked to see ("keys not arriving" while recording): it opens
+    /// the app with `open -g`, in the background, and the next launch shows no window. nil: `relaunch`.
+    var relaunchInBackground: ((_ app: URL, _ pid: pid_t) -> Bool)? = nil
     /// Quits DayDream (`AppQuit.terminate`: it closes an open Settings sheet first, which AppKit needs).
     var terminate: () -> Void
     var bundleURL: URL
@@ -22,12 +26,8 @@ struct PermissionRequestEnvironment {
     static var live: PermissionRequestEnvironment {
         PermissionRequestEnvironment(
             open: { NSWorkspace.shared.open($0) },
-            relaunch: { app, pid in
-                let helper = Process()
-                helper.executableURL = URL(fileURLWithPath: PermissionRequests.relaunchShell)
-                helper.arguments = PermissionRequests.relaunchArguments(app: app, pid: pid)
-                do { try helper.run(); return true } catch { return false }
-            },
+            relaunch: { app, pid in PermissionRequests.startHelper(app: app, pid: pid, background: false) },
+            relaunchInBackground: { app, pid in PermissionRequests.startHelper(app: app, pid: pid, background: true) },
             terminate: { AppQuit.quit() },
             bundleURL: Bundle.main.bundleURL,
             pid: ProcessInfo.processInfo.processIdentifier)
@@ -38,10 +38,44 @@ enum PermissionRequests {
     static let relaunchShell = "/bin/sh"
     /// Waits (up to about 30 seconds) for this DayDream to quit, so the new one can take the recorder lock,
     /// then opens the same app bundle. The pid and path are arguments, never pasted into the script.
-    static let relaunchScript = "i=0; while /bin/kill -0 \"$1\" 2>/dev/null && [ $i -lt 150 ]; do /bin/sleep 0.2; i=$((i+1)); done; exec /usr/bin/open \"$2\""
+    /// rc-018 RC3 (A6): a DayDream still running after the wait (its quit was refused) is never opened over: the helper
+    /// ends without opening anything.
+    static let relaunchScript = "i=0; while /bin/kill -0 \"$1\" 2>/dev/null && [ $i -lt 150 ]; do /bin/sleep 0.2; i=$((i+1)); done; /bin/kill -0 \"$1\" 2>/dev/null && exit 0; exec /usr/bin/open \"$2\""
+    /// The same, opening the app in the background (`open -g`): a restart nobody asked to see.
+    static let backgroundRelaunchScript = relaunchScript.replacingOccurrences(of: "exec /usr/bin/open \"$2\"", with: "exec /usr/bin/open -g \"$2\"")
 
-    static func relaunchArguments(app: URL, pid: pid_t) -> [String] {
-        ["-c", relaunchScript, "daydream-relaunch", String(pid), app.path]
+    static func relaunchArguments(app: URL, pid: pid_t, background: Bool = false) -> [String] {
+        ["-c", background ? backgroundRelaunchScript : relaunchScript, "daydream-relaunch", String(pid), app.path]
+    }
+
+    /// The helper started last (the app's own restart); `cancelHelper` ends it when DayDream's quit didn't happen.
+    nonisolated(unsafe) private static var helper: Process?
+    /// Starts the relaunch helper; false when it couldn't start.
+    static func startHelper(app: URL, pid: pid_t, background: Bool) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: relaunchShell)
+        process.arguments = relaunchArguments(app: app, pid: pid, background: background)
+        do { try process.run() } catch { return false }
+        helper = process
+        // rel-018: the reopened DayDream is not the person opening it (UsageLaunch, app_opened).
+        UsageLaunch.markSelfRelaunch(.standard)
+        return true
+    }
+    /// A6: DayDream asked to quit for its restart and is still running: the helper waiting for it goes, so nothing opens
+    /// DayDream again later out of the blue.
+    static func cancelHelper() {
+        if let helper, helper.isRunning { helper.terminate() }
+        helper = nil
+    }
+
+    /// A6: the restart itself, for the app's own callers: starts the helper, then quits. false when the helper couldn't
+    /// start (DayDream stays open and nothing quits) or DayDream can't reopen itself.
+    static func quitAndReopen(_ env: PermissionRequestEnvironment, background: Bool = false) -> Bool {
+        guard canRelaunch(env.bundleURL) else { return false }
+        let start = background ? (env.relaunchInBackground ?? env.relaunch) : env.relaunch
+        guard start(env.bundleURL, env.pid) else { return false }
+        env.terminate()
+        return true
     }
 
     /// Only a real app bundle can be reopened; a development binary gets no Quit & Reopen button.
@@ -53,10 +87,7 @@ enum PermissionRequests {
                         inputMonitoringAtLaunch: Bool? = nil) -> PermissionRequestActions {
         let blocked = location.blocksRecording
         return PermissionRequestActions(
-            quitAndReopen: canRelaunch(env.bundleURL) ? {
-                guard env.relaunch(env.bundleURL, env.pid) else { return }
-                env.terminate()
-            } : nil,
+            quitAndReopen: canRelaunch(env.bundleURL) ? { _ = quitAndReopen(env) } : nil,
             inputMonitoringAtLaunch: inputMonitoringAtLaunch,
             moveWarning: blocked ? LaunchLocation.warning : nil,
             moveDetail: blocked ? LaunchLocation.detail : nil,

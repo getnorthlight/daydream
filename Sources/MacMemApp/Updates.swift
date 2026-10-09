@@ -199,6 +199,7 @@ import MemoryUI
         relaunchToken += 1
         let token=relaunchToken
         relaunchPending=true
+        UsageLaunch.markSelfRelaunch(defaults,now:now)  // rel-018: Sparkle's relaunch is not an open (app_opened)
         if isRecording() {
             UpdateResume.record(defaults,build:Bundle.main.object(forInfoDictionaryKey:"CFBundleVersion") as? String ?? "unknown",at:now)
         } else {
@@ -216,6 +217,7 @@ import MemoryUI
         relaunchPending=false
         relaunchToken += 1
         UpdateResume.clear(defaults)
+        UsageLaunch.clearSelfRelaunch(defaults)
     }
     var configured:Bool { configuration != nil && controller != nil }
     // MARK: SPUStandardUserDriverDelegate (Sparkle calls it on the main thread)

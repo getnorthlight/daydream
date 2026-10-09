@@ -37,7 +37,7 @@ struct DaydreamMenuBarLabel: View {
         self.model = model
         _feed = ObservedObject(wrappedValue: MenuBarLabelFeed.shared(for: model))
     }
-    var body: some View { Self.image(model: model) }
+    var body: some View { LiveTestLabel(mark: Self.image(model: model)) }
     /// What the label draws for `model` now.
     @MainActor static func image(model: MemoryViewModel) -> DaydreamMenuBarLabelImage {
         // The browser's calendar: the zone the Focus List and today's snapshot use.
@@ -75,7 +75,23 @@ extension DedupedFeed where Value == MenuBarLabelDrawn {
 /// The isolated preview's label: the Off mark (nothing records without a model).
 struct DaydreamMenuBarIsolatedLabel: View {
     var body: some View {
-        DaydreamMenuBarLabelImage(state: DaydreamCaptureState.off, label: DaydreamMark.accessibilityDescription(.off))
+        LiveTestLabel(mark: DaydreamMenuBarLabelImage(state: DaydreamCaptureState.off, label: DaydreamMark.accessibilityDescription(.off)))
+    }
+}
+
+/// rc-018 RC3 (owner 10/9: the real DayDream was quit instead of the Live Test, their menu bar icons being the same): the
+/// Live Test copy's menu bar item says "TEST" beside the mark (`LiveTestMark`), drawn into the one template image the
+/// status item shows. Any other build draws the mark alone, exactly as before.
+struct LiveTestLabel: View {
+    let mark: DaydreamMenuBarLabelImage
+    var shown = LiveTestMark.current
+    var body: some View {
+        if shown {
+            Image(nsImage: LiveTestMark.compose(DaydreamMenuBarMark.image(for: mark.drawnState, badge: mark.badge)))
+                .accessibilityLabel(mark.label + ". Live Test")
+        } else {
+            mark
+        }
     }
 }
 
@@ -194,7 +210,8 @@ struct DaydreamMenuBarPanel: View {
         actions.checkPermissions = { model.checkPermissions() }
         // Allow Permissions: DayDream's drag cards (setup, or Settings › Permissions once setup is finished).
         actions.openSystemSettings = { kind in model.showPermissionCards(kind, openSetup: { routes.openWindow("onboarding"); routes.activate() },
-                                                                         openMain: openMain) }
+                                                                         openMain: openMain,
+                                                                         openPermissions: { routes.openWindow("permissions"); routes.activate() }) }
         actions.quit = { routes.terminate() }
         // Report a Problem…: a new email in the person's mail app (ReportProblem.swift); DayDream sends nothing.
         actions.reportProblem = { routes.reportProblem(model) }

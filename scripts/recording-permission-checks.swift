@@ -7,7 +7,9 @@
 //      button, and each missing card opens its own System Settings pane or drags DayDream into its list.
 //   B. Quit & Reopen starts the relaunch helper for the app bundle, then quits; never for a non-app,
 //      never quits when the helper didn't start. The helper takes the pid and path as arguments, waits for
-//      DayDream to quit, then opens it (checked with echo standing in for open).
+//      DayDream to quit, then opens it (checked with echo standing in for open). rc-018 RC3 (A6): the restart says
+//      whether it started; a DayDream still running after the wait is never opened over; a background restart opens
+//      with open -g. Every window here stays offscreen (`OffscreenWindow`).
 //   C. Quit & Reopen shows only when macOS needs DayDream to reopen (PermissionRelaunch), and pressing it
 //      in the laid-out page runs the injected launcher, then the quit.
 //   D. AppQuit quits while a sheet is attached (a child copy of this check with the Settings-style sheet,
@@ -23,29 +25,64 @@ import AppKit
 import SwiftUI
 import MemoryUI
 
+/// rc-018 RC3: windows here stay off every screen (AppKit pulls a titled window ordered in at -4000 back onto the screen
+/// unless it refuses, as chrome-ask-checks' KeyWindow does).
+final class OffscreenWindow: NSWindow {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
+    /// macOS 26 already moves a window made at -4000 onto the screen in `init` (480,160 on this Mac, probe 10/9), before
+    /// `constrainFrameRect` is ever asked: put it back off screen right away (a window asked for on screen, as a sheet's
+    /// placeholder at 0,0, goes to -5000 too; AppKit places an attached sheet by its off-screen parent).
+    override init(contentRect: NSRect, styleMask: NSWindow.StyleMask, backing: NSWindow.BackingStoreType, defer flag: Bool) {
+        super.init(contentRect: contentRect, styleMask: styleMask, backing: backing, defer: flag)
+        let off = contentRect.minX <= -1000 && contentRect.minY <= -1000 ? contentRect.origin : NSPoint(x: -5000, y: -5000)
+        setFrameOrigin(off)
+    }
+}
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
+
 @MainActor @main enum RecordingPermissionChecks {
     static var passes = 0
+    static var failures: [String] = []
+    nonisolated(unsafe) static var finished = false
+    // Every check runs and every failure is reported (no fail-fast that hides the checks after it); the run exits
+    // non-zero at the end if any failed.
     static func check(_ ok: Bool, _ name: String) {
-        guard ok else { FileHandle.standardError.write(Data("FAIL: \(name)\n".utf8)); exit(1) }
+        guard ok else { failures.append(name); ddFail(name); return }
         passes += 1; print("PASS " + name); fflush(stdout)
     }
 
     final class Recorder {
         var calls: [String] = []
         var relaunchWorks = true
-        func env(bundle: String = "/Applications/DayDream.app") -> PermissionRequestEnvironment {
+        func env(bundle: String = "/Applications/DayDream.app", background: Bool = false) -> PermissionRequestEnvironment {
             PermissionRequestEnvironment(
                 open: { self.calls.append("open " + $0.absoluteString); return true },
                 relaunch: { app, pid in self.calls.append("relaunch \(app.path) \(pid)"); return self.relaunchWorks },
+                relaunchInBackground: background ? { app, pid in self.calls.append("background \(app.path) \(pid)"); return self.relaunchWorks } : nil,
                 terminate: { self.calls.append("terminate") },
                 bundleURL: URL(fileURLWithPath: bundle), pid: 4242)
         }
     }
 
     static func main() async throws {
+        ddReportAtExit()
         let args = CommandLine.arguments
         if let i = args.firstIndex(of: "--quit-child"), i + 1 < args.count {
             quitChild(args[i + 1], extra: i + 2 < args.count ? args[i + 2] : nil)
+        }
+        // A run that ends before the last check (the async main's run loop returning early, an exit elsewhere) is a
+        // failure, never a silent exit 0 that skips the checks after it.
+        atexit {
+            guard !RecordingPermissionChecks.finished else { return }
+            FileHandle.standardError.write(Data("FAIL: recording-permission-checks exited before all checks ran (\(RecordingPermissionChecks.passes) passed)\n".utf8))
+            _exit(1)
         }
         DispatchQueue.global().asyncAfter(deadline: .now() + 240) {
             FileHandle.standardError.write(Data("FAIL: recording-permission-checks watchdog expired after 240s\n".utf8)); exit(2)
@@ -53,10 +90,17 @@ import MemoryUI
         wiring()
         relaunchReasons()
         helperScript()
+        helperStillRunning()
         quitWithSheet()
         sources()
         try await pageButtons()
         try await renders()
+        finished = true
+        guard failures.isEmpty else {
+            FileHandle.standardError.write(Data("FAIL: \(failures.count) of \(passes + failures.count) recording-permission checks failed:\n".utf8))
+            for name in failures { FileHandle.standardError.write(Data("  - \(name)\n".utf8)) }
+            exit(1)
+        }
         print("PASS all \(passes) recording-permission checks")
     }
 
@@ -91,6 +135,29 @@ import MemoryUI
         syntax.executableURL = URL(fileURLWithPath: "/bin/sh"); syntax.arguments = ["-n", "-c", PermissionRequests.relaunchScript]
         try? syntax.run(); syntax.waitUntilExit()
         check(syntax.terminationStatus == 0, "the helper script parses (sh -n; nothing runs)")
+        // rc-018 RC3 (A6): the restart says whether it started; a background restart opens with open -g; a DayDream still
+        // running after the wait is never opened over.
+        r = Recorder()
+        check(PermissionRequests.quitAndReopen(r.env()) && r.calls == ["relaunch /Applications/DayDream.app 4242", "terminate"],
+              "A6 quitAndReopen starts the helper, quits, and says it did: \(r.calls)")
+        r = Recorder(); r.relaunchWorks = false
+        check(!PermissionRequests.quitAndReopen(r.env()) && r.calls == ["relaunch /Applications/DayDream.app 4242"],
+              "A6 a helper that couldn't start: false, and nothing quits: \(r.calls)")
+        r = Recorder()
+        check(!PermissionRequests.quitAndReopen(r.env(bundle: "/Volumes/Work/build/debug")) && r.calls.isEmpty,
+              "A6 a development binary: false, no helper, no quit: \(r.calls)")
+        r = Recorder()
+        check(PermissionRequests.quitAndReopen(r.env(background: true), background: true) && r.calls == ["background /Applications/DayDream.app 4242", "terminate"],
+              "A6 a background restart starts the background helper: \(r.calls)")
+        let bargs = PermissionRequests.relaunchArguments(app: URL(fileURLWithPath: "/Applications/DayDream.app"), pid: 77, background: true)
+        check(bargs == ["-c", PermissionRequests.backgroundRelaunchScript, "daydream-relaunch", "77", "/Applications/DayDream.app"]
+              && PermissionRequests.backgroundRelaunchScript.contains("exec /usr/bin/open -g \"$2\"")
+              && !PermissionRequests.relaunchScript.contains("open -g"),
+              "A6 the background helper opens with open -g (no window comes forward); the setup one doesn't")
+        for (name, script) in [("setup", PermissionRequests.relaunchScript), ("background", PermissionRequests.backgroundRelaunchScript)] {
+            check(script.contains("done; /bin/kill -0 \"$1\" 2>/dev/null && exit 0; exec /usr/bin/open"),
+                  "A6 the \(name) helper ends without opening anything while DayDream still runs after the wait")
+        }
 
         // E. The download window
         for location in [LaunchLocation.diskImage, .translocated] {
@@ -101,9 +168,9 @@ import MemoryUI
             check(r.calls == ["open file:///Applications/"], "Open Applications Folder opens /Applications: \(r.calls)")
         }
         let app = URL(fileURLWithPath: "/Applications/DayDream.app")
-        check(PermissionDragPayload.provider(appURL: app, enabled: true).canLoadObject(ofClass: NSURL.self)
-              && !PermissionDragPayload.provider(appURL: app, enabled: false).canLoadObject(ofClass: NSURL.self)
-              && !PermissionDragPayload.provider(appURL: URL(fileURLWithPath: "/Volumes/Work/build/debug/MacMem"), enabled: true).canLoadObject(ofClass: NSURL.self),
+        check(PermissionDragPayload.writer(appURL: app, enabled: true) as URL? == app
+              && PermissionDragPayload.writer(appURL: app, enabled: false) == nil
+              && PermissionDragPayload.writer(appURL: URL(fileURLWithPath: "/Volumes/Work/build/debug/MacMem"), enabled: true) == nil,
               "a card drags the app bundle only: never from the download window or for a development binary")
     }
 
@@ -152,6 +219,34 @@ import MemoryUI
         let opened = (try? String(contentsOf: out, encoding: .utf8)) ?? ""
         check(helper.terminationStatus == 0 && !sleeper.isRunning && Date().timeIntervalSince(start) >= 1.0
               && opened == "/Applications/Day Dream's.app\n", "after DayDream quits, the helper opens the same app: \(opened.debugDescription)")
+    }
+
+    /// rc-018 RC3 (A6): the helper with a short wait (3 tries) and echo for open: a DayDream that didn't quit is never
+    /// opened over; the background helper "opens" with -g. Only this check's own /bin/sleep is waited on and ended.
+    static func helperStillRunning() {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("dd-relaunch-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        func run(_ script: String, pid: pid_t, _ name: String) -> (Int32, String) {
+            let out = dir.appendingPathComponent(name)
+            let short = script.replacingOccurrences(of: "$i -lt 150", with: "$i -lt 3")
+                .replacingOccurrences(of: "exec /usr/bin/open -g \"$2\"", with: "/bin/echo -g \"$2\" > \"$3\"")
+                .replacingOccurrences(of: "exec /usr/bin/open \"$2\"", with: "/bin/echo \"$2\" > \"$3\"")
+            guard !short.contains("/usr/bin/open") else { return (-1, "open still in the script") }
+            let helper = Process()
+            helper.executableURL = URL(fileURLWithPath: PermissionRequests.relaunchShell)
+            helper.arguments = ["-c", short, "daydream-relaunch", String(pid), "/Applications/DayDream.app", out.path]
+            try? helper.run(); helper.waitUntilExit()
+            return (helper.terminationStatus, (try? String(contentsOf: out, encoding: .utf8)) ?? "")
+        }
+        let sleeper = Process()
+        sleeper.executableURL = URL(fileURLWithPath: "/bin/sleep"); sleeper.arguments = ["10"]
+        try? sleeper.run()
+        let alive = run(PermissionRequests.relaunchScript, pid: sleeper.processIdentifier, "alive.txt")
+        check(alive.0 == 0 && alive.1.isEmpty && sleeper.isRunning, "A6 DayDream still running after the wait: the helper opens nothing: \(alive)")
+        sleeper.terminate(); sleeper.waitUntilExit()
+        let gone = run(PermissionRequests.backgroundRelaunchScript, pid: sleeper.processIdentifier, "gone.txt")
+        check(gone.0 == 0 && gone.1 == "-g /Applications/DayDream.app\n", "A6 the background helper opens the app with -g once DayDream quit: \(gone)")
     }
 
     static func echoScript() -> String {
@@ -215,15 +310,15 @@ import MemoryUI
         let delegate = ChildDelegate()
         app.delegate = delegate
         app.setActivationPolicy(.accessory)
-        let window = NSWindow(contentRect: NSRect(x: -3000, y: -3000, width: 400, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffscreenWindow(contentRect: NSRect(x: -3000, y: -3000, width: 400, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
         window.orderFrontRegardless()
         if variant == "swiftui" {
             window.contentView = NSHostingView(rootView: SheetHost())
         } else {
-            let sheet = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
+            let sheet = OffscreenWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
             window.beginSheet(sheet) { _ in }
             if variant == "nested" {
-                let alert = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.titled], backing: .buffered, defer: false)
+                let alert = OffscreenWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.titled], backing: .buffered, defer: false)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { sheet.beginSheet(alert) { _ in } }
             }
         }
@@ -272,9 +367,12 @@ import MemoryUI
         check(!setup.contains("Allow…") && !setup.contains("requestAccessibility") && !setup.contains("requestInputMonitoring")
               && !setup.contains("notePrompted"), "the page has no Allow button and nothing that asks macOS")
         check(setup.contains("Button { open(permission) } label: { OpenSystemSettingsLabel() }") && setup.contains("Text(\"Open System Settings\")")
-              && setup.contains("NSWorkspace.shared.open(permission.settingsURL)"),
+              && setup.contains("Self.openPane(permission.settingsURL)")
+              && setup.contains("nonisolated(unsafe) public static var openPane: (URL) -> Bool = { NSWorkspace.shared.open($0) }"),
               "a missing card's button opens its own System Settings pane")
-        check(setup.contains(".onDrag {") && setup.contains("PermissionDragPayload.provider(appURL: appURL, enabled: draggable)")
+        // rel-018 (owner's Mac mini 10/8): SwiftUI's onDrag copied the whole app into ~/Library/Caches/com.apple.SwiftUI.Drag-*
+        // on every drag and System Settings registered the copy. The card's drag is AppKit's, of the URL itself.
+        check(!setup.contains(".onDrag") && !setup.contains("NSItemProvider") && setup.contains("PermissionCardDrag.shared.begin(appURL: appURL, enabled: draggable")
               && setup.contains("let draggable = enabled && moveWarning == nil"), "each card drags DayDream into the System Settings list")
         check(setup.contains("@Environment(\\.daydreamPermissionRequests) private var requests"), "the actions come from the environment")
         check(setup.contains(".onReceive(timer) { _ in refresh() }") && setup.contains("Timer.publish(every: 2")
@@ -289,23 +387,35 @@ import MemoryUI
         check(!setup.contains("sentToSettings") && !setup.contains("returnedFromSystemSettings") && !setup.contains("stillOff"),
               "opening System Settings is not a reason to offer Quit & Reopen")
         check(setup.contains("public static let dragHint = \"Drag the card into the list, then turn DayDream on.\"")
-              && setup.contains("Image(systemName: \"line.3.horizontal\")"), "dragging is the step: the hint says so and each card has a grip")
+              && !setup.contains("Image(systemName: \"line.3.horizontal\")")
+              && setup.contains(".gesture(DragGesture(minimumDistance: 3).onChanged { _ in")
+              && setup.contains(".pointerStyle(draggable && !isAllowed && read && known(permission) ? .grabIdle : nil)"),
+              "dragging is the step: the hint says so; the whole card drags with an open hand, no grip glyph")
+        check(setup.contains("if !sideBySide, let line = PermissionRowHelp.rowLine")
+              && setup.contains("} else if !missing.isEmpty && !sideBySide { recovery }"),
+              "setup (side by side) draws no row line and no \"Already turned on\" disclosure; Settings and the permissions window keep them")
         // fix/setup-tweaks (owner, 9/28): the hint shows only after a card's pane opened and that permission is still
         // missing, in room the page keeps (it never moves the page).
-        check(setup.contains("dragHint.paneOpened(permission.rawValue, at: Date())") && setup.contains(".opacity(dragHint.shows ? 1 : 0)"),
+        // rel-018: setup's Input Monitoring card says the step itself while its pane is open beside setup, so the longer
+        // hint is held back for it (`longHintShows`); everywhere else it is the hint as before.
+        check(setup.contains("dragHint.paneOpened(permission.rawValue, at: Date())") && setup.contains(".opacity(longHintShows ? 1 : 0)")
+              && setup.contains("dragHint.shows && !(guideLine && dragHint.waiting == [guidePermission.rawValue])"),
               "the drag hint waits for a pane to open, in room kept for it")
         // The cards stay beside System Settings: the window floats after a pane opens, and goes back once both are
         // allowed or the page closes.
-        check(setup.contains("if NSWorkspace.shared.open(permission.settingsURL) {") && setup.contains("window.set(floating: true)")
+        check(setup.contains("if Self.openPane(permission.settingsURL) {") && setup.contains("window.set(floating: true)")
               && setup.contains("if floating && accessibility && inputMonitoring { floating = false; window.set(floating: false) }")
-              && setup.contains(".onDisappear { floating = false; window.set(floating: false) }"),
+              && setup.contains(".onDisappear { floating = false; window.set(floating: false);"),  // rel-018: setup also ends its helper there
               "the permission window floats above System Settings only while a permission is missing")
 
         let app = try! String(contentsOfFile: "Sources/MacMemApp/MacMemApp.swift", encoding: .utf8)
         // perm-1004: the onboarding and permissions windows get them through PermissionRequestsHost, which observes the
         // model so a pane request or the restart line reaches an open page.
         check(app.components(separatedBy: ".environment(\\.daydreamPermissionRequests,").count == 3
-              && app.contains("PermissionRequestsHost(model:model) {DaydreamPermissionSettings(enabled:model.development == nil)}")
+              // permflash-015 (c16a6d5): the permissions window opens on the app's settled snapshot.
+              && app.contains("DaydreamPermissionSettings(enabled:model.development == nil,known:model.permissionSnapshot,allowedBefore:model.permissionsAllowedBefore)")
+              // rc-018 RC3: inside PermissionsWindowFocus (the permissions window's own hand-back).
+              && app.contains("PermissionRequestsHost(model:model) {\n                        DaydreamPermissionSettings(enabled:model.development == nil,")
               && app.contains("PermissionRequestsHost(model:model) {DaydreamOnboarding(model:model)}"),
               "Settings, onboarding and the permissions window all get the actions")
         check(app.contains("guard development == nil else {return nil}\n        var actions=PermissionRequests.actions(.live,location:launchLocation,inputMonitoringAtLaunch:permissionsAtLaunch?.inputMonitoring)"),
@@ -323,8 +433,8 @@ import MemoryUI
         let requests = try! String(contentsOfFile: "Sources/MacMemApp/PermissionRequests.swift", encoding: .utf8)
         check(requests.contains("terminate: { AppQuit.quit() },") && requests.contains("endSheets(app)\n            app.terminate(nil)"),
               "Quit & Reopen quits through AppQuit, which ends the sheets right before each quit")
-        check(app.contains("AppQuit.willQuit = { [weak self] in self?.settingsPresented=false }")
-              && app.contains("Button(LaunchLocation.quitTitle) { AppQuit.terminate() }"), "the model closes Settings on quit; the download alert quits through AppQuit")
+        check(app.contains("AppQuit.willQuit = { [weak self] in self?.settingsPresented=false;self?.willQuit() }")
+              && app.contains("Button(LaunchLocation.quitTitle) { AppQuit.terminate() }"), "the model closes Settings on quit (rc-018 RC3: and saves an open setup's place); the download alert quits through AppQuit")
         let menu = try! String(contentsOfFile: "Sources/MacMemApp/MenuBarContent.swift", encoding: .utf8)
         let uninstall = try! String(contentsOfFile: "Sources/MacMemApp/UninstallService.swift", encoding: .utf8)
         check(menu.components(separatedBy: "{ AppQuit.quit() }").count == 3 && !menu.contains("NSApp.terminate")
@@ -343,7 +453,7 @@ import MemoryUI
     static let window: NSWindow = {
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.accessory)
-        let w = NSWindow(contentRect: NSRect(x: -4000, y: -4000, width: 640, height: 640), styleMask: [.titled], backing: .buffered, defer: false)
+        let w = OffscreenWindow(contentRect: NSRect(x: -4000, y: -4000, width: 640, height: 640), styleMask: [.titled], backing: .buffered, defer: false)
         w.orderFrontRegardless()
         return w
     }()
@@ -387,6 +497,8 @@ import MemoryUI
         defer { window.contentView = nil; window.orderOut(nil) }
         var r = Recorder()
         _ = host(r, atLaunch: true, accessibility: true, input: true)
+        check(!NSScreen.screens.contains { $0.frame.intersects(window.frame) },
+              "the check's window stays off every screen once shown (an OffscreenWindow): \(window.frame)")
         check(elements["card.accessibility"] != nil && elements["card.inputMonitoring"] != nil && elements["quitAndReopen"] == nil
               && elements["open.accessibility"] == nil && elements["open.inputMonitoring"] == nil,
               "both allowed as at launch: two cards, no Open System Settings, no Quit & Reopen: \(elements.keys.sorted())")
@@ -442,7 +554,7 @@ import MemoryUI
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.prohibited)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 660, height: 560), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffscreenWindow(contentRect: NSRect(x: -4000, y: -4000, width: 660, height: 560), styleMask: [.titled], backing: .buffered, defer: false)
         defer { window.contentView = nil; window.orderOut(nil) }
         let appURL = URL(fileURLWithPath: "/Applications/DayDream.app")
         var count = 0
@@ -460,7 +572,9 @@ import MemoryUI
                 window.contentView = host
                 let size = host.fittingSize
                 host.frame = NSRect(origin: .zero, size: size)
-                try await Task.sleep(nanoseconds: 120_000_000)
+                // The run loop, not Task.sleep: awaiting here let the async main's run loop return and the process
+                // exit 0 before the first render (every render check and the final count were skipped).
+                pump(0.12)
                 host.layoutSubtreeIfNeeded()
                 check(size.width > 0 && size.height > 0 && r.calls.isEmpty, "renders without asking macOS: \(name) \(style) \(state) \(dark)")
                 guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { check(false, "bitmap"); return }

@@ -31,6 +31,12 @@ import PrivacyPolicy
     if maintenance == "actual-expiry" {try store.exec("UPDATE typed_text SET created_at=? WHERE id='old-fictional'",[iso(start.addingTimeInterval(-8*86400))])}
     if maintenance == "orphan-expiry" {try store.exec("DELETE FROM records WHERE id='old-fictional'")}
    }
+   // A day-review clause (derived, like level notes): a recent one stays and keeps the carry; one past the 400-day keep
+   // is deleted by writePending's expiry, a store change outside the maintenance statements, so it is a boundary.
+   if maintenance == "queue-recent-clause" || maintenance == "review-clause-expiry" {
+    let day=maintenance == "queue-recent-clause" ? String(iso(start).prefix(10)):"2020-01-01"
+    try store.exec("INSERT INTO review_clauses VALUES('rc-fictional',?,0,'{}')",[day])
+   }
    let first=evidence("i didn't like the ",part:1,time:start,reason:seal)
    let savedFirst=try store.ingest(first,now:start,expectedPolicyRevision:policy.revision,requireRecording:true);precondition(savedFirst,"prefix must persist")
    let before=try store.hydrateTypedText(first.id,disclosure:.owner,now:start)
@@ -58,7 +64,7 @@ import PrivacyPolicy
    case "forget": _ = try store.forgetTypedText(confirmed:true,now:start);try store.attachVault(TypedTextVault(keyStore:InMemoryTypedKeyStore()),now:start);try store.setUpTypedVault(now:start);_ = try store.acceptSafeTyping(now:start)
    case "typing-toggle": _ = try store.snoozeTyping(minutes:1,now:start);try store.resumeTyping(now:start)
    case "expiry": _ = try store.expireTypedText(now:start)
-   case "queue-only": _ = try store.writePending(now:start);_ = try store.writePending(now:start)
+   case "queue-only","queue-recent-clause","review-clause-expiry": _ = try store.writePending(now:start);_ = try store.writePending(now:start)
    case "unknown-write": try store.transaction {try store.exec("INSERT OR REPLACE INTO metadata VALUES('fictional-unrelated','1')")}
    case "failed-write": do {try store.transaction {try store.exec("INVALID FICTIONAL SQL")}} catch {}
    case "policy-toggle": settings.captureText=false;try store.updatePolicy(settings,now:start);settings.captureText=true;try store.updatePolicy(settings,now:start)
@@ -78,8 +84,9 @@ import PrivacyPolicy
    let second=evidence(text,part:2,time:later,reason:"submit",run:wrongRun ? "other-fictional-run":"fictional-run")
    let fresh=abs(later.timeIntervalSince(timestamp(second.at)!))<=1 && abs(timestamp(second.captureProvenance!.checkedAt)!.timeIntervalSince(timestamp(second.at)!))<=1
    let wrote=try store.ingest(second,now:later,expectedPolicyRevision:(try store.policy()).revision,requireRecording:true),kept=wrote ? try store.hydrateTypedText(second.id,disclosure:.owner,now:later):nil
+   let clauseRows=try Int(store.rows("SELECT count(*) FROM review_clauses WHERE id='rc-fictional'").first?.first ?? "-1") ?? -1
    let protected=strong ? kept?.contains("FictionalToken99!") != true : kept != text
-   cases.append(["case":name,"maintenance":maintenance,"allowedBefore":allowedBefore,"allowedAfter":allowedAfter,"logicalElapsedSeconds":gap,"metadataFresh":fresh,"firstExact":before==first.text,"secondWritten":wrote,"secondExact":kept==text,"secondHasMarker":kept?.contains("[withheld]")==true,"secretOrBoundaryProtected":protected,"physicalElapsed":physical,"actualWaitSeconds":actualWait,"workerFailed":workerFailed,"modernPendingRequest":modernRequest,"expiredRows":expired,"orphanRows":orphans,"workerCompleted":workerCompleted,"workerCount":workerCount.map { $0 as Any } ?? NSNull()])
+   cases.append(["case":name,"maintenance":maintenance,"allowedBefore":allowedBefore,"allowedAfter":allowedAfter,"logicalElapsedSeconds":gap,"metadataFresh":fresh,"firstExact":before==first.text,"secondWritten":wrote,"secondExact":kept==text,"secondHasMarker":kept?.contains("[withheld]")==true,"secretOrBoundaryProtected":protected,"physicalElapsed":physical,"actualWaitSeconds":actualWait,"workerFailed":workerFailed,"modernPendingRequest":modernRequest,"expiredRows":expired,"orphanRows":orphans,"workerCompleted":workerCompleted,"fixtureClauseRows":clauseRows,"workerCount":workerCount.map { $0 as Any } ?? NSNull()])
   }
   try run("idle-no-maintenance-positive",maintenance:"none")
   try run("size-no-maintenance-positive",maintenance:"none",seal:"size",gap:1)
@@ -87,21 +94,36 @@ import PrivacyPolicy
   try run("size-normal-onCommitted-worker",maintenance:"worker",seal:"size",gap:1)
   try run("idle-zero-expiry-pass",maintenance:"expiry")
   try run("idle-queue-noop-pass",maintenance:"queue-only")
-  for m in ["unknown-write","failed-write","policy-toggle","external-write","unknown-trigger","known-name-protected-trigger","readonly-unknown-trigger","failed-worker-trigger","unknown-cleanup-trigger","orphan-expiry","actual-expiry","modern-request","stop-restart","forget","typing-toggle"] {try run("boundary-"+m,maintenance:m)}
+  try run("idle-queue-recent-clause-pass",maintenance:"queue-recent-clause")
+  for m in ["review-clause-expiry","unknown-write","failed-write","policy-toggle","external-write","unknown-trigger","known-name-protected-trigger","readonly-unknown-trigger","failed-worker-trigger","unknown-cleanup-trigger","orphan-expiry","actual-expiry","modern-request","stop-restart","forget","typing-toggle"] {try run("boundary-"+m,maintenance:m)}
   try run("different-run-negative",maintenance:"none",wrongRun:true)
   try run("ttl-expired-fresh-current-negative",maintenance:"none",gap:121)
   try run("strong-secret-worker-negative",maintenance:"worker",strong:true)
   try JSONSerialization.data(withJSONObject:cases,options:[.prettyPrinted,.sortedKeys]).write(to:output)
   try run("physical-idle-normal-onCommitted-worker",maintenance:"worker",physical:true)
   try run("physical-size-normal-onCommitted-worker",maintenance:"worker",seal:"size",gap:1,physical:true)
-  precondition(cases.first{$0["case"] as? String == "idle-queue-noop-pass"}!["secondExact"] as! Bool,"known queue-only maintenance preserves")
-  precondition(cases.first{$0["case"] as? String == "idle-zero-expiry-pass"}!["secondHasMarker"] as! Bool,"public expiry remains strict")
-  precondition(cases.allSatisfy{$0["metadataFresh"] as! Bool && $0["firstExact"] as! Bool},"fixtures must be fresh and positive prefix persisted")
-  precondition(cases.filter{($0["case"] as! String).hasSuffix("no-maintenance-positive")}.allSatisfy{$0["secondExact"] as! Bool},"positive baseline must retain")
+  // Collect, then report: each claim is a PASS or FAIL line, per case where a claim covers several, and all of them
+  // are checked (a precondition stopped at the first, hiding the privacy negatives after it).
+  var failures=0
+  func expect(_ ok:Bool,_ label:String) {if ok {print("PASS "+label)} else {failures+=1;print("FAIL "+label)}}
+  func named(_ c:String)->[String:Any] {cases.first{$0["case"] as? String == c}!}
+  expect(named("idle-queue-noop-pass")["secondExact"] as! Bool,"idle-queue-noop-pass: known queue-only maintenance keeps the certified carry")
+  expect(named("idle-queue-recent-clause-pass")["secondExact"] as! Bool && named("idle-queue-recent-clause-pass")["fixtureClauseRows"] as! Int == 1,"idle-queue-recent-clause-pass: a day-review clause still in its keep period stays, and the carry is kept")
+  expect(named("boundary-review-clause-expiry")["fixtureClauseRows"] as! Int == 0,"boundary-review-clause-expiry: a day-review clause past its keep period is deleted")
+  expect(named("idle-zero-expiry-pass")["secondHasMarker"] as! Bool,"idle-zero-expiry-pass: public expiry stays strict (the next part is [withheld])")
+  for c in cases {expect(c["metadataFresh"] as! Bool && c["firstExact"] as! Bool,"\(c["case"]!): the fixture is fresh and its first part persisted exactly")}
+  for c in cases where (c["case"] as! String).hasSuffix("no-maintenance-positive") {expect(c["secondExact"] as! Bool,"\(c["case"]!): with no maintenance the next part is kept")}
   let normal=cases.filter{($0["case"] as! String).contains("normal-onCommitted-worker")}
-  precondition(normal.count==4 && normal.allSatisfy{($0["workerCompleted"] as! Bool) && ($0["secondExact"] as! Bool) && !($0["secondHasMarker"] as! Bool)},"normal pipeline still loses certified parts")
-  precondition(cases.filter{($0["case"] as! String).hasPrefix("boundary-") || ($0["case"] as! String).hasSuffix("negative")}.allSatisfy{$0["secretOrBoundaryProtected"] as! Bool},"privacy negative changed")
-  let result:[String:Any]=["schema":"sig-normal-maintenance-repro-v1","baseline":"0f2c89d5e61fdf25aca286d19cbd7c4a5458145c","scope":"legacy worker-only; actual modern note request remains boundary; automatic external indexer remains excluded","positiveNormalPipelineRequirementPassed":true,"expectedFailureReproduced":false,"cases":cases,"clock":"logical-offset controls and separately marked actual physical61s/1s waits; fresh per-part timestamps, recording admission and healthy heartbeats","GUI":false,"inference":false,"userHistoryAccess":false]
+  expect(normal.count==4,"four normal-pipeline cases ran (\(normal.count))")
+  for c in normal {expect((c["workerCompleted"] as! Bool) && (c["secondExact"] as! Bool) && !(c["secondHasMarker"] as! Bool),"\(c["case"]!): the normal summary worker keeps the certified carry")}
+  // d586301 (10/01, after this repro): pending note preparation (a modern note request) keeps certified typing, so
+  // boundary-modern-request is a positive now, not a boundary.
+  expect(named("boundary-modern-request")["secondExact"] as! Bool,"boundary-modern-request: pending note preparation keeps certified typing")
+  for c in cases where ((c["case"] as! String).hasPrefix("boundary-") && c["case"] as! String != "boundary-modern-request") || (c["case"] as! String).hasSuffix("negative") {
+   expect(c["secretOrBoundaryProtected"] as! Bool,"\(c["case"]!): the privacy negative holds (secret or boundary protected)")
+  }
+  if failures > 0 {print("sig-maintenance-fixed: \(failures) failed; no GUI, model or real history");exit(1)}
+  let result:[String:Any]=["schema":"sig-normal-maintenance-repro-v1","baseline":"0f2c89d5e61fdf25aca286d19cbd7c4a5458145c","scope":"legacy worker-only; actual modern note request preserved since d586301; automatic external indexer remains excluded","positiveNormalPipelineRequirementPassed":true,"expectedFailureReproduced":false,"cases":cases,"clock":"logical-offset controls and separately marked actual physical61s/1s waits; fresh per-part timestamps, recording admission and healthy heartbeats","GUI":false,"inference":false,"userHistoryAccess":false]
   try JSONSerialization.data(withJSONObject:result,options:[.prettyPrinted,.sortedKeys]).write(to:output)
   print("CERTIFIED LEGACY MAINTENANCE POSITIVE PASS; scoped controls verified")
  }

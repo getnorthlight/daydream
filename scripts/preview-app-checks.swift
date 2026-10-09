@@ -14,12 +14,21 @@ import SwiftUI
 import MemoryCore
 import MemoryUI
 
+// Collect-then-report: a failed expectation prints FAIL and the check goes on; the exit is non-zero when any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
+
 func fail(_ message: String) -> Never {
     fflush(stdout)
     FileHandle.standardError.write(Data("FAIL: \(message)\n".utf8))
     exit(1)
 }
-@MainActor func expect(_ condition: Bool, _ message: @autoclosure () -> String) { if !condition { fail(message()) } else { print("PASS: \(message())"); fflush(stdout) } }
+@MainActor func expect(_ condition: Bool, _ message: @autoclosure () -> String) { if !condition { ddFail(message()) } else { print("PASS: \(message())"); fflush(stdout) } }
 @MainActor func pump(_ s: Double = 0.1) { RunLoop.main.run(until: Date().addingTimeInterval(s)) }
 @MainActor @discardableResult func wait(_ timeout: Double, _ done: () -> Bool) -> Bool {
     let end = Date().addingTimeInterval(timeout)
@@ -29,6 +38,7 @@ func fail(_ message: String) -> Never {
 
 @main struct PreviewAppChecks {
     @MainActor static func main() throws {
+        ddReportAtExit()
         guard let out = ProcessInfo.processInfo.environment["DD_CHECK_OUT"], !out.isEmpty else { fail("DD_CHECK_OUT is required") }
         let temp = FileManager.default.temporaryDirectory.standardizedFileURL.resolvingSymlinksInPath()
         let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -188,7 +198,7 @@ func fail(_ message: String) -> Never {
         expect(!browser.recallVisible, "a second Esc closes Search")
         let panelSource = (try? String(contentsOfFile: "Sources/MemoryUI/RecallPanel.swift", encoding: .utf8)) ?? ""
         let hostSource = (try? String(contentsOfFile: "Sources/MemoryUI/RecallHost.swift", encoding: .utf8)) ?? ""
-        expect(panelSource.contains("Button { model.close() } label: {\n            Image(systemName: \"xmark\")") && panelSource.contains("if detail == nil { closeButton.padding(.trailing, 12) }"),
+        expect(panelSource.contains("Button { model.close() } label: {\n            Image(systemName: \"xmark\")") && panelSource.contains("closeButton.padding(.trailing, 12)"),
                "the header's ✕ closes Search in one click")
         expect(hostSource.contains(".onTapGesture { model.close() }"), "a click on the dimmed day closes Search")
         // Search: a word found in notes. Search is flat (owner, 9/30): every row is one moment or one hit, never a block,
@@ -207,7 +217,13 @@ func fail(_ message: String) -> Never {
                "search keeps only a moment's lines and notes (\"\(word)\")")
         expect(!recall.displayRows.isEmpty && recall.displayRows.allSatisfy { $0.moment != nil || $0.kind == .action },
                "every search row is one moment or one hit")
-        expect(recall.sections.first?.best == true || !recall.displayRows.contains { $0.note != nil }, "Recall shows a Best match")
+        // 8829e2a (10/02): when the direct matches were shown first (while ranked search loads), their sections keep
+        // their places and no Best match moves in above them; otherwise the ranked answer leads with one. Which comes
+        // first is timing, so the check holds the rule both ways: a Best match, if shown, is the first section, one row.
+        wait(10) { !recall.busy }
+        let bests = recall.sections.enumerated().filter { $0.element.best }
+        expect(bests.isEmpty || (bests.count == 1 && bests[0].offset == 0 && bests[0].element.rows.count == 1),
+               "a Best match, when Recall shows one, is the first section with one row (\(bests.isEmpty ? "direct matches first" : "shown"))")
         try render("search", settle: 2.0)
         // A moment row: its preview is the title, the time and the note's lines (no "Summary" label, no Cloud chip),
         // then Show in Context.
@@ -327,7 +343,7 @@ func fail(_ message: String) -> Never {
             } else { fail("the sample has no block or week note") }
             model.dayData = saved
             let writerSource = try String(contentsOfFile: "Sources/MacMemApp/WriterIntegration.swift", encoding: .utf8)
-            expect(writerSource.contains("guard let step=try? await levelRunner.step(levels,timezone:zone,now:now,codeOnly:codeOnly,momentWillBeWritten:willBeWritten) else {break}")
+            expect(writerSource.contains("guard let step=try? await levelRunner.step(levels,timezone:zone,now:now,codeOnly:levelsByCode,momentWillBeWritten:willBeWritten) else {break}")
                    && writerSource.contains("} else {counters.codeLevels+=1}\n                    onLevelCommitted?(step.note)\n                }"),
                    "the writer reports each committed level note")
             let appSource = try String(contentsOfFile: "Sources/MacMemApp/MacMemApp.swift", encoding: .utf8)

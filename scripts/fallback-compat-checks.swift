@@ -8,6 +8,8 @@ import MemoryUI
     static let zone="America/Chicago"
     static let legacy="code-fallback1-validator12", prior="code-fallback2-validator12", current=CodeFallbackNote.version
     static let line="Typed a draft in X."
+    /// What a card shows of `line`: since 759c44c (0.1.5) DisplayWords.undraft rewrites stored "draft" words on screen.
+    static let shown=DisplayWords.undraft(line)
     static let now=Date()
     static var root:URL!
     static func check(_ ok:Bool,_ label:String) {if ok {passed+=1;print("PASS "+label)} else {failed+=1;print("FAIL "+label)}}
@@ -33,6 +35,7 @@ import MemoryUI
         try persistedDisplay(ageDays:6)
         check(NoteWriterVersions.current.contains(current) && !NoteWriterVersions.current.contains(legacy),"only the exact new fallback version remains current")
         check(NoteWriterVersions.outdated(legacy) && NoteWriterVersions.outdated(prior) && !NoteWriterVersions.outdated(current),"known fallback1 and fallback2 remain eligible for bounded recent rewrite")
+        check(shown=="Typed in X.","the stored line is shown as \"Typed in X.\" (never \"draft\" on screen)")
         print("fallback-compat: \(passed) passed, \(failed) failed")
         if failed>0 {exit(1)}
     }
@@ -68,7 +71,7 @@ import MemoryUI
               ageDays==0 ? "recent fallback1 becomes pending with previous note" : "old-day fallback1 stays ready as written")
         var cal=Calendar(identifier:.gregorian);cal.timeZone=TimeZone(identifier:zone)!
         let slice=MomentSlice.make(note:note,dayPartial:false,summaries:SummaryAvailability(provider:.local,busy:false),calendar:cal)
-        check(slice.bullets.map(\.text)==[line],"legacy age\(ageDays) bullet stays visible")
+        check(slice.bullets.map(\.text)==[shown],"legacy age\(ageDays) bullet stays visible")
         check(slice.byCode && !FocusListExpanded.showsModelMark(slice) && !FocusListExpanded.showsCloudKeyChip(slice),"legacy age\(ageDays) remains labeled as code, no model/cloud mark")
         check(FocusListExpanded.showsSummary(slice),"legacy age\(ageDays) still has expanded Summary")
         if ageDays==0 {
@@ -79,12 +82,12 @@ import MemoryUI
         check(try snapshot.latestNote(id:id)?.output.generatorVersion==legacy,"canonical snapshot retains exact legacy generation metadata age\(ageDays)")
         let imported=try snapshot.dayLayers(day:day,timezone:zone,now:now).activities.first!
         let importedSlice=MomentSlice.make(note:imported,dayPartial:false,summaries:SummaryAvailability(provider:.local,busy:false),calendar:cal)
-        check(importedSlice.bullets.map(\.text)==[line] && importedSlice.byCode,"canonical snapshot legacy display preserved age\(ageDays)")
+        check(importedSlice.bullets.map(\.text)==[shown] && importedSlice.byCode,"canonical snapshot legacy display preserved age\(ageDays)")
         let currentStore=try fixture("current-\(ageDays)",ageDays:ageDays)
         let currentRequest=try currentStore.0.prepareNote(kind:"activity",day:currentStore.1,timezone:zone,activityID:currentStore.2,now:now)
         _ = try currentStore.0.commitNote(output(currentRequest,provider:CodeFallbackNote.provider,version:current),now:now)
         let currentNote=try currentStore.0.dayLayers(day:currentStore.1,timezone:zone,now:now).activities.first!
         let currentSlice=MomentSlice.make(note:currentNote,dayPartial:false,summaries:SummaryAvailability(provider:.local,busy:false),calendar:cal)
-        check(currentNote.status=="ready" && currentSlice.bullets.map(\.text)==[line] && currentSlice.byCode && !currentSlice.stale,"current fallback visible and ready age\(ageDays)")
+        check(currentNote.status=="ready" && currentSlice.bullets.map(\.text)==[shown] && currentSlice.byCode && !currentSlice.stale,"current fallback visible and ready age\(ageDays)")
     }
 }

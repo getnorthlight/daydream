@@ -178,7 +178,8 @@ import MemoryUI
                                                                               ("Terminal", "com.apple.Terminal", "qa - zsh", 11),
                                                                               ("Notes", "com.apple.Notes", "Notes", 13),
                                                                               ("Pages", "com.apple.iWork.Pages", "Draft", 15)]
-        let fb = (gen: CodeFallbackNote.provider, ver: CodeFallbackNote.version), model = (gen: "local/qwen3.5-4b-q4_k_m", ver: "qwen35-4b-q4-b9723-prompt10-validator12")
+        let fb = (gen: CodeFallbackNote.provider, ver: CodeFallbackNote.version), model = (gen: "local/qwen3.5-4b-q4_k_m", ver: NoteWriterVersions.current.first { $0.hasPrefix("qwen35-") }!)
+        // The model's version is the current one: an older one reads back pending, rewritten (228b56a).
         do {
             let writer = try MemoryStore(home: home, writable: true, automaticallySyncSearch: false)
             for (i, a) in apps.enumerated() { for m in [0, 3, 6] { _ = try writer.ingest(ev("fb\(i)-\(m)", d(22, a.hour, m), a.app, a.bundle, a.title), now: clock) } }
@@ -221,8 +222,9 @@ import MemoryUI
                 equal(m.bullets.map(\.text), [], "fallback store (Pages): the model's \"Typed a draft in Pages.\" is still filler")
                 check(!FocusListExpanded.showsSummary(m), "fallback store (Pages): no Summary section for the model's filler")
             } else {
-                equal(m.bullets.map(\.text), ["Typed a draft in \(app)."], "fallback store (\(app)): code's line shows")
-                equal(MomentSubtitle.text(for: m), "Typed a draft in \(app)", "fallback store (\(app)): collapsed, code's line is the subtitle")
+                // Never "draft" on screen (759c44c): code's line shows undrafted.
+                equal(m.bullets.map(\.text), [DisplayWords.undraft("Typed a draft in \(app).")], "fallback store (\(app)): code's line shows")
+                equal(MomentSubtitle.text(for: m), "Typed in \(app)", "fallback store (\(app)): collapsed, code's line is the subtitle")
                 check(FocusListExpanded.showsSummary(m) && FocusListExpanded.summaryStatus(for: m, provider: .local) == nil,
                       "fallback store (\(app)): expanded, the Summary section shows code's line")
             }
@@ -352,13 +354,14 @@ import MemoryUI
     }
     static func dayJSON(partial: Bool) throws -> ActionDay {
         let status = partial ? "incomplete" : "pending"
-        let small = (0..<3).map { "s\($0)" }, long = (0..<442).map { "x\($0)" }
+        // Over the 2000-action limit (5fe0f32: long moments are written in segments up to it).
+        let small = (0..<3).map { "s\($0)" }, long = (0..<(DaydreamSummaryLimit.actions + 42)).map { "x\($0)" }
         let notes = [noteJSON("small", d(22, 9, 0), d(22, 9, 20), ids: small, app: "Zed", bundle: "dev.zed.Zed", status: status),
                      noteJSON("long", d(22, 11, 0), d(22, 14, 0), ids: long, app: "Safari", bundle: "com.apple.Safari", status: status)]
         let actions = [actionJSON("s0", d(22, 9, 0), app: "Zed", bundle: "dev.zed.Zed"), actionJSON("x0", d(22, 11, 0), app: "Safari", bundle: "com.apple.Safari")]
         let json: [String: Any] = [
             "summary": ["day": "2026-09-22", "timezone": zone, "start": iso(d(22, 0, 0)), "end": iso(d(23, 0, 0)), "activityIDs": ["small", "long"],
-                        "actionCount": 445, "countIsComplete": !partial, "inputRevision": "r", "status": status],
+                        "actionCount": 3 + long.count, "countIsComplete": !partial, "inputRevision": "r", "status": status],
             "activities": notes, "defaultLayer": "activities", "partial": partial,
             "actions": ["actions": actions, "revision": "r", "snapshot": ["epoch": "e", "highWater": 1], "candidates": actions.count]]
         return try JSONDecoder().decode(ActionDay.self, from: JSONSerialization.data(withJSONObject: json))
@@ -377,14 +380,14 @@ import MemoryUI
             let snap = TodaySnapshot.make(day: day, summaries: SummaryAvailability(provider: provider, busy: false), calendar: cal, now: clock)
             let s = snap.moments.first { $0.id == "small" }?.summary, l = snap.moments.first { $0.id == "long" }?.summary
             check(s == small && l == long && snap.pendingCount == pending && snap.tooLongCount == tooLong && snap.readyCount == 0,
-                  "gating \(name): 3 actions → \(small), 442 actions → \(long); pending \(pending), too long \(tooLong)", "\(String(describing: s)) \(String(describing: l)) \(snap.pendingCount) \(snap.tooLongCount)")
+                  "gating \(name): 3 actions → \(small), \(DaydreamSummaryLimit.actions + 42) actions → \(long); pending \(pending), too long \(tooLong)", "\(String(describing: s)) \(String(describing: l)) \(snap.pendingCount) \(snap.tooLongCount)")
             check(snap.headline == nil, "gating \(name): no headline without a ready day note")
         }
         let p = TodaySnapshot.make(day: partial, summaries: SummaryAvailability(provider: .local, busy: false), calendar: cal, now: clock)
-        check(p.partial && !p.countComplete && p.actionCount == 445, "partial day: counts are lower bounds")
+        check(p.partial && !p.countComplete && p.actionCount == DaydreamSummaryLimit.actions + 45, "partial day: counts are lower bounds")
         let digest = DayDigest.make(day: partial, calendar: cal)
-        check(!digest.complete && digest.momentCount == 2 && digest.actionCount == 445, "partial day digest is incomplete")
-        equal(digest.topApp?.bundle, "com.apple.Safari", "digest ranks the 442-action app first")
+        check(!digest.complete && digest.momentCount == 2 && digest.actionCount == DaydreamSummaryLimit.actions + 45, "partial day digest is incomplete")
+        equal(digest.topApp?.bundle, "com.apple.Safari", "digest ranks the long moment's app first")
     }
 
     // MARK: DaydreamDayCache: retry, coalescing, TTL, invalidation
@@ -633,7 +636,8 @@ import MemoryUI
         check(found?.summary == .summariesOff && found?.actionCount == 2, "resolved moment carries §3 gating and counts")
         let benchHit = await resolver.moment(containing: bench.actionIDs[429], at: d(22, 11, 23, 0))
         equal(benchHit?.id, bench.id, "an action beyond the first page still resolves (moments cover the whole day)")
-        equal(benchHit?.summary, .tooLong, "a 430-action moment is too long to summarize, whatever the provider")
+        // Under the 2000-action limit since 5fe0f32 (long moments are written in segments): summaries off reads off.
+        equal(benchHit?.summary, .summariesOff, "a 430-action moment is not too long to summarize (summaries off: off)")
         browser.summaries = SummaryAvailability(provider: .local, busy: false)
         let pending = await resolver.moment(containing: hit, at: d(22, 12, 5))
         equal(pending?.summary, .pending, "a resolved moment follows summary availability (local: pending)")

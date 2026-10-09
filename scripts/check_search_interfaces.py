@@ -11,6 +11,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 import migration_export
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlsplit
 
 CLI = os.environ["MACMEM_TEST_CLI"]
 
@@ -57,9 +58,14 @@ class SearchInterfaces(unittest.TestCase):
                         time.sleep(1.2)
                     if fixture.after_search:
                         fixture.after_search()
-                    return self.reply(200, {"found": len(fixture.docs), "hits": [
+                    # Like Typesense, answer only documents that carry the query's words (search re-checks each
+                    # hit's words against the store and reports stale_hits_removed for one that doesn't, 4f900bf).
+                    q = parse_qs(urlsplit(self.path).query).get("q", [""])[0].lower()
+                    found = [d for d in fixture.docs.values()
+                             if all(w in " ".join(str(d.get(k, "")) for k in ("summary", "app", "site")).lower() for w in q.split())]
+                    return self.reply(200, {"found": len(found), "hits": [
                         {"document": {"source_id": d["source_id"], "revision": d["revision"],
-                                      "summary": "NEVER TRUST INDEX CONTENT"}} for d in fixture.docs.values()]})
+                                      "summary": "NEVER TRUST INDEX CONTENT"}} for d in found]})
                 self.reply(200 if fixture.exists else 404, {})
 
             def do_POST(self):
@@ -124,9 +130,15 @@ class SearchInterfaces(unittest.TestCase):
         self.assertEqual(report["status"], "ready")
         self.assertTrue(report["hits"])
         self.assertNotIn("NEVER TRUST", json.dumps(report))
+        # Since the AI-app tools rebuild (b4e4274, 10/04) the MCP search tool reads moments from the store, not the
+        # index: it answers the same query, never index content, and sends no search request to the index.
+        count = len(self.requests)
         result = json.loads(self.mcp(self.grant())["result"]["content"][0]["text"])
-        self.assertEqual(result["hits"], report["hits"])
-        self.assertNotIn("evidence", result["hits"][0])
+        self.assertEqual(result["tool"], "search")
+        self.assertTrue(result["items"])
+        self.assertNotIn("NEVER TRUST", json.dumps(result))
+        self.assertNotIn("evidence", result["items"][0])
+        self.assertFalse(any("/documents/search?" in path for path in self.requests[count:]))
         # CLI's original array stdout is retained.
         self.assertEqual(self.cli("--local", "search", "Search"), report["hits"])
 
@@ -168,9 +180,10 @@ class SearchInterfaces(unittest.TestCase):
     def test_recipient_and_revocation_during_request(self):
         token = self.grant()
         self.assertTrue(self.refused(self.mcp(token, recipient="other-model")))
-        self.after_search = lambda: self.cli("--client", "search-tests", "--recipient", "test-model", "revoke")
-        self.assertTrue(self.refused(self.mcp(token)))
-        self.after_search = None
+        self.assertFalse(self.refused(self.mcp(token)))
+        # The MCP search no longer reaches the index (b4e4274), so there is no index round trip to revoke during;
+        # a revoke between requests refuses the next one.
+        self.cli("--client", "search-tests", "--recipient", "test-model", "revoke")
         count = len(self.requests)
         self.assertTrue(self.refused(self.mcp(token)))
         self.assertEqual(len(self.requests), count, "revoked request must not reach index")

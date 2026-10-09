@@ -1448,6 +1448,9 @@ class RealRepositoryRuntime(unittest.TestCase):
     yet) or exactly what SignedRuntimePolicy.swift pins."""
 
     def test_signed_libraries_are_not_gitignored(self):
+        top = subprocess.run(['git', '-C', str(dr.ROOT), 'rev-parse', '--show-toplevel'], capture_output=True, text=True)
+        if top.returncode != 0 or Path(top.stdout.strip()).resolve() != Path(dr.ROOT).resolve():
+            self.skipTest('SKIP (environment): %s is not a git checkout; .gitignore is read with git' % dr.ROOT)
         probe = writer_payload.SOURCE_DIR + '/libllama.0.dylib'
         ignored = subprocess.run(['git', '-C', str(dr.ROOT), 'check-ignore', '-q', '--no-index', probe]).returncode
         self.assertEqual(ignored, 1, probe + ' would be ignored by .gitignore')
@@ -1478,7 +1481,8 @@ class ManifestV2Tool(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='writer-manifest-')
         self.addCleanup(self.temp.cleanup)
-        self.dir = Path(self.temp.name) / 'signed'
+        # Resolved: manifest_v2 takes only unlinked paths (as the loader does), and TMPDIR may be /var/tmp/... (a symlink).
+        self.dir = Path(self.temp.name).resolve() / 'signed'
         self.dir.mkdir()
         self.libraries = {n: synthetic_dylib(n) for n in WRITER_NAMES}
         for name, data in self.libraries.items():
@@ -1703,6 +1707,14 @@ class TestImageNames(unittest.TestCase):
         runbook = (dr.ROOT / 'RELEASE.md').read_text()
         self.assertIn('--name "DayDream - Test N.dmg"', runbook)
         self.assertIn('--previous-build <last test build>', runbook)
+
+    def test_template_version_is_the_release_version(self):
+        # rel-018 review: 0.1.8's RC still had 0.1.7 in packaging/Info.plist. stage takes --version, but dev and Live
+        # Test builds read the template, so §3 compares the two before staging.
+        runbook = (dr.ROOT / 'RELEASE.md').read_text()
+        self.assertIn('plutil -extract CFBundleShortVersionString raw "$REPO/packaging/Info.plist")" = "$VERSION"', runbook)
+        template = dr.load_plist(dr.ROOT / 'packaging/Info.plist')['CFBundleShortVersionString']
+        self.assertRegex(template, '^' + dr.VERSION_RE + '$')
 
     def test_checksum_line_is_read_back_whole(self):
         # write_checksum writes "<digest>  DayDream - Saturday test 5.dmg"; every reader takes the name whole.

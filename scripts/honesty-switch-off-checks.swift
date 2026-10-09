@@ -15,16 +15,25 @@ import HistoryCore
 import MemoryCore
 import MemoryUI
 import PrivacyPolicy
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 @main struct HonestySwitchChecks {
     static var passed=0
     static func check(_ condition:Bool,_ name:String) {
         guard condition else {
-            fflush(stdout); FileHandle.standardError.write(Data("FAIL: \(name)\n".utf8)); exit(1)
+            ddFail(name); return
         }
         passed+=1; print("PASS: "+name); fflush(stdout)
     }
     static func main() throws {
+        ddReportAtExit()
         setbuf(stdout,nil)
         let off = !ReleaseFeatures.chromePageHistory
         let expectOff = CommandLine.arguments.contains("--expect-off")

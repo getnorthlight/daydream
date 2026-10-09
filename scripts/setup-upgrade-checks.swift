@@ -2,16 +2,19 @@
 // setup-upgrade-checks (fix/setup-status, owner 9/28): setup is forced and proper, and an upgrade from test 4/5 gets a
 // one-time what's-new. Drives the REAL setup window (`DaydreamOnboarding(model:)`) for a production-mode MemoryViewModel
 // on scratch histories (MAC_MEM_HOME) with HOME and CFFIXED_USER_HOME in scratch, offscreen:
-//   fresh     : setup opens; Summaries on this Mac ON by default; one Continue starts it and moves to Apps; typing and
-//               Web pages in Chrome ON; the last page (Connect your AI) says the download live, and Summaries Off with its button
+//   fresh     : setup opens on Apps once both permissions are allowed (no summaries page, claude/setup-local-summaries):
+//               summaries on this Mac are asked for by default as setup leaves Permissions, once; typing and Web pages in
+//               Chrome ON; the last page (Connect your AI) has no Summaries row in any state
 //   upgrade   : setup finished in an older build (completedV1, no setup version) and a store as test 4/5 left it (typing
 //               saved Off, no Chrome switch): what's-new opens once at launch, while recording; its Apps page shows both
 //               ON; Done writes version 2 and SetupChoices on/on, leaves captureText and browserPages on, asks Chrome
 //               once, and it never opens by itself again
 //   explicit  : SetupChoices typing .off keeps typing OFF on what's-new
 //   close     : closing setup mid-download never turns summaries off (the engine turns them on when verified; with the
-//               shim only that chooseLocal was called)
-//   cloud     : a wrong key at Continue shows the problem line with one Change Key button, the page stays, nothing is on
+//               shim only the default was asked for)
+//   cloud     : setup never shows a key field or a Summaries row, also on a Mac that can't run the model; an OpenRouter
+//               upgrader's what's-new never asks for the default
+//   finished  : setup opened again after it was finished (File menu) never asks for the default
 // Nothing records (`startCapture` refuses and counts in check builds), downloads, reads the Keychain or goes online: the
 // summary controls are the check build's recording fakes (`SummaryControls.recording`), the typing key is in memory, and
 // Chrome access is a fake environment. Never orders a window on screen or asks for a permission.
@@ -19,11 +22,31 @@ import AppKit
 import SwiftUI
 import MemoryCore
 import MemoryUI
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
+
+/// The path with every symlink resolved, also for a tail that doesn't exist yet (/var/tmp/x and /private/var/tmp/x
+/// are one folder), so a scratch HOME is accepted whichever spelling the work folder was given.
+func resolvedPath(_ path: String) -> String {
+    var url = URL(fileURLWithPath: path).standardizedFileURL
+    var rest: [String] = []
+    while access(url.path, F_OK) != 0, url.path != "/" { rest.insert(url.lastPathComponent, at: 0); url.deleteLastPathComponent() }
+    guard let real = realpath(url.path, nil) else { return path }
+    defer { free(real) }
+    let head = String(cString: real)
+    return rest.isEmpty ? head : (head == "/" ? "" : head) + "/" + rest.joined(separator: "/")
+}
 
 func fail(_ m: String) -> Never { fflush(stdout); FileHandle.standardError.write(Data("FAIL: \(m)\n".utf8)); exit(1) }
 var passed = 0
 @MainActor func check(_ ok: Bool, _ label: String, _ detail: @autoclosure () -> String = "") {
-    if ok { passed += 1; print("PASS: \(label)") } else { fail("\(label) \(detail())") }
+    if ok { passed += 1; print("PASS: \(label)") } else { ddFail("\(label) \(detail())") }
 }
 @MainActor func pump(_ s: Double = 0.1) { RunLoop.main.run(until: Date().addingTimeInterval(s)) }
 @MainActor @discardableResult func wait(_ t: Double, _ done: () -> Bool) -> Bool {
@@ -41,11 +64,25 @@ var passed = 0
     for child in (element.accessibilityChildren() ?? []) { labels(child, depth: depth + 1, into: &out) }
 }
 @MainActor func texts(_ root: NSView) -> [String] { var out: [String] = []; labels(root, into: &out); return out }
+/// The page's pixels (offscreen SwiftUI text has no accessibility tree): equal pixels across summary states means the
+/// page draws nothing that depends on them.
+@MainActor func pixels(_ view: NSView) -> Data? {
+    view.layoutSubtreeIfNeeded()
+    guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
+    view.cacheDisplay(in: view.bounds, to: rep)
+    return rep.bitmapData.map { Data(bytes: $0, count: rep.bytesPerPlane * max(rep.numberOfPlanes, 1)) }
+}
 
 /// Drawn as the front window (switches and buttons in their active colors), 4000 points off every screen.
 final class KeyWindow: NSWindow {
     /// Stays offscreen (a titled window is otherwise moved onto a screen), as dd-recall-checks' window does.
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
+    /// rc-018 RC3: macOS 26 already moves a window made at -4000 onto the screen in `init` (480,160 on the owner's Mac,
+    /// probe 10/9), before `constrainFrameRect` is ever asked: put it straight back where it was asked for.
+    override init(contentRect: NSRect, styleMask: NSWindow.StyleMask, backing: NSWindow.BackingStoreType, defer flag: Bool) {
+        super.init(contentRect: contentRect, styleMask: styleMask, backing: backing, defer: flag)
+        setFrameOrigin(contentRect.minX <= -1000 && contentRect.minY <= -1000 ? contentRect.origin : NSPoint(x: -5000, y: -5000))
+    }
     override var isKeyWindow: Bool { true }
     override var isMainWindow: Bool { true }
     override var canBecomeKey: Bool { true }
@@ -66,6 +103,7 @@ final class KeyWindow: NSWindow {
         host.frame = NSRect(x: 0, y: 0, width: 660, height: 600)
         window.contentView = host
         window.orderFrontRegardless()
+        if NSScreen.screens.contains(where: { $0.frame.intersects(window.frame) }) { ddFail("rc-018 RC3: the check's window stays off every screen \(window.frame)") }
         settle(1.2)
     }
     func settle(_ s: Double = 0.6) { pump(s); host.layoutSubtreeIfNeeded(); pump(0.15) }
@@ -74,9 +112,7 @@ final class KeyWindow: NSWindow {
     var all: [String] {
         var out = texts(host)
         if let d = drawn {
-            out += [d.title, d.button, d.localLine] + (d.back ? ["Back"] : [])
-            if let p = d.cloudProblem { out += [p.line, p.button] }
-            for row in d.rows { out.append("\(row.title) = \(row.value)"); if let b = row.button { out.append(b) } }
+            out += [d.title, d.button] + (d.back ? ["Back"] : [])
         }
         return out
     }
@@ -116,14 +152,21 @@ final class KeyWindow: NSWindow {
     static var chromeAsks = 0
 
     @MainActor static func main() async throws {
+        ddReportAtExit()
         setbuf(stdout, nil)
         let env = ProcessInfo.processInfo.environment
         guard let out = env["DD_CHECK_OUT"], !out.hasPrefix("/private/tmp/daydream-"), !out.hasPrefix("/tmp/") else { fail("DD_CHECK_OUT must be a scratch folder") }
-        guard let home = env["CFFIXED_USER_HOME"], env["HOME"] == home, !home.hasPrefix("/Users/") else {
-            fail("HOME and CFFIXED_USER_HOME must be the same scratch folder")
+        // Any scratch HOME but the person's real one, a folder above it or its Library. The runner keeps it in the work
+        // folder, which lives under ~/DaydreamReleases (uninstall-plan refuses /var and /tmp), so not "/Users/" in general.
+        let realHome = URL(fileURLWithPath: getpwuid(getuid()).map { String(cString: $0.pointee.pw_dir) } ?? "/Users/" + NSUserName()).resolvingSymlinksInPath().path
+        guard let home = env["CFFIXED_USER_HOME"], env["HOME"] == home, home.hasPrefix("/"),
+              case let scratch = URL(fileURLWithPath: home).resolvingSymlinksInPath().path, scratch != "/",
+              !(realHome + "/").hasPrefix(scratch + "/"), !(scratch + "/").hasPrefix(realHome + "/Library/") else {
+            fail("HOME and CFFIXED_USER_HOME must be the same scratch folder, not your own home")
         }
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].path
-        guard appSupport.hasPrefix(home) else { fail("REFUSING: Application Support resolves to \(appSupport)") }
+        // Resolved on both sides: FileManager spells /private/var/tmp/... as /var/tmp/...; either is the same scratch HOME.
+        guard resolvedPath(appSupport).hasPrefix(resolvedPath(home) + "/") else { fail("REFUSING: Application Support resolves to \(appSupport)") }
         DispatchQueue.global().asyncAfter(deadline: .now() + 300) { fail("timed out") }
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.prohibited)
@@ -150,6 +193,7 @@ final class KeyWindow: NSWindow {
         try closeMidDownload()
         try cloudKey()
         try cloudResuming()
+        try finishedSetupAgain()
         // fix/bugs7: the row follows the writer's own phase: a problem says its line, never On this Mac, OpenRouter or Off.
         check(SettingsRowsSnapshot.summariesLabel(SummaryAvailability(provider: .local, busy: false, phase: .failed(.modelWontStart))) == SummaryProblem.modelWontStart.line
               && SettingsRowsSnapshot.summariesLabel(SummaryAvailability(provider: .cloud, busy: false, phase: .failed(.cloudKey))) == SummaryProblem.cloudKey.line
@@ -186,13 +230,15 @@ final class KeyWindow: NSWindow {
         SummaryControls.calls = []
         SummaryControls.phaseForChecks = nil
         SummaryControls.cloudAnswer = nil
+        SummaryControls.defaultAnswer = .started
         let model = MemoryViewModel()
         guard wait(20, { model.preferencesAvailable && !model.historyOpening }) else { fail("\(name): history did not open: \(model.status)") }
         _ = wait(20, { !model.noteWriter.busy })
-        // Chrome's Automation question is a fake: it is only counted.
-        model.chromeAccessEnvironment = ChromeAccessEnvironment(running: { nil }, verify: { _ in false }, status: { _ in 0 }, ask: { _ in 0 },
+        // Chrome's Automation question is a fake: it is only counted (the next-activation hook is an access read, never a
+        // question, so it counts nothing).
+        model.chromeAccessEnvironment = ChromeAccessEnvironment(running: { nil }, verify: { _ in false }, status: { _ in 0 }, ask: { _ in chromeAsks += 1; return 0 },
                                                                 background: { $0() }, main: { $0() },
-                                                                onNextChromeActivation: { _ in chromeAsks += 1 })
+                                                                onNextChromeActivation: { _ in })
         // The screen reads unlocked and on console whatever this Mac's own session is: run behind a locked screen, a
         // save's restart waits behind that lock (pauseBehindSuspension) and never reaches startCapture.
         model.wakeSystem = WakeSystem(screenLocked: { false }, onConsole: { true }, after: WakeSystem.live.after, now: WakeSystem.live.now)
@@ -200,10 +246,14 @@ final class KeyWindow: NSWindow {
     }
 
     /// The store test 4 / the test 5 preview left: setup's apps page saved typing at that build's Off default, with no
-    /// Chrome switch (store-states.swift, case B).
+    /// Chrome switch (store-states.swift, case B). That page showed the typing switch, so its save answered setup's
+    /// typing question (`typingChoiceShown`, fix/typing-e2e L3 68bc8a4; before L3 every save answered it): the history
+    /// has no native-typing-choice-pending-v1 marker. A history still pending is livefix-1004 (d)'s case (f1daeed): the
+    /// full setup opens, never what's-new (onboarding-flow-checks).
     static func olderBuild(_ store: MemoryStore) throws {
         let p = try store.policy()
-        _ = try store.savePreferences(MemoryPreferences(blockedApps: p.blockedApps, nativeTyping: false), expectedRevision: p.revision)
+        _ = try store.savePreferences(MemoryPreferences(blockedApps: p.blockedApps, nativeTyping: false, typingChoiceShown: true), expectedRevision: p.revision)
+        guard try !store.nativeTypingChoicePending() else { fail("olderBuild: the older build's setup save left the typing question pending") }
     }
 
     @MainActor static func setPhase(_ model: MemoryViewModel, _ phase: SummaryPhase?) {
@@ -218,20 +268,12 @@ final class KeyWindow: NSWindow {
         let model = try makeModel("fresh")
         check(model.setupLaunch(counting: false) == .setup, "fresh: setup opens by itself at the first launch")
         let setup = Setup(model)
-        check(setup.shows("Set up summaries"), "fresh: setup opens on Summaries once both permissions are allowed", setup.all.prefix(12).joined(separator: " | "))
-        let s = setup.switches
-        check(s.count == 2, "fresh: two summaries switches", "\(s.count)")
-        check(s[0].state == (DaydreamOnboarding.macQualifies ? .on : .off) && s[1].state == (DaydreamOnboarding.macQualifies ? .off : .on),
-              "fresh: Summaries on this Mac is ON by default (this Mac qualifies: \(DaydreamOnboarding.macQualifies)), the OpenRouter row off",
-              "\(s.map(\.state.rawValue))")
-        check(DaydreamSummariesContent.localTitle == "Summaries on this Mac" && setup.drawn?.localLine == "Downloads 2.7 GB once. Runs on this Mac.",
-              "fresh: row 1 'Summaries on this Mac' says the size once and where it runs", setup.drawn?.localLine ?? "-")
-        check(s.allSatisfy(\.isEnabled), "fresh: both summaries switches usable")
-        check(!setup.shows("Set up later") && !setup.shows("Cancel download"), "fresh: no Set up later, no Cancel download")
-        setup.shoot(shots, "01-summaries-local-on")
-        setup.pressReturn()
-        check(SummaryControls.calls == ["local"], "fresh: one Continue starts summaries on this Mac (the download runs in the background)", "\(SummaryControls.calls)")
-        check(setup.drawn?.page == .apps, "fresh: …and moves to Apps at once, without waiting for the download")
+        check(DaydreamOnboardingPage.allCases == [.permissions, .apps, .review], "fresh: setup has no summaries page (Permissions, Apps, Connect)")
+        check(setup.drawn?.page == .apps && setup.shows("Apps to remember") && !setup.all.contains { $0.contains("Set up summaries") },
+              "fresh: with both permissions allowed, setup goes straight to Apps", setup.all.prefix(12).joined(separator: " | "))
+        check(SummaryControls.calls == ["default-local"], "fresh: leaving Permissions asks for summaries on this Mac by default, once (silently)", "\(SummaryControls.calls)")
+        check(views(NSSecureTextField.self, in: setup.host).isEmpty && !setup.shows(CloudSummariesText.title),
+              "fresh: no OpenRouter row or key field in setup (Settings › Summarizer only)")
         _ = wait(20) { setup.onApps }
         let apps = setup.switches
         check(apps.count >= 2 && apps.allSatisfy { $0.state == .on && $0.isEnabled }, "fresh: Apps shows typing and Web pages in Chrome ON", "\(apps.map(\.state.rawValue))")
@@ -241,7 +283,7 @@ final class KeyWindow: NSWindow {
         setPhase(model, downloading)
         setup.pressReturn()
         _ = wait(10) { setup.shows(DaydreamOnboarding.connectTitle) }
-        check(setup.shows("Summaries = Downloading 1.2 of 2.7 GB"), "fresh: the last page says the download live", setup.all.joined(separator: " | "))
+        check(SummaryControls.calls == ["default-local"], "fresh: the default was asked for once in the whole setup", "\(SummaryControls.calls)")
         check(setup.shows(DaydreamOnboarding.connectTitle) && setup.shows("Start Recording"), "fresh: Connect your AI while downloading; Start Recording (never waits for summaries)")
         check(!setup.shows("Typed text = On") && !setup.shows("You're all set"),
               "fresh: the last page has no Typed text row (chosen on the page before)", setup.all.joined(separator: " | "))
@@ -250,19 +292,16 @@ final class KeyWindow: NSWindow {
         let choices = model.setupChoicesRead()
         check(choices.typing == .on && choices.chromePages == (ReleaseFeatures.chromePageHistory ? .on : .off), "fresh: SetupChoices on/on", "\(choices)")
         setup.shoot(shots, "05-review-downloading")
-        setPhase(model, .on(.local))
-        setup.settle(0.4)
-        check(!setup.all.contains { $0.hasPrefix("Summaries =") } && setup.shows(DaydreamOnboarding.connectTitle), "fresh: once on, no summaries row", setup.all.joined(separator: " | "))
-        setup.shoot(shots, "06-review-on")
-        // Summaries off (or failed): the row says so and carries its one button.
-        setPhase(model, .off)
-        setup.settle(0.4)
-        check(setup.shows("Summaries = Off") && setup.shows("Turn On"),
-              "fresh: Summaries Off: its row and one Turn On button", setup.all.joined(separator: " | "))
-        setPhase(model, .failed(.downloadStopped))
-        setup.settle(0.4)
-        check(setup.shows("Summaries = The download stopped.") && setup.shows("Try Again"),
-              "fresh: a stopped download: its line and Try Again", setup.all.joined(separator: " | "))
+        // claude/setup-local-summaries (owner 10/7): the Connect page has no Summaries row in any state (downloading, on,
+        // off, a problem): the page is the same, pixel for pixel, whatever the summaries are doing.
+        let downloadingPixels = pixels(setup.host)
+        for (name, phase) in [("on", SummaryPhase.on(.local)), ("off", SummaryPhase.off), ("problem", SummaryPhase.failed(.downloadStopped))] {
+            setPhase(model, phase)
+            setup.settle(0.4)
+            check(setup.drawn?.page == .review && downloadingPixels != nil && pixels(setup.host) == downloadingPixels
+                  && !setup.all.contains { $0.hasPrefix("Summaries") || $0.contains("Turn On") || $0.contains("Add Key") },
+                  "fresh: Connect your AI (\(name)) draws the same page as while downloading: no Summaries row")
+        }
         setup.close()
     }
 
@@ -275,15 +314,11 @@ final class KeyWindow: NSWindow {
         model.recordingForChecks = true
         check(model.recording, "upgrade: recording (drawn only)")
         let setup = Setup(model)
-        check(setup.shows(DaydreamOnboarding.whatsNewTitle) && !setup.shows("Back"), "upgrade: what's-new opens on Summaries while recording, titled What's new, no Back",
-              setup.all.prefix(12).joined(separator: " | "))
-        let s = setup.switches
-        check(s.count == 2 && s[0].state == .on && s.allSatisfy(\.isEnabled), "upgrade: Summaries on this Mac ON and usable while recording", "\(s.map(\.state.rawValue))")
-        check(!setup.all.contains { $0.contains("Stop recording") }, "upgrade: no 'stop recording first' line")
-        setup.shoot(shots, "whatsnew-1-summaries")
-        setup.pressReturn()
-        check(SummaryControls.calls == ["local"] && setup.drawn?.page == .apps, "upgrade: Continue starts summaries and moves to Apps while recording", "\(SummaryControls.calls)")
         _ = wait(20) { setup.onApps }
+        check(setup.drawn?.page == .apps && setup.shows(DaydreamOnboarding.whatsNewTitle) && !setup.shows("Back"),
+              "upgrade: what's-new opens on Apps while recording, titled What's new, no Back", setup.all.prefix(12).joined(separator: " | "))
+        check(SummaryControls.calls.isEmpty, "upgrade: what's-new never changes summaries (no summaries choice, no default)", "\(SummaryControls.calls)")
+        check(!setup.all.contains { $0.contains("Stop recording") }, "upgrade: no 'stop recording first' line")
         let apps = setup.switches
         check(apps.count >= 2 && apps.allSatisfy { $0.state == .on && $0.isEnabled }, "upgrade: Apps shows typing ON and Chrome ON (never chosen), usable while recording",
               "\(apps.map(\.state.rawValue)) \(apps.map(\.isEnabled))")
@@ -292,7 +327,7 @@ final class KeyWindow: NSWindow {
         setup.pressReturn()
         _ = wait(10) { setup.shows(DaydreamOnboarding.doneTitle) }
         check(setup.shows(DaydreamOnboarding.doneTitle) && !setup.shows("Start Recording"), "upgrade: the review's button is Done (no Start Recording while recording)")
-        check(setup.shows(DaydreamOnboarding.connectTitle) && !setup.all.contains { $0.hasPrefix("Summaries =") }, "upgrade: last page: Connect your AI, summaries on (no row)")
+        check(setup.shows(DaydreamOnboarding.connectTitle) && !setup.all.contains { $0.hasPrefix("Summaries") }, "upgrade: last page: Connect your AI, no summaries row")
         setup.shoot(shots, "whatsnew-3-done")
         chromeAsks = 0
         // fix/sx-all: the Apps save set recording down and started it again, as every save while recording does (the
@@ -306,7 +341,9 @@ final class KeyWindow: NSWindow {
               "upgrade: Done leaves captureText true and browserPages true")
         let choices = model.setupChoicesRead()
         check(choices.typing == .on && choices.chromePages == (ReleaseFeatures.chromePageHistory ? .on : .off), "upgrade: SetupChoices on/on", "\(choices)")
-        check(!ReleaseFeatures.chromePageHistory || chromeAsks == 1, "upgrade: Chrome's Automation question is asked once after Done", "\(chromeAsks)")
+        // chromeask-1005 (d79f26e): the question only ever comes from the press on setup's Chrome row; the after-setup
+        // follow-up and the wait for Chrome to come forward are gone, so Done asks nothing.
+        check(chromeAsks == 0, "upgrade: Done asks no Chrome Automation question (only setup's Chrome row asks)", "\(chromeAsks)")
         check(model.setupLaunch(counting: false) == .none, "upgrade: what's-new never opens by itself again")
         check(MemoryViewModel.refusedCaptureStarts == restartsAfterSave, "upgrade: Done never starts recording",
               "\(MemoryViewModel.refusedCaptureStarts - restartsAfterSave)")
@@ -328,7 +365,6 @@ final class KeyWindow: NSWindow {
             try store.saveSetupChoices(SetupChoices(typing: .off, at: "2026-09-28T00:00:00Z"))
         }
         let setup = Setup(model)
-        setup.pressReturn()
         _ = wait(20) { setup.onApps }
         let apps = setup.switches
         check(apps.count == 2 && apps[0].state == .off && apps[1].state == .on, "explicit: SetupChoices typing .off shows typing OFF (Chrome still ON)",
@@ -340,16 +376,19 @@ final class KeyWindow: NSWindow {
         setDefaults(.fresh)
         let model = try makeModel("close-mid-download")
         let setup = Setup(model)
-        setup.pressReturn()
         setPhase(model, downloading)
         setup.close()
-        check(SummaryControls.calls == ["local"], "close: closing setup mid-download leaves summaries on this Mac chosen (never turned off)", "\(SummaryControls.calls)")
+        check(SummaryControls.calls == ["default-local"], "close: closing setup mid-download leaves summaries on this Mac chosen (never turned off)", "\(SummaryControls.calls)")
         setPhase(model, nil)
     }
 
     /// Settings › Summarizer in each state, and the Settings overview's Summaries row during a download (renders only,
     /// with DD_SETUP_SHOTS): the real Settings sheet (`MemorySettings(model:)`), the state stood in.
     @MainActor static func settingsRenders() throws {
+        // A fresh install's defaults: the renders are about Settings, not a launch. Left on the last scenario's finished
+        // setup, the model wants recording at launch, and with every start refused (check build) the permission watch's
+        // comeback start tried again on each tick while a sheet was open (7 counted starts, none of them a scenario's).
+        setDefaults(.fresh)
         let model = try makeModel("settings")
         func sheet(_ section: String, _ name: String, height: CGFloat = 560, inspect: ((NSView) -> Void)? = nil) {
             model.settingsSection = section
@@ -411,8 +450,8 @@ final class KeyWindow: NSWindow {
     }
 
     /// fix/bugs7: an upgrade whose OpenRouter switch was on. At launch the writer says Checking until the cloud is back on,
-    /// and what's-new opens meanwhile: once the cloud is on, the page shows the OpenRouter row and Continue keeps it (it
-    /// never turns OpenRouter off for summaries on this Mac and a 2.7 GB download).
+    /// and what's-new opens meanwhile: it never asks for summaries on this Mac (no switch away from OpenRouter, no 2.7 GB
+    /// download), and the last page shows no summaries row once OpenRouter is on.
     @MainActor static func cloudResuming() throws {
         setDefaults(.finishedBeforeV2)
         let model = try makeModel("cloud-resuming", prepare: olderBuild)
@@ -422,13 +461,34 @@ final class KeyWindow: NSWindow {
         defer { model.recordingForChecks = nil }
         setPhase(model, .checking)
         let setup = Setup(model)
-        check(setup.shows(DaydreamOnboarding.whatsNewTitle), "cloud resuming: what's-new opens on Summaries while the writer checks", setup.all.prefix(8).joined(separator: " | "))
+        _ = wait(20) { setup.onApps }
+        check(setup.shows(DaydreamOnboarding.whatsNewTitle) && setup.drawn?.page == .apps, "cloud resuming: what's-new opens on Apps while the writer checks",
+              setup.all.prefix(8).joined(separator: " | "))
         setPhase(model, .on(.cloud))
-        setup.settle(0.5)
-        check(setup.switches.count == 2 && setup.switches[1].state == .on, "cloud resuming: once OpenRouter is back on, its row is the one on",
-              "\(setup.switches.map(\.state.rawValue))")
         setup.pressReturn()
-        check(SummaryControls.calls.isEmpty && setup.drawn?.page == .apps, "cloud resuming: Continue keeps OpenRouter on (no switch to this Mac, no download)",
+        _ = wait(10) { setup.shows(DaydreamOnboarding.connectTitle) }
+        check(SummaryControls.calls.isEmpty && !setup.all.contains { $0.hasPrefix("Summaries") },
+              "cloud resuming: OpenRouter stays on (no switch to this Mac, no download, no summaries row)", "\(SummaryControls.calls) \(setup.all.joined(separator: " | "))")
+        // The Apps save while recording sets recording down and starts it again once (the check build refuses and counts it).
+        check(MemoryViewModel.refusedCaptureStarts <= 1, "cloud resuming: the Apps save resumes recording at most once", "\(MemoryViewModel.refusedCaptureStarts)")
+        MemoryViewModel.refusedCaptureStarts = 0
+        setup.close()
+        setPhase(model, nil)
+    }
+
+    /// claude/setup-local-summaries: setup opened again after it was finished (File › Set Up DayDream…) changes nothing
+    /// about summaries: an earlier choice (off, too) is kept.
+    @MainActor static func finishedSetupAgain() throws {
+        setDefaults(.finishedBeforeV2)
+        UserDefaults.standard.set(DaydreamSetupVersion.current, forKey: DaydreamSetupVersion.key)
+        defer { setDefaults(.fresh) }
+        let model = try makeModel("finished-again")
+        DaydreamOnboarding.qualifiesForChecks = true
+        defer { DaydreamOnboarding.qualifiesForChecks = nil }
+        setPhase(model, .off)
+        let setup = Setup(model)
+        _ = wait(20) { setup.onApps }
+        check(setup.drawn?.page == .apps && SummaryControls.calls.isEmpty, "finished: setup opened again never asks for the default (summaries off stays off)",
               "\(SummaryControls.calls)")
         setup.close()
         setPhase(model, nil)
@@ -437,83 +497,31 @@ final class KeyWindow: NSWindow {
     @MainActor static func cloudKey() throws {
         setDefaults(.fresh)
         let model = try makeModel("cloud-key")
-        DaydreamOnboarding.qualifiesForChecks = true
-        let setup = Setup(model)
-        setup.switches[1].performClick(nil)
-        setup.settle(0.5)
-        check(setup.switches.map(\.state) == [.off, .on] && views(NSSecureTextField.self, in: setup.host).count == 1,
-              "cloud: the OpenRouter switch turns this Mac off and shows the key field")
-        setup.switches[0].performClick(nil)
-        setup.settle(0.5)
-        check(setup.switches.map(\.state) == [.on, .off] && views(NSSecureTextField.self, in: setup.host).isEmpty,
-              "cloud: …and this Mac's switch turns the OpenRouter row off again (one at a time)")
-        setup.close()
-        // A Mac that can't run the model (Intel, or under 8 GB): the OpenRouter row is the default, its key field open.
-        // (Switches drawn in their first state: a switch's knob animation never runs offscreen.)
+        // A Mac that can't run the model (Intel, or under 8 GB): setup asks the writer anyway (it says no), and never shows a
+        // key field, and the last page says nothing about summaries (Settings › Summaries has the switches).
         DaydreamOnboarding.qualifiesForChecks = false
         defer { DaydreamOnboarding.qualifiesForChecks = nil }
-        let first = Setup(model)
-        check(first.switches.map(\.state) == [.off, .on] && views(NSSecureTextField.self, in: first.host).count == 1,
-              "cloud: on a Mac that can't run the model, the OpenRouter row is the default")
-        check(CloudSummariesText.line == "From now on, window titles, page titles and what you type go to OpenRouter. Zero-retention hosts requested.",
-              "cloud: its one honest line (typed words are sent; zero-retention hosts requested)")
-        first.shoot(shots, "02-cloud-key-field")
-        // fix/sx-all round 1: the switch on with an empty key is one state (the key field is the question): Continue
-        // does nothing until a key is pasted or the switch is turned off. Before, it moved on and the review said Off.
-        first.pressReturn()
-        first.settle(0.5)
-        check(SummaryControls.calls.isEmpty && first.drawn?.page != .apps && first.switches.map(\.state) == [.off, .on],
-              "cloud: Continue with the switch on and an empty key sends nothing and stays on the key", "\(SummaryControls.calls) \(String(describing: first.drawn?.page))")
-        first.switches[1].performClick(nil)
-        first.settle(0.5)
-        first.pressReturn()
-        _ = wait(20) { first.onApps }
-        check(SummaryControls.calls.isEmpty && first.onApps, "cloud: with the switch turned off, Continue sends nothing and moves on", "\(SummaryControls.calls)")
-        first.close()
-        let again = Setup(model)
-        again.typeKey("sk-or-wrong")
-        SummaryControls.cloudAnswer = .cloudKey
-        again.pressReturn()
-        _ = wait(5) { again.shows(SummaryProblem.cloudKey.line) }
-        check(SummaryControls.calls == ["cloud:11"], "cloud: Continue tries the pasted key", "\(SummaryControls.calls)")
-        check(again.shows("Set up summaries") && again.all.contains { $0.contains("OpenRouter didn't accept this key.") } && again.shows("Change Key"),
-              "cloud: a wrong key shows 'OpenRouter didn't accept this key.' with one Change Key button, and the page stays", again.all.joined(separator: " | "))
-        check(!SummaryControls.calls.contains("local"), "cloud: summaries are not turned on")
-        again.shoot(shots, "03-cloud-key-error")
-        again.close()
-        // The last page with no key (the OpenRouter switch turned off): Off with Add Key.
+        SummaryControls.defaultAnswer = .unavailable
+        defer { SummaryControls.defaultAnswer = .started }
+        setPhase(model, .off)
         let review = Setup(model)
-        review.switches[1].performClick(nil)
-        review.settle(0.5)
-        review.pressReturn()
         _ = wait(20) { review.onApps }
+        check(views(NSSecureTextField.self, in: review.host).isEmpty, "cloud: setup has no key field on a Mac that can't run the model")
         review.pressReturn()
         _ = wait(10) { review.shows(DaydreamOnboarding.connectTitle) }
-        check(review.shows("Summaries = Off") && review.shows(DaydreamOnboarding.addKeyTitle),
-              "cloud: no key: the last page says Summaries Off with one Add Key button", review.all.joined(separator: " | "))
-        review.shoot(shots, "07-review-off-add-key")
+        let offPixels = pixels(review.host)
+        setPhase(model, .failed(.downloadStopped))
+        review.settle(0.4)
+        check(review.drawn?.page == .review && offPixels != nil && pixels(review.host) == offPixels
+              && !review.all.contains { $0.hasPrefix("Summaries") || $0.contains("Add Key") || $0.contains("Turn On") },
+              "cloud: the last page has no Summaries row (no Add Key, no Turn On): the same page whatever summaries do")
+        setPhase(model, .off)
+        check(!SummaryControls.calls.contains("local") && !SummaryControls.calls.contains(where: { $0.hasPrefix("cloud") }),
+              "cloud: nothing is turned on", "\(SummaryControls.calls)")
+        review.shoot(shots, "07-review-off")
         review.close()
-        // fix/sx-all round 2: OpenRouter chosen with a saved key (after an update, or while the key is checked at launch):
-        // setup starts on the OpenRouter row, the field says it uses the saved key, and Continue tries that key.
-        check(DaydreamOnboarding.initialChoice(phase: .off, localOffered: true, qualifies: true, cloudChosen: true) == .cloud
-              && DaydreamOnboarding.initialChoice(phase: .checking, localOffered: true, qualifies: true, cloudChosen: true) == .cloud
-              && DaydreamOnboarding.initialChoice(phase: .off, localOffered: true, qualifies: true, cloudChosen: false) == .local
-              && DaydreamOnboarding.initialChoice(phase: .on(.local), localOffered: true, qualifies: true, cloudChosen: true) == .local,
-              "cloud: a saved OpenRouter choice starts setup on the OpenRouter row (unless this Mac's summaries are on now)")
-        DaydreamOnboarding.qualifiesForChecks = true
-        DaydreamOnboarding.cloudChosenForChecks = true
-        SummaryControls.phaseForChecks = .checking
-        defer { DaydreamOnboarding.cloudChosenForChecks = nil; SummaryControls.phaseForChecks = nil }
-        SummaryControls.calls = []; SummaryControls.cloudAnswer = nil
-        let kept = Setup(model)
-        let field = views(NSSecureTextField.self, in: kept.host).first
-        check(kept.switches.map(\.state) == [.off, .on] && field?.placeholderString == CloudSummariesText.savedKeyPlaceholder,
-              "cloud: with a saved key, setup starts with the OpenRouter row on and the field says Saved key", "\(kept.switches.map(\.state)) \(field?.placeholderString ?? "no field")")
-        check(!kept.shows(SummaryPhase.checking.line ?? "Checking the model"), "cloud: the key's check at launch is never drawn as this Mac's model check", kept.all.joined(separator: " | "))
-        kept.shoot(shots, "02b-cloud-saved-key")
-        kept.pressReturn()
-        _ = wait(10) { kept.onApps }
-        check(SummaryControls.calls == ["cloud:0"] && kept.onApps, "cloud: Continue with the field empty tries the saved key and moves on", "\(SummaryControls.calls)")
-        kept.close()
+        check(CloudSummariesText.line == "From now on, window titles, page titles and what you type go to OpenRouter. Zero-retention hosts requested.",
+              "cloud: Settings' OpenRouter row keeps its one honest line (typed words are sent; zero-retention hosts requested)")
+        setPhase(model, nil)
     }
 }

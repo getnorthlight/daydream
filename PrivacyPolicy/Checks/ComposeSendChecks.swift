@@ -4,7 +4,8 @@ import PrivacyPolicy
 /// compose-send/v1: the generic compose-and-send model over every surface. Synthetic metadata and fictional text only.
 enum ComposeSendChecks {
     static var passed=0
-    static func pass(_ ok:Bool,_ label:String) {if !ok {fatalError("Compose send check failed: "+label)};passed+=1;print("PASS compose-send: "+label)}
+    static var failed=0
+    static func pass(_ ok:Bool,_ label:String) {if !ok {print("FAIL compose-send: "+label);failed+=1;return};passed+=1;print("PASS compose-send: "+label)}
     static func line(_ surface:String,field:String="message",send:String?="detected",sendBy:String?="return",control:String?=nil,to:String?=nil,
                      _ d:ComposeDestination = .init(),_ c:ComposeContext = .init()) -> String {
         ComposeSend.line(ComposeSend.outcome(surface:surface,field:field,send:send,sendBy:sendBy,sendControl:control,to:to,destination:d,context:c))

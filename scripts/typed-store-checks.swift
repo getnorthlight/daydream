@@ -2,16 +2,24 @@ import Foundation
 import CryptoKit
 import PrivacyPolicy
 @testable import MemoryCore
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 /// Safe typing B (vault slice): crypto, raw SQLite rows and raw file bytes.
 /// In-memory key stores only: no Keychain, no app, no capture, no network.
 @main struct TypedStoreChecks {
     static var count = 0
-    static func check(_ value: Bool, _ label: String) { precondition(value, "FAILED: " + label); count += 1; print("PASS " + label) }
-    static func rejects(_ label: String, _ work: () throws -> Void) { do { try work(); fatalError("FAILED: " + label) } catch { check(true, label) } }
+    static func check(_ value: Bool, _ label: String) { if !(value) { ddFail(label); return }; count += 1; print("PASS " + label) }
+    static func rejects(_ label: String, _ work: () throws -> Void) { do { try work(); ddFail(label + " (was accepted)") } catch { check(true, label) } }
     /// Refused for the stated reason (so a refusal for any other reason can't pass).
     static func rejects(_ label: String, saying: String, _ work: () throws -> Void) {
-        do { try work(); fatalError("FAILED: " + label) } catch { let ok = String(describing: error).contains(saying); check(ok, ok ? label : label + " (refused for another reason: \(error))") }
+        do { try work(); ddFail(label + " (was accepted)") } catch { let ok = String(describing: error).contains(saying); check(ok, ok ? label : label + " (refused for another reason: \(error))") }
     }
     static func openFails(_ vault: TypedTextVault, _ sealed: Data, _ id: String, _ epoch: String) -> Bool {
         do { _ = try vault.open(sealed, id: id, epoch: epoch); return false } catch { return (error as? TypedTextError) == .openFailed }
@@ -32,6 +40,7 @@ import PrivacyPolicy
     }
 
     static func main() throws {
+        ddReportAtExit()
         setbuf(stdout, nil)
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("typed-store-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)

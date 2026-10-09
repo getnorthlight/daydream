@@ -21,6 +21,19 @@ import SwiftUI
 import MemoryUI
 import MemoryCore
 
+/// rc-018 RC3: a check window that stays off every screen, so nothing this check shows reaches the person's screen.
+/// AppKit moves a titled window back onto a screen as it is ordered in (constrainFrameRect), and macOS 26 already does in
+/// `init` (a window made at -4000 came up at 480,160): both are undone here.
+final class OffscreenCheckWindow: NSWindow {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
+    override init(contentRect: NSRect, styleMask: NSWindow.StyleMask, backing: NSWindow.BackingStoreType, defer flag: Bool) {
+        super.init(contentRect: contentRect, styleMask: styleMask, backing: backing, defer: flag)
+        setFrameOrigin(contentRect.minX <= -1000 && contentRect.minY <= -1000 ? contentRect.origin : NSPoint(x: -5000, y: -5000))
+    }
+    /// Off every screen now.
+    var offEveryScreen: Bool { !NSScreen.screens.contains { $0.frame.intersects(frame) } }
+}
+
 final class LoopApp: NSApplication {
     static var reported: [String] = []
     override func reportException(_ exception: NSException) {
@@ -149,7 +162,7 @@ final class LoopApp: NSApplication {
     static func window(_ b: ActivityBrowser, _ p: CapturePresentation, width: CGFloat) -> (NSWindow, NSHostingController<AnyView>) {
         let controller = NSHostingController(rootView: AnyView(MemoryShell(browser: b, state: p, actions: CaptureActions(), chrome: .windowToolbar)))
         controller.sceneBridgingOptions = [.toolbars, .title]
-        let w = NSWindow(contentRect: NSRect(x: -4000, y: -3000, width: width, height: 720),
+        let w = OffscreenCheckWindow(contentRect: NSRect(x: -4000, y: -3000, width: width, height: 720),
                          styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         w.isReleasedWhenClosed = false
         w.toolbarStyle = .unified
@@ -158,6 +171,7 @@ final class LoopApp: NSApplication {
         w.setContentSize(NSSize(width: width, height: 720))
         w.setFrameOrigin(NSPoint(x: -4000, y: -3000))
         w.orderFrontRegardless()
+        check(w.offEveryScreen, "rc-018 RC3: the check's window stays off every screen", "\(w.frame)")
         return (w, controller)
     }
 

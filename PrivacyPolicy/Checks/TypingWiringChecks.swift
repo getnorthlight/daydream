@@ -8,7 +8,7 @@ import PrivacyPolicy
 /// for a terminal through `promptLatchApps`.
 enum TypingWiringChecks {
     static var passed = 0
-    static func pass(_ ok: Bool, _ label: String) { require(ok, "wiring: " + label); passed += 1; print("PASS wiring: " + label) }
+    static func pass(_ ok: Bool, _ label: String) { require(ok, "wiring: " + label); if ok { passed += 1; print("PASS wiring: " + label) } }
     static let terminal = TypingHarness.Field(bundle: "com.apple.TextEdit", window: "term", id: "tty1", role: "AXTextArea", place: "sam — zsh — 80×24")
     static func terminalHarness() -> TypingHarness {
         let h = TypingHarness(promptLatchApps: { $0 == "com.apple.TextEdit" }); h.focus = terminal; return h

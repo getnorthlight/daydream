@@ -7,6 +7,14 @@
 import Foundation
 import Darwin
 @testable import MemoryCore
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 final class MemoryDefaults: DefaultsStore {
     var values: [String: Any] = [:]
@@ -17,7 +25,7 @@ final class MemoryDefaults: DefaultsStore {
 
 @main struct DataHomeMigrationChecks {
     static var count = 0
-    static func check(_ value: Bool, _ name: String) { precondition(value, name); count += 1; print("PASS " + name) }
+    static func check(_ value: Bool, _ name: String) { if !(value) { ddFail(name); return }; count += 1; print("PASS " + name) }
     static let fm = FileManager.default
 
     static func scratch(_ root: URL, _ name: String) throws -> URL {
@@ -34,6 +42,7 @@ final class MemoryDefaults: DefaultsStore {
     static func deferred(_ outcome: DataHomeMigration.Outcome) -> Bool { if case .deferred = outcome { return true }; return false }
 
     static func main() throws {
+        ddReportAtExit()
         let root = fm.temporaryDirectory.appendingPathComponent("data-home-migration-" + UUID().uuidString, isDirectory: true)
         try fm.createDirectory(at: root, withIntermediateDirectories: false)
         defer { try? fm.removeItem(at: root) }

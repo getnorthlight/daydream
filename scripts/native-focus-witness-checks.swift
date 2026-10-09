@@ -1,10 +1,19 @@
 import Foundation
 import PrivacyPolicy
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 @main struct NativeFocusChecks {
     static func main() {
+        ddReportAtExit()
         var count=0
-        func check(_ value:Bool,_ label:String) {precondition(value,label);count+=1;print("PASS "+label)}
+        func check(_ value:Bool,_ label:String) {if !(value) { ddFail(label); return };count+=1;print("PASS "+label)}
         final class Fake {
             var time:UInt64=1_000_000_000,clockCalls=0,delay:UInt64=0
             var permitted=true,identity:String?="signed-native-process-1",bundle="com.apple.TextEdit"
@@ -159,7 +168,7 @@ import PrivacyPolicy
 /// a synthetic cost benchmark. Fake AX trees only.
 enum WebContentChecks {
     static var count=0
-    static func check(_ value:Bool,_ label:String) {precondition(value,label);count+=1;print("PASS web: "+label)}
+    static func check(_ value:Bool,_ label:String) {if !(value) { ddFail(label); return };count+=1;print("PASS web: "+label)}
     /// The owner build's web-content apps (the public build has none).
     static let owner:Set<String>=["com.anthropic.claudefordesktop","com.openai.codex","com.apple.mail"]
     /// An Electron-like tree: 1 window, 2 group, 3 web area, then `depth`
@@ -434,8 +443,32 @@ enum WebContentChecks {
         let remote=Tree(url:"https://example.com/newsletter");remote.focused=3;remote.editable[3]=true
         check(read(remote,WebContentFocusWitness<Int>(),bundle:"com.apple.mail")==nil,"Mail: a web area with a web URL is refused")
 
-        manualSwitch();enhancedSwitch();keyPanels();benchmark()
+        manualSwitch();enhancedSwitch();keyPanels();benchmark();threadIdentity()
         return count
+    }
+
+    /// What was native-web-thread-identity-regression: in one editor of an owned web-content app, moving to another
+    /// thread (claude.ai/chat/a -> /chat/b) must change the capture identity, so typing in the new thread never joins
+    /// the old one's run. A foreign host is still refused. One fixed tree; only the URL changes. Owner build only (the
+    /// public build has no web-content apps, so it refuses the baseline): the step is owner-native-witness.
+    static func threadIdentity() {
+        var url = "https://claude.ai/chat/qa-thread-a"
+        let base=NativeFocusAccess<Int>(now:{1},ready:{true},identity:{"qa-process-23"},focusedApplication:{23},window:{0},focus:{2},owner:{_ in 23},role:{$0==0 ? "AXWindow" : ($0==1 ? "AXWebArea" : "AXTextArea")},subrole:{_ in ""},parent:{$0==2 ? 1 : ($0==1 ? 0 : nil)},equal:{$0 == $1})
+        let a=WebContentAccess<Int>(base:base,editable:{_ in true},url:{_ in .some(url)},label:{_ in ""})
+        let witness=WebContentFocusWitness<Int>()
+        let first=witness.read(pid:23,bundle:"com.anthropic.claudefordesktop",generation:1,policyVersion:1,access:a)
+        let same=witness.read(pid:23,bundle:"com.anthropic.claudefordesktop",generation:1,policyVersion:1,access:a)
+        check(first != nil && same != nil,"thread identity: the owned page is proved (fixture baseline)")
+        guard let first,let same else {return}
+        check(first.windowID==same.windowID && first.focusID==same.focusID,"thread identity: the same page keeps its identity")
+        url="https://claude.ai/chat/qa-thread-b"
+        let switched=witness.read(pid:23,bundle:"com.anthropic.claudefordesktop",generation:1,policyVersion:1,access:a)
+        check(switched != nil,"thread identity: the other thread on the same host is proved")
+        url="https://foreign.example/chat"
+        check(witness.read(pid:23,bundle:"com.anthropic.claudefordesktop",generation:1,policyVersion:1,access:a)==nil,"thread identity: a foreign host is refused")
+        guard let switched else {return}
+        let unchanged=first.windowID==switched.windowID && first.focusID==switched.focusID && switched.url.isEmpty && switched.documentID.isEmpty
+        check(!unchanged,"thread identity: another thread in the same editor is a new capture identity")
     }
     static func manualSwitch() {
         let s=ManualAccessibilitySwitch()

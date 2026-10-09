@@ -11,11 +11,13 @@ import WriterBackend
     var chooseCloud: (WriterIntegration, String) async -> SummaryProblem?
     var turnOff: (WriterIntegration) -> Void
     var retry: (WriterIntegration) -> Void
+    /// Setup, once past Permissions: summaries on this Mac for someone who never chose (`WriterIntegration.chooseLocalByDefault`).
+    var chooseLocalByDefault: (WriterIntegration, Bool) -> WriterIntegration.DefaultLocal = { $0.chooseLocalByDefault(qualifies: $1) }
 
     static let live = SummaryControls(chooseLocal: { $0.chooseLocal() }, chooseCloud: { await $0.chooseCloud(key: $1) },
                                       turnOff: { $0.turnOff() }, retry: { $0.retry() })
     #if DEVELOPMENT_SOURCE_CHECKS
-    /// The calls the checks made, in order ("local", "cloud:<key length>", "off", "retry").
+    /// The calls the checks made, in order ("local", "cloud:<key length>", "off", "retry", "default-local").
     static var calls: [String] = []
     /// What `chooseCloud` answers in the checks.
     static var cloudAnswer: SummaryProblem? = nil
@@ -23,7 +25,10 @@ import WriterBackend
     static var phaseForChecks: SummaryPhase? = nil
     static let recording = SummaryControls(chooseLocal: { _ in calls.append("local") },
                                            chooseCloud: { _, key in calls.append("cloud:\(key.count)"); return cloudAnswer },
-                                           turnOff: { _ in calls.append("off") }, retry: { _ in calls.append("retry") })
+                                           turnOff: { _ in calls.append("off") }, retry: { _ in calls.append("retry") },
+                                           chooseLocalByDefault: { _, _ in calls.append("default-local"); return defaultAnswer })
+    /// What `chooseLocalByDefault` answers in the checks.
+    static var defaultAnswer: WriterIntegration.DefaultLocal = .started
     static var current = SummaryControls.recording
     static func phase(_ writer: WriterIntegration) -> SummaryPhase { phaseForChecks ?? writer.phase }
     #else
@@ -136,7 +141,7 @@ struct WriterPreferences:View {
                     VStack(alignment:.leading,spacing:6) {
                         HStack(alignment:.top,spacing:12) {
                             VStack(alignment:.leading,spacing:2) {
-                                Text(DaydreamSummariesContent.localTitle).font(.system(size:14))
+                                Text(DaydreamSummariesText.localTitle).font(.system(size:14))
                                 // fix/sx-all round 3: the line's one-line slot is kept in every state, so the OpenRouter
                                 // switch below never moves when "Checking the model" or "Downloading..." comes and goes.
                                 Text(localLine ?? " ").font(.system(size:12)).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
@@ -146,9 +151,9 @@ struct WriterPreferences:View {
                             // fix/sx-all round 2: the fixing button sits on the row, beside the switch, so the rows below
                             // never move when a problem shows.
                             if let localProblem {Button(localProblem.button) {fix(localProblem)}.controlSize(.small)}
-                            Toggle(DaydreamSummariesContent.localTitle,isOn:Binding(get:{localOn},set:{setLocal($0)}))
+                            Toggle(DaydreamSummariesText.localTitle,isOn:Binding(get:{localOn},set:{setLocal($0)}))
                                 .labelsHidden().toggleStyle(.switch).controlSize(.small)
-                                .accessibilityLabel(DaydreamSummariesContent.localTitle)
+                                .accessibilityLabel(DaydreamSummariesText.localTitle)
                         }
                     }.padding(.vertical,6)
                     Divider()

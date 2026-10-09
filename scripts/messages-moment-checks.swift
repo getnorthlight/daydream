@@ -1,6 +1,14 @@
 import Foundation
 import PrivacyPolicy
 @testable import MemoryCore
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 /// B2 regressions: fabricated metadata/words only. No AX, AppKit, recorder,
 /// provider, real history, Keychain, model, network, or send operations.
@@ -10,7 +18,7 @@ import PrivacyPolicy
     static var checks = 0
     static func check(_ value: @autoclosure () throws -> Bool, _ label: String) throws {
         checks += 1
-        guard try value() else { throw MemError.invalid("FAILED: " + label) }
+        guard try value() else { ddFail(label); return }
         print("PASS: " + label)
     }
     static func row(_ id: String, _ seconds: Double, title: String, typed: Bool = false, to: String? = nil, field: String = "message") -> Evidence {
@@ -33,6 +41,7 @@ import PrivacyPolicy
         return (ordered.map { $0.value.map { rows[$0].id } }, ordered.map { result.names[$0.key]! })
     }
     static func main() throws {
+        ddReportAtExit()
         let recipientFree = [row("x", 0, title: "Maya"), row("new", 2, title: "New Message"), row("draft-1", 3, title: "Messages", typed: true, field: "oneLine"), row("draft-2", 4, title: "Messages", typed: true, field: "oneLine")]
         for since: Date? in [nil, .distantPast] {
             let result = try groups(recipientFree, since: since)

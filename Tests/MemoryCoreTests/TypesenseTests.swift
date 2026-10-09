@@ -71,6 +71,8 @@ final class TypesenseTests: XCTestCase {
     func testPrivateConfigAndProjection() throws {
         var consent=try store.policy(); consent.captureText=true; consent.typedConsentVersion=1
         try store.updatePolicy(consent,now:now)
+        // Typed words are sealed at rest (374ba2d): a typed row saves only with a ready vault (in memory here).
+        try store.attachVault(TypedTextVault(keyStore:InMemoryTypedKeyStore()),now:now); try store.setUpTypedVault(now:now); _=try store.acceptSafeTyping(now:now)
         try seed(); try enable()
         XCTAssertEqual(try store.read("garden",now:now)?.evidence.text,"never index typed data")
         XCTAssertEqual(try TypesenseConfiguration.load(home:home),config)

@@ -140,6 +140,9 @@ struct DaydreamAppMenuCommands: Commands {
         (window.identifier?.rawValue.hasPrefix(id + "-") ?? false) && (window.isVisible || window.isMiniaturized)
     }
     static func show(_ openWindow: OpenWindowAction) {
+        // rc-018 RC3: the memory window held out of sight (setup unfinished, a background restart) is this one; while
+        // setup is open and unfinished, setup comes forward instead (rule 1, as the Dock does).
+        if SetupFocus.shared.reopen("menu_bar") { return }
         if let window = NSApp.windows.first(where: isMain) {
             if window.isMiniaturized { window.deminiaturize(nil) }
             window.makeKeyAndOrderFront(nil)

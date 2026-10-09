@@ -29,6 +29,19 @@ import SwiftUI
 import Combine
 import MemoryUI
 
+/// rc-018 RC3: a check window that stays off every screen, so nothing this check shows reaches the person's screen.
+/// AppKit moves a titled window back onto a screen as it is ordered in (constrainFrameRect), and macOS 26 already does in
+/// `init` (a window made at -4000 came up at 480,160): both are undone here.
+final class OffscreenCheckWindow: NSWindow {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
+    override init(contentRect: NSRect, styleMask: NSWindow.StyleMask, backing: NSWindow.BackingStoreType, defer flag: Bool) {
+        super.init(contentRect: contentRect, styleMask: styleMask, backing: backing, defer: flag)
+        setFrameOrigin(contentRect.minX <= -1000 && contentRect.minY <= -1000 ? contentRect.origin : NSPoint(x: -5000, y: -5000))
+    }
+    /// Off every screen now.
+    var offEveryScreen: Bool { !NSScreen.screens.contains { $0.frame.intersects(frame) } }
+}
+
 @MainActor final class Calls {
     var pauses: [Int] = [], resumes = 0, stops = 0, settings = 0, systemSettings: [PermissionKind?] = [], checks = 0
     var sections: [String] = [], mains = 0, recalls = 0, quits = 0, retries = 0
@@ -122,9 +135,10 @@ import MemoryUI
     static let window: NSWindow = {
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.accessory)
-        let w = NSWindow(contentRect: NSRect(x: -4000, y: -4000, width: 1172, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
+        let w = OffscreenCheckWindow(contentRect: NSRect(x: -4000, y: -4000, width: 1172, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
         w.acceptsMouseMovedEvents = true
         w.orderFrontRegardless()
+        check(w.offEveryScreen, "rc-018 RC3: the check's window stays off every screen \(w.frame)")
         return w
     }()
 
@@ -528,7 +542,14 @@ import MemoryUI
             let opened = !popoverWindows().isEmpty
             if startShown && !chevron { check(!opened, "row \(c.rawValue): a plain Off has no popover to open") }
             if c == .recording && !opened { print("LIMIT: the popover window did not appear offscreen; opening is checked for callbacks only") }
-            check(calls.total == 0, "row \(c.rawValue): opening the popover calls nothing", calls.summary)
+            if !startShown, let next = p.state.nextPermission {
+                // perm-1004 (72d5565): Needs Permission names the permission, and one press opens its pane (no popover).
+                check(!opened && calls.total == 1 && calls.systemSettings == [next],
+                      "row \(c.rawValue): one press opens System Settings at the missing permission, no popover", calls.summary)
+                calls.reset()
+            } else {
+                check(calls.total == 0, "row \(c.rawValue): opening the popover calls nothing", calls.summary)
+            }
             if opened, c == .recording, let pop = popoverWindows().first, let content = pop.contentView {
                 // One press inside: exactly one capture call, and the popover closes.
                 let sweep = clickSweep(content, calls, step: 5, in: pop, stopAfter: 1)
@@ -723,8 +744,8 @@ import MemoryUI
         // ux/declutter: the Start pill's chevron only when the popover has an issue to say.
         check(all.contains { $0.name == "DaydreamToolbar.swift" && $0.text.contains("more: ToolbarLayout.startHasMore(state) ? { open.toggle() } : nil")
                              && $0.text.contains("!(state.issue?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)")
-                             && $0.text.contains("StartRecordingButton.width(more: startHasMore(state))") },
-              "the toolbar draws the Start pill's chevron only with an issue, and budgets the pill as drawn")
+                             && $0.text.contains("width: ToolbarLayout.statusSlotWidth(compact: compact)") },
+              "the toolbar draws the Start pill's chevron only with an issue, in the control's one fixed slot")
         equal(all.filter { $0.text.contains("accessibilityIdentifier(\"toolbar-search\")") }.map(\.name), ["DaydreamToolbar.swift"], "toolbar-search identifier")
         // Launch build (perf audit): while recording nothing redraws the capsule. Only a timed pause runs its clock.
         let capsule = read(dir + "StatusCapsule.swift")
@@ -763,7 +784,7 @@ import MemoryUI
             .environment(\.daydreamNow, now).environment(\.daydreamStatic, true)
         let controller = NSHostingController(rootView: AnyView(shell))
         controller.sceneBridgingOptions = [.toolbars, .title]
-        let w = NSWindow(contentRect: NSRect(x: -4000, y: -3000, width: width, height: 400),
+        let w = OffscreenCheckWindow(contentRect: NSRect(x: -4000, y: -3000, width: width, height: 400),
                          styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         w.isReleasedWhenClosed = false
         w.toolbarStyle = .unified
@@ -964,14 +985,15 @@ import MemoryUI
     }
     static func w(isDark v: NSView) -> Bool { v.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua }
 
-    /// The capsule's glyph end (its first 40 pt, the item's full height) as sRGB bytes, and the halo's pixel count in it
+    /// The capsule (the item's full width and height: since perm-1004 the label and dot sit centred in a slot wide enough for
+    /// "Turn on Input Monitoring", past the first 40 pt) as sRGB bytes, and the halo's pixel count in it
     /// (soft red around the core); nil when unreadable.
     static func glyphPatch(_ theme: NSView, item: CGRect) -> (bytes: [UInt8], halo: Int)? {
         guard let rep = theme.bitmapImageRepForCachingDisplay(in: theme.bounds) else { return nil }
         theme.cacheDisplay(in: theme.bounds, to: rep)
         let scale = CGFloat(rep.pixelsWide) / max(1, theme.bounds.width)
         let top = theme.bounds.height - item.maxY
-        let x0 = max(0, Int(item.minX * scale)), x1 = min(rep.pixelsWide, Int((item.minX + 40) * scale))
+        let x0 = max(0, Int(item.minX * scale)), x1 = min(rep.pixelsWide, Int(item.maxX * scale))
         let y0 = max(0, Int(top * scale)), y1 = min(rep.pixelsHigh, Int((top + item.height) * scale))
         guard x0 < x1, y0 < y1 else { return nil }
         var bytes: [UInt8] = [], halo = 0
@@ -998,7 +1020,7 @@ import MemoryUI
             if arrive { flip.recording = true; flip.ready = false }
             let controller = NSHostingController(rootView: LiveShell(flip: flip, browser: browser(), actions: calls.actions))
             controller.sceneBridgingOptions = [.toolbars, .title]
-            let w = NSWindow(contentRect: NSRect(x: -4000, y: -3000, width: 1000, height: 400),
+            let w = OffscreenCheckWindow(contentRect: NSRect(x: -4000, y: -3000, width: 1000, height: 400),
                              styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
             w.isReleasedWhenClosed = false
             w.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)

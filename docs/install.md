@@ -42,7 +42,7 @@ DayDream puts an icon in the menu bar at the top of your screen. The first time 
 
 ## 4. Turn on the two permissions
 
-![Setup's first page, "Grant DayDream Permissions": cards for Accessibility and Input Monitoring, each with an Open System Settings button.](images/setup-permissions.png)
+![Setup's first page, "Turn on DayDream": cards for Accessibility and Input Monitoring, each with an Open System Settings button.](images/setup-permissions.png)
 
 DayDream needs **Accessibility** and **Input Monitoring** to record. It never shows a macOS prompt for them: you turn them on in System Settings.
 
@@ -55,18 +55,13 @@ macOS applies Input Monitoring only after DayDream reopens. When that's needed, 
 
 Why these two? Accessibility lets DayDream read which app is in front and the window title. Input Monitoring lets it notice clicks, and what you type in the apps and websites typing covers, while typed text is on. It only listens. It can't change or block anything.
 
-## 5. Summaries: set up later
+### Summaries
 
-The next page asks about summaries, short notes about your moments and days. You can skip this: **Summaries on this Mac** starts on (on a Mac that can run it); to skip summaries, turn it off and press **Continue**. Your history is complete without them.
+Summaries are short notes about your moments and days. Setup doesn't ask about them: once both permissions are on, **Summaries on this Mac** turn on by themselves on a Mac that can run them (Apple silicon with 8 GB of memory) when at least 5 GB is free. DayDream downloads the model (2.74 GB) in the background; nothing else changes on the page. Notes are then written on your Mac. With less free space, or on a Mac that can't run them, summaries stay off. Your history is complete without them.
 
-If you want them now, turn one on:
+To turn summaries off, turn them on later, or use your own [OpenRouter](https://openrouter.ai) API key instead (cloud summaries: the line under the switch says what is sent, including words you type and Chrome page titles and sites, never full web addresses; OpenRouter bills your account), go to Settings › Summarizer. The [README](README-details.md#summaries) explains what each one sends.
 
-- **Cloud summaries.** Paste your own [OpenRouter](https://openrouter.ai) API key. The line under the switch says what is sent: your activity, including words you type and Chrome page titles and sites (never full web addresses). OpenRouter bills your account.
-- **Summaries on this Mac.** Notes are written on your Mac. **Continue** downloads the model (2.74 GB) if it isn't on your Mac yet. It needs 8 GB of memory.
-
-The [README](README-details.md#summaries) explains what each one sends.
-
-## 6. Choose the apps to remember
+## 5. Choose the apps to remember
 
 ![Setup's "Apps to remember" page: a list of apps, each with a checkbox, and the Typed text switch.](images/setup-apps.png)
 
@@ -76,17 +71,17 @@ Every app is remembered unless you uncheck it. Uncheck any app you never want re
 
 What you type is encrypted on your Mac, and DayDream deletes the exact words after 7 days unless you choose another time. AI apps you connect can read the words you typed and sent while **Let AI apps see your typed words** is on (on by default; Settings › Connections). With it off, they see only where and about how much you typed, and your summaries. Cloud summaries, if you choose them, get the words to write your notes. Window titles can include words you typed, like an email subject or a shell command. Those are saved, read by AI apps and sent to cloud summaries like any other window title. Anyone typing on this Mac account while it's on is recorded as you. Leave it off if you type passwords or other secrets into normal text boxes.
 
-## 7. Connect your AI and start
+## 6. Connect your AI and start
 
 ![Setup's last page, "Connect your AI", on a Mac without an AI app yet: what DayDream works with, Get Claude, Use another MCP app, and a Start Recording button.](images/setup-review.png)
 
 The last page lists the AI apps on your Mac that DayDream can connect, each with one **Connect** button, the same as Settings › Connections (see [Connect an AI app](../README.md#connect-an-ai-app) in the README). Apps that aren't on your Mac aren't listed. With none, the page says which apps DayDream works with, and links to [Connect an AI app by hand](#connect-an-ai-app-by-hand) for any other MCP app. Connecting is optional: you can connect later in Settings. A connected AI app can read your history and may send it to its own online service.
 
-While summaries are downloading, off or stuck, the page says so with one button. When you're ready, press **Start Recording**. If something still needs doing, such as a permission, the button says so (for example **Allow Permissions**) and takes you to that page. Give it an hour or so of work, then ask your AI what you got done.
+When you're ready, press **Start Recording**. If something still needs doing, such as a permission, the button says so (for example **Allow Permissions**) and takes you to that page. Give it an hour or so of work, then ask your AI what you got done.
 
 The first time you start recording, macOS asks whether DayDream may show notifications. DayDream uses them only to tell you when recording stopped, or didn't start again, without you asking. You can say no; the menu bar panel says why too.
 
-## 8. Use it from the menu bar
+## 7. Use it from the menu bar
 
 ![The menu bar panel while recording: Recording since 8:38 AM with the switch on, Pause, 4 moments remembered today, Search, Open DayDream, Settings and Quit.](images/menu-bar.png)
 

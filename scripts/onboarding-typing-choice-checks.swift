@@ -1,5 +1,13 @@
 import Foundation
 @testable import MemoryCore
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 @main struct OnboardingTypingChoiceChecks {
     static var count = 0
@@ -7,12 +15,13 @@ import Foundation
 
     static func check(_ condition: @autoclosure () throws -> Bool, _ label: String) rethrows {
         let value = try condition()
-        precondition(value, label)
+        if !(value) { ddFail(label); return }
         count += 1
         print("PASS " + label)
     }
 
     static func main() throws {
+        ddReportAtExit()
         setbuf(stdout, nil)
         let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
             .appendingPathComponent("onboarding-typing-synthetic-" + UUID().uuidString)
@@ -110,7 +119,7 @@ import Foundation
         let stalePolicy = try stale.policy()
         do {
             _ = try stale.savePreferences(MemoryPreferences(blockedApps: stalePolicy.blockedApps, nativeTyping: false), expectedRevision: "stale-revision")
-            preconditionFailure("stale save must be rejected")
+            ddFail("stale save must be rejected")
         } catch PreferenceSaveError.revisionConflict {}
         try check(stale.nativeTypingChoicePending(), "revision-conflicted save leaves the first choice pending")
         try check(markerRows(stale) == [[stalePolicy.revision]], "revision-conflicted save preserves its marker")
@@ -118,8 +127,8 @@ import Foundation
         let invalid = try store("invalid-save")
         let invalidPolicy = try invalid.policy()
         do {
-            _ = try invalid.savePreferences(MemoryPreferences(blockedApps: ["invalid app"], nativeTyping: false), expectedRevision: invalidPolicy.revision)
-            preconditionFailure("invalid save must be rejected")
+            _ = try invalid.savePreferences(MemoryPreferences(blockedApps: ["invalid,app"], nativeTyping: false), expectedRevision: invalidPolicy.revision)
+            ddFail("invalid save must be rejected")
         } catch PreferenceSaveError.invalidApps {}
         try check(invalid.nativeTypingChoicePending(), "invalid app choices do not consume first typing choice")
 
@@ -128,7 +137,7 @@ import Foundation
         try failed.exec("CREATE TRIGGER fail_choice_delete BEFORE DELETE ON metadata WHEN OLD.id='native-typing-choice-pending-v1' BEGIN SELECT RAISE(ABORT,'synthetic failure'); END")
         do {
             _ = try failed.savePreferences(MemoryPreferences(blockedApps: failedPolicy.blockedApps, nativeTyping: true), expectedRevision: failedPolicy.revision)
-            preconditionFailure("marker persistence failure must reject save")
+            ddFail("marker persistence failure must reject save")
         } catch PreferenceSaveError.storageUnavailable {}
         try check(failed.nativeTypingChoicePending() && failed.policy() == failedPolicy, "failed marker removal rolls back typed-text consent and revision")
 

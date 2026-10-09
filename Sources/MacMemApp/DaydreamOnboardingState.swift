@@ -1,7 +1,9 @@
 import Foundation
 
+/// claude/setup-local-summaries (owner 10/7): no summaries page. Setup goes Permissions, Apps, Connect; summaries on
+/// this Mac start by themselves once past Permissions for someone who never chose (`WriterIntegration.chooseLocalByDefault`).
 enum DaydreamOnboardingPage: Int, CaseIterable {
-    case permissions, summaries, apps, review
+    case permissions, apps, review
     /// Back: the page before; nil on the first page.
     var previous: DaydreamOnboardingPage? { DaydreamOnboardingPage(rawValue: rawValue - 1) }
 }
@@ -47,12 +49,12 @@ enum DaydreamChromeCard {
 struct DaydreamOnboardingRoute {
     private(set) var page: DaydreamOnboardingPage = .permissions
     private var advancesAfterPermissionGrant = true
-    /// Where the page goes once both permissions are allowed: Summaries on a setup, the last page when Start sent
+    /// Where the page goes once both permissions are allowed: Apps on a setup, the last page when Start sent
     /// someone who already finished setup back for a permission (their choices are already made).
     private let afterPermissions: DaydreamOnboardingPage
 
     /// `advances` false: the page never moves on by itself (the Chrome card for an upgrade, `DaydreamChromeCard`).
-    init(afterPermissions: DaydreamOnboardingPage = .summaries, advances: Bool = true) {
+    init(afterPermissions: DaydreamOnboardingPage = .apps, advances: Bool = true) {
         self.afterPermissions = afterPermissions
         advancesAfterPermissionGrant = advances
     }
@@ -124,9 +126,9 @@ enum DaydreamOnboardingStartError: LocalizedError {
     }
 }
 
-/// Start Recording (owner, 9/28): recording starts first and never waits for summaries. Summaries were chosen on their
-/// own page (Continue turned them on, and a download runs in the background); a problem there shows on the review and
-/// the Today card with its one button, never as a reason recording didn't start.
+/// Start Recording (owner, 9/28): recording starts first and never waits for summaries. Summaries on this Mac started by
+/// themselves after Permissions for a new install (a download runs in the background); a problem there shows on the
+/// review and the Today card with its one button, never as a reason recording didn't start.
 @MainActor struct DaydreamOnboardingStartOperations {
     let validate: () throws -> Void
     let startCapture: () -> Bool
@@ -148,7 +150,7 @@ enum DaydreamOnboardingStartError: LocalizedError {
 }
 
 /// Which setup opens by itself at launch (owner, 9/28). A first setup until it is finished once. After an update from a
-/// test build whose setup was finished before version 2, a short "What's new" (Summaries, Apps, then Done) that opens
+/// test build whose setup was finished before version 2, a short "What's new" (Apps, then Done) that opens
 /// at launch even while recording, until it is finished, at most `whatsNewShows` times in all. Finishing either writes
 /// version 2, so it never opens by itself again.
 enum DaydreamSetupVersion {

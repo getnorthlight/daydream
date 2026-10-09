@@ -5,11 +5,12 @@ import PrivacyPolicy
 /// table over surface x field x seal. Synthetic metadata only; no typed words except the To-field name rule's fixtures.
 enum SendRulesChecks {
     static var passed=0
-    static func pass(_ ok:Bool,_ label:String) {if !ok {fatalError("Send rules check failed: "+label)};passed+=1}
+    static var failed=0
+    static func pass(_ ok:Bool,_ label:String) {if !ok {print("FAIL send rules: "+label);failed+=1;return};passed+=1}
 
     static func run() {
         keyMap();table();surfaces();verifiedSearchContexts();places();memories();messages1003()
-        print("PASS summaries/v3 send rules: \(passed) synthetic cases (K4 table, K5 key map, places, recipient and paste memory).")
+        if failed==0 {print("PASS summaries/v3 send rules: \(passed) synthetic cases (K4 table, K5 key map, places, recipient and paste memory).")}
     }
 
     /// K5: Command-Return -> submitChord, Control-Return -> submitChord, Command-Shift-D -> mailSend,

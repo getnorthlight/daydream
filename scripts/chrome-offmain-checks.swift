@@ -5,6 +5,14 @@ import Carbon
 import HistoryCore
 @testable import MemoryCore
 import PrivacyPolicy
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 // claude/chrome-offmain-1003 (PERF-1003 risk 1): website typing's Chrome join and per-key checks moved off the main
 // thread (`TypingKeyHandoff`, `TypingRouteExecutor`). This replays one synthetic, recorded-shape key stream through the
@@ -170,7 +178,7 @@ struct OffRun {
 
 @main struct ChromeOffMainChecks {
     static var checks = 0
-    static func check(_ condition: Bool, _ name: String) { precondition(condition, name); checks += 1; print("PASS " + name) }
+    static func check(_ condition: Bool, _ name: String) { if !(condition) { ddFail(name); return }; checks += 1; print("PASS " + name) }
 
     /// claude/typing-1004: AppKit's key reading called off the main queue (it traps on macOS 15).
     static var appKitOffMain = 0
@@ -182,6 +190,7 @@ struct OffRun {
     }
 
     static func main() throws {
+        ddReportAtExit()
         setbuf(stdout, nil)
         check(OwnerTyping.enabled, "chrome-offmain: the owner build")
         // claude/crashguard-015: secure input and the frontmost app, off the main queue, are the main queue's last read

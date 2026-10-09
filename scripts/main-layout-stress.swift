@@ -3,6 +3,19 @@ import SwiftUI
 import MemoryUI
 import MemoryCore
 
+/// rc-018 RC3: a check window that stays off every screen, so nothing this check shows reaches the person's screen.
+/// AppKit moves a titled window back onto a screen as it is ordered in (constrainFrameRect), and macOS 26 already does in
+/// `init` (a window made at -4000 came up at 480,160): both are undone here.
+final class OffscreenCheckWindow: NSWindow {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
+    override init(contentRect: NSRect, styleMask: NSWindow.StyleMask, backing: NSWindow.BackingStoreType, defer flag: Bool) {
+        super.init(contentRect: contentRect, styleMask: styleMask, backing: backing, defer: flag)
+        setFrameOrigin(contentRect.minX <= -1000 && contentRect.minY <= -1000 ? contentRect.origin : NSPoint(x: -5000, y: -5000))
+    }
+    /// Off every screen now.
+    var offEveryScreen: Bool { !NSScreen.screens.contains { $0.frame.intersects(frame) } }
+}
+
 @main struct LayoutStress {
     @MainActor static func main() throws {
         _=NSApplication.shared
@@ -76,10 +89,11 @@ import MemoryCore
             }.frame(minWidth:560,maxWidth:.infinity,minHeight:340,maxHeight:.infinity))
         } else {view=AnyView(shell.frame(minWidth:560,minHeight:340))}
         let host=NSHostingView(rootView:view)
-        let window=NSWindow(contentRect:NSRect(x:0,y:0,width:887,height:490),styleMask:[.titled,.resizable],backing:.buffered,defer:false)
+        let window=OffscreenCheckWindow(contentRect:NSRect(x:-5000,y:-5000,width:887,height:490),styleMask:[.titled,.resizable],backing:.buffered,defer:false)
         defer {window.orderOut(nil)}
         window.contentView=host
         window.makeKeyAndOrderFront(nil)
+        if !window.offEveryScreen {FileHandle.standardError.write(Data("FAIL: the stress window reached a screen \(window.frame)\n".utf8));exit(1)}
         log("BEGIN default NSHostingView sizingOptions=\(host.sizingOptions.rawValue)")
         func tick() {RunLoop.main.run(until:Date().addingTimeInterval(0.025));host.layoutSubtreeIfNeeded()}
         tick()

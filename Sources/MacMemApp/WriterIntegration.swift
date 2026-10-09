@@ -83,6 +83,17 @@ struct WriterEnvironment {
     /// loaded only for the day card's line. Checks and `.live` keep the model (true); the app runs on `.app`, which turns
     /// it off unless the hidden default `DayDreamMomentSummaries` is set (`WriterQuiet.swift`, with perf2-1005's quiet rules).
     var momentModel=true
+    /// claude/setup-local-summaries: the free bytes on the volume that holds this folder (nil: unreadable). The app reads
+    /// the disk; checks stand in a number.
+    var freeBytes:@Sendable (URL) -> Int64? = {WriterEnvironment.volumeFreeBytes($0)}
+    static func volumeFreeBytes(_ url:URL) -> Int64? {
+        // The models folder may not exist yet: its nearest existing folder is on the same volume.
+        var folder=url
+        while !FileManager.default.fileExists(atPath:folder.path) && folder.pathComponents.count > 1 {folder=folder.deletingLastPathComponent()}
+        let values=try? folder.resourceValues(forKeys:[.volumeAvailableCapacityForImportantUsageKey,.volumeAvailableCapacityKey])
+        if let important=values?.volumeAvailableCapacityForImportantUsage,important > 0 {return important}
+        return values?.volumeAvailableCapacity.map {Int64($0)}
+    }
     static let live=WriterEnvironment()
 }
 
@@ -413,14 +424,48 @@ private struct AdmissionGuardedInference:LocalInference {
     private var intent:Intent? {
         env.defaults.string(forKey:Self.intentKey).flatMap(Intent.init(rawValue:))
     }
-    private func setIntent(_ value:Intent) {
+    /// `chosen` false: DayDream set it, not the person (a first launch with nothing saved, or a model that went missing):
+    /// whether anyone ever chose (`unchosenKey`) is left as it was.
+    private func setIntent(_ value:Intent,chosen:Bool=true) {
         env.defaults.set(value.rawValue,forKey:Self.intentKey)
+        if chosen {env.defaults.removeObject(forKey:Self.unchosenKey)}
         // claude/recall-1004: a choice turned off while nothing runs ends "starting" for AI apps (provider stays "off").
         if value == .off && provider == "off" {publishProvider()}
     }
     /// fix/sx-all round 2: OpenRouter is the person's choice, with its key saved (set when cloud summaries turned on;
     /// cleared by turning summaries off or deleting the key). Setup starts on the OpenRouter row then.
     var cloudIntended:Bool {intent == .cloud}
+
+    // MARK: claude/setup-local-summaries (owner 10/7)
+    /// Setup has no summaries page: a new install gets summaries on this Mac by default, downloaded silently once setup is
+    /// past Permissions. Set (true) only when a launch found no choice saved at all and the history's ledger had none
+    /// either; any choice made after (on this Mac, OpenRouter, or off, in Settings or anywhere) removes it. So everyone who
+    /// ever chose keeps their choice, and an update from an earlier build (its choice saved) never gets the default.
+    static let unchosenKey="DaydreamWriterIntentUnchosen"
+    /// The automatic download is skipped when the volume holding DayDream's data has less free than this (5 GB, decimal,
+    /// as the 2.7 GB line counts): summaries stay off and Settings › Summarizer turns them on later.
+    static let defaultLocalMinimumFree:Int64=5_000_000_000
+    /// Nobody chose yet: summaries are off because nothing was ever saved.
+    var noChoiceYet:Bool {env.defaults.bool(forKey:Self.unchosenKey) && intent != .local && intent != .cloud}
+    enum DefaultLocal:Equatable {case started,waiting,alreadyChosen,unavailable,lowSpace}
+    /// Asked for while the launch's own check still ran: tried once it finishes (`qualifies` kept from the ask).
+    private var defaultLocalPending:Bool?
+    private var configured=false
+    /// Summaries on this Mac by default, for someone who never chose (`noChoiceYet`): the same one call as turning them
+    /// on (`chooseLocal`: download, check, on), started silently. Nothing happens for a choice already made, a build or
+    /// Mac that can't run the model (`qualifies`: Apple silicon with enough memory), or under 5 GB free.
+    @discardableResult func chooseLocalByDefault(qualifies:Bool) -> DefaultLocal {
+        // The launch's own check decides what was saved (an update's ledger, a download to finish): wait for it.
+        guard configured,scheduler != nil else {defaultLocalPending=qualifies;return .waiting}
+        guard noChoiceYet else {defaultLocalPending=nil;return .alreadyChosen}
+        guard localOffered,qualifies else {defaultLocalPending=nil;return .unavailable}
+        guard setup == nil,!switching else {defaultLocalPending=qualifies;return .waiting}
+        defaultLocalPending=nil
+        guard provider == "off",phase == .off else {return .alreadyChosen}
+        guard let free=env.freeBytes(modelRoot),free >= Self.defaultLocalMinimumFree else {return .lowSpace}
+        chooseLocal()
+        return .started
+    }
 
     /// App interface calls once with the existing store. No second MemoryStore,
     /// direct SQL, UI changes, capture start or install occurs here.
@@ -460,7 +505,7 @@ private struct AdmissionGuardedInference:LocalInference {
                 if intent == nil {
                     if await scheduler!.resumeLocalPreference()==true {setIntent(.local)}
                     else if await scheduler!.resumeCloudPreference() != nil {setIntent(.cloud)}
-                    else {setIntent(.off)}
+                    else {setIntent(.off,chosen:false);env.defaults.set(true,forKey:Self.unchosenKey)}
                     if intent != .off {phase = .checking}
                 }
                 let wantLocal=intent == .local && localOffered
@@ -485,11 +530,11 @@ private struct AdmissionGuardedInference:LocalInference {
                         else {phase = .failed(.modelWontStart);status=Self.writerPending}
                     } else {
                         // No model and no download under way: off, until the person turns it on (which downloads).
-                        setIntent(.off);phase = .off
+                        setIntent(.off,chosen:false);phase = .off
                         status="The model for summaries on this Mac isn't downloaded."
                     }
                 } else {
-                    if intent == .local {setIntent(.off)}
+                    if intent == .local {setIntent(.off,chosen:false)}
                     status=modelOnMac ? "Ready. Summaries are off until you turn them on." : "The model for summaries on this Mac isn't downloaded."
                     if intent != .cloud {phase = .off}
                 }
@@ -501,6 +546,9 @@ private struct AdmissionGuardedInference:LocalInference {
             if provider=="off" && !Task.isCancelled {await resumeCloud()}
             if intent == .cloud && provider=="off" && phase == .checking {phase = .off}
             if resumeDownload && !Task.isCancelled {busy=false;chooseLocal()}
+            configured=true
+            // Setup asked for the default while this check ran.
+            if let qualifies=defaultLocalPending,!Task.isCancelled {busy=false;chooseLocalByDefault(qualifies:qualifies)}
         }
     }
     /// A model file of the right size in one of the model folders. Cheap: the hash is checked when summaries turn on.
@@ -678,7 +726,8 @@ private struct AdmissionGuardedInference:LocalInference {
                 let recent=self.loadTimes.filter {current.timeIntervalSince($0)<3600}
                 let budgetAt=recent.count>=Self.loadsPerHour ? recent.min().map {$0.addingTimeInterval(3600)} : nil
                 var summary=found.nextSummary
-                if !found.summaryDue.isEmpty {summary=current.addingTimeInterval(1)}
+                // claude/int-016: first-note work only; a rewrite the rule made due waits for an ordinary wake.
+                if found.firstNotesDue {summary=current.addingTimeInterval(1)}
                 if let at=summary,let budgetAt {summary=max(at,budgetAt)}
                 let dates=[summary,self.cadenceWakeAt].compactMap {$0}
                 service=dates.min().map {max($0,self.holdUntil)}
@@ -1586,7 +1635,10 @@ private struct AdmissionGuardedInference:LocalInference {
             let afterMarks=await scheduler.writtenMarks()
             let scheduledFound=mode == "local" ? try await source.discoverDay(today,now:env.now(),timezone:zone,closedBy:closing,marks:afterMarks) : found
             let liveAt = !scheduledFound.live.isEmpty && failed == nil && env.now()>=holdUntil ? env.now().addingTimeInterval(1) : scheduledFound.nextLive
-            let summaryAt = !scheduledFound.summaryDue.isEmpty && budget.ok && failed == nil && env.now()>=holdUntil ? env.now().addingTimeInterval(1) : scheduledFound.nextSummary
+            // claude/int-016: a one-second wake is for first-note service only. A closed moment's rewrite that came due
+            // while this pass ran (its 15-minute rule ended during a day-review clause, say) is ordinary work: it waits
+            // for the next ordinary wake, at least 5 minutes after the last (owner-writer-cadence, shipped config).
+            let summaryAt = scheduledFound.firstNotesDue && budget.ok && failed == nil && env.now()>=holdUntil ? env.now().addingTimeInterval(1) : scheduledFound.nextSummary
             refreshBackgroundDecision()
             let catchUpAt = catchUpBacklog && failed == nil ? max(lastCatchUp.addingTimeInterval(Self.catchUpSpacing(power,idle:idle,mode:mode)),budget.at ?? .distantPast) : nil
             scheduleNext(now:now,found:scheduledFound,waiting:!keys.isEmpty && ranNotes<keys.count,background:background,mode:mode,idle:idle,budgetAt:budget.at,overdueAt:Self.overdueDeadline(states,day:today),liveAt:liveAt,summaryAt:summaryAt,catchUpAt:catchUpAt)

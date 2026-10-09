@@ -1,6 +1,14 @@
 import Foundation
 @testable import MemoryCore
 @testable import MemoryUI
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 /// perf-1005 (owner 10/4): a moment's What happened listed fifteen "ChatGPT  chatgpt.com · Clicked" rows at the same
 /// minute. Back-to-back rows of the same app, site and kind (no words of their own) are one row with how many times and
@@ -10,7 +18,7 @@ import Foundation
 @main @MainActor enum WhatHappenedFoldChecks {
     static var checks = 0
     static func require(_ ok: Bool, _ reason: String, _ got: @autoclosure () -> String = "") {
-        guard ok else { FileHandle.standardError.write(Data("FAIL: \(reason) \(got())\n".utf8)); exit(1) }
+        guard ok else { ddFail("\(reason) \(got())"); return }
         checks += 1
     }
     static let tz = TimeZone(identifier: "America/Chicago")!
@@ -76,6 +84,7 @@ import Foundation
     static func show(_ l: [MomentDetailEntry]) -> String { l.map { $0.title + " | " + $0.detail }.joined(separator: " / ") }
 
     static func main() {
+        ddReportAtExit()
         // 1. Fifteen clicks in one minute on one ChatGPT conversation whose link changes (a query the short link hides),
         //    with Chrome rows of no site between some of them (they fold into their neighbours afterwards).
         var actions: [CanonicalAction] = []

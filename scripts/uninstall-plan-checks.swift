@@ -8,10 +8,18 @@
 import Foundation
 import Darwin
 @testable import MemoryCore
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 @main struct UninstallPlanChecks {
     static var count = 0
-    static func check(_ value: Bool, _ name: String) { precondition(value, "FAIL " + name); count += 1; print("PASS " + name) }
+    static func check(_ value: Bool, _ name: String) { if !(value) { ddFail(name); return }; count += 1; print("PASS " + name) }
     static let fm = FileManager.default
 
     // MARK: scratch tree
@@ -136,6 +144,7 @@ import Darwin
     }
 
     static func main() throws {
+        ddReportAtExit()
         // TMPDIR (the suite points it at its own work folder); FileManager.temporaryDirectory ignores it.
         let tmp = ProcessInfo.processInfo.environment["TMPDIR"].map { URL(fileURLWithPath: $0, isDirectory: true) } ?? fm.temporaryDirectory
         let scratch = tmp.appendingPathComponent("uninstall-plan-" + UUID().uuidString, isDirectory: true)

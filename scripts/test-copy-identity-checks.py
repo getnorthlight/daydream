@@ -79,12 +79,17 @@ rewrite = seal.find('plutil -replace CFBundleIdentifier -string "$bundle_id.adho
 sign = seal.find('codesign --force --sign -')
 check(rewrite != -1 and sign != -1 and rewrite < sign, 'the ad-hoc seal renames the bundle ID to <id>.adhoc before signing')
 check("*.adhoc) ;;" in seal and "Refusing: no CFBundleIdentifier" in seal, 'never <id>.adhoc.adhoc; no ID refuses')
-sites = subprocess.run(['git', 'grep', '-nE', '-e', r"--sign[ =]+-( |$|\")|'--sign', '-'|\"--sign\", \"-\"|codesign -s -", '--',
-                        '*.sh', '*.py', '*.swift', ':!scripts/check_*.py', ':!scripts/test-copy-identity-checks.py'],
-                       cwd=ROOT, capture_output=True, text=True)
-lines = [l for l in sites.stdout.splitlines() if l]
-check(sites.returncode in (0, 1) and [l.split(':')[0] for l in lines] == ['scripts/seal-local-app.sh'],
-      'the ad-hoc seal is the only ad-hoc signing site', '\n'.join(lines))
+top = subprocess.run(['git', '-C', str(ROOT), 'rev-parse', '--show-toplevel'], capture_output=True, text=True)
+if top.returncode != 0 or Path(top.stdout.strip()).resolve() != ROOT.resolve():
+    # A `git archive` tree: the scan's file list is git's, so it is skipped by name, never counted as a pass.
+    print('SKIP the ad-hoc seal is the only ad-hoc signing site: %s is not a git checkout (the scan lists tracked files with git grep)' % ROOT)
+else:
+    sites = subprocess.run(['git', 'grep', '-nE', '-e', r"--sign[ =]+-( |$|\")|'--sign', '-'|\"--sign\", \"-\"|codesign -s -", '--',
+                            '*.sh', '*.py', '*.swift', ':!scripts/check_*.py', ':!scripts/test-copy-identity-checks.py'],
+                           cwd=ROOT, capture_output=True, text=True)
+    lines = [l for l in sites.stdout.splitlines() if l]
+    check(sites.returncode in (0, 1) and [l.split(':')[0] for l in lines] == ['scripts/seal-local-app.sh'],
+          'the ad-hoc seal is the only ad-hoc signing site', '\n'.join(lines))
 for name in ['check_dmg.py', 'check_package.py', 'stage-local-ui-update.py', 'preview/build-preview-app.sh']:
     text = (SCRIPTS / name).read_text()
     check('.adhoc' in text, '%s knows the .adhoc ID' % name)

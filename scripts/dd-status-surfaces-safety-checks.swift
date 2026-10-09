@@ -338,13 +338,20 @@ final class SafetyWindow: NSWindow {
             let capsule = capsulePoint(h, p)
             if plainOff {
                 let bounds = h.convert(h.bounds, to: nil)
-                let empty = CGPoint(x: bounds.maxX - 16 - 32 - 8 - NSHostingView(rootView: StartRecordingButton(action: {}, more: nil)).fittingSize.width - 40, y: bounds.maxY - 26)
+                let empty = CGPoint(x: bounds.maxX - 16 - 32 - 8 - StatusCapsule.slotWidth - 40, y: bounds.maxY - 26)
                 clickWindow(empty)
                 check(!wait(0.5) { !popoverWindows().isEmpty }, "shell \(c.rawValue): a plain Off has no status popover to open")
                 check(calls.total == 0, "shell \(c.rawValue): clicking the empty toolbar row calls nothing", calls.summary)
             }
-            let opened = plainOff ? false : { clickWindow(capsule.point); return wait(1.5) { !popoverWindows().isEmpty } }()
-            if !plainOff {
+            // perm-1004 (72d5565): Needs Permission names the missing permission and one press opens its pane, no popover.
+            let permission = plainOff ? nil : p.state.nextPermission
+            let opened = plainOff || permission != nil ? false : { clickWindow(capsule.point); return wait(1.5) { !popoverWindows().isEmpty } }()
+            if permission != nil {
+                clickWindow(capsule.point)
+                check(!wait(0.5) { !popoverWindows().isEmpty } && calls.total == 1 && calls.system == 1,
+                      "shell \(c.rawValue): one press on the capsule opens System Settings at the missing permission, no popover", calls.summary)
+                calls.reset()
+            } else if !plainOff {
                 check(opened, "shell \(c.rawValue): clicking the capsule opens the status popover", "at \(capsule.point) from the \(capsule.source)")
             }
             check(calls.total == 0, "shell \(c.rawValue): opening the status popover calls nothing", calls.summary)

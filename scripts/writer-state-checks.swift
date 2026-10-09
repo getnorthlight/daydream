@@ -113,7 +113,8 @@ actor FakeOpenRouter {
         return Clock(noon)
     }
     @MainActor static func rig(_ name: String, clock: Clock = recentClock(3 * 3600), admission: LocalAdmission? = nil, home reuse: URL? = nil,
-                               suite reuseSuite: String? = nil, keys reuseKeys: TestKeys? = nil, model reuseModel: FakeModel? = nil) async throws -> Rig {
+                               suite reuseSuite: String? = nil, keys reuseKeys: TestKeys? = nil, model reuseModel: FakeModel? = nil,
+                               configuring: ((WriterIntegration) -> Void)? = nil) async throws -> Rig {
         let home = reuse ?? root.appendingPathComponent(name)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let store = try MemoryStore(home: home, writable: true, automaticallySyncSearch: false)
@@ -138,12 +139,15 @@ actor FakeOpenRouter {
         env.now = { clock.now }; env.power = { power.value }; env.idleSeconds = { idle.value }; env.typingSeconds = { typing.value }
         env.defaults = defaults; env.makeRuntime = { _ in model }; env.postDone = { done.value += 1 }; env.automatic = false
         env.unloadSleep = { _ in try await Task.sleep(nanoseconds: 1_000_000_000_000) }
+        // claude/setup-local-summaries: the free space the writer reads (never this Mac's own disk).
+        env.freeBytes = { _ in rigFree.value }
         let fake = files(home)
         var local = admission ?? LocalAdmission(restoreOffline: { _, _ in fake }, checkWithApple: {}, signedBuild: { false })
         if admission == nil { local.download = { _, progress in progress(.downloading(1, 2)); progress(.downloading(2, 2)); return fake } }
         let writer = WriterIntegration(modelRoot: home.appendingPathComponent("Models"), keyStore: keys, send: { try await http.send($0) }, admission: local, environment: env)
         writer.offerLocal = true
         writer.configure(store: store)
+        configuring?(writer)
         for _ in 0..<300 where writer.busy { await sleep(0.02) }
         return Rig(home: home, store: store, writer: writer, model: model, http: http, keys: keys, clock: clock, power: power, idle: idle, done: done, defaults: defaults, suite: suite, typing: typing)
     }
@@ -192,10 +196,101 @@ actor FakeOpenRouter {
         rig.defaults.removePersistentDomain(forName: rig.suite)
     }
 
+    /// claude/setup-local-summaries: the free space every rig's writer reads (plenty unless a scenario sets it).
+    static let rigFree = Box<Int64?>(100_000_000_000)
+
+    /// claude/setup-local-summaries (owner 10/7): setup has no summaries page. A new install (nothing ever saved) gets
+    /// summaries on this Mac by default, started once setup is past Permissions; under 5 GB free it is skipped; a choice
+    /// already made (OpenRouter, on this Mac, or off) is never touched; a Mac or build that can't run the model gets nothing.
+    @MainActor static func defaultLocal() async throws {
+        defer { rigFree.value = 100_000_000_000 }
+        // A new install: nothing saved, so the launch saves off as nobody's choice.
+        let fresh = try await rig("default-fresh")
+        check(fresh.defaults.string(forKey: WriterIntegration.intentKey) == "off" && fresh.defaults.bool(forKey: WriterIntegration.unchosenKey) && fresh.writer.noChoiceYet,
+              "default: a new install's launch saves off as nobody's choice (unchosen)")
+        // Under 5 GB free (one byte short): skipped; summaries stay off and nothing downloads.
+        rigFree.value = WriterIntegration.defaultLocalMinimumFree - 1
+        check(fresh.writer.chooseLocalByDefault(qualifies: true) == .lowSpace, "default: under 5 GB free, the automatic download is skipped")
+        check(fresh.writer.phase == .off && fresh.writer.provider == "off" && !fresh.writer.busy && fresh.defaults.string(forKey: WriterIntegration.intentKey) == "off"
+              && !fresh.defaults.bool(forKey: WriterIntegration.downloadingKey), "default: skipped for space: summaries stay off, nothing downloads", "\(fresh.writer.phase)")
+        rigFree.value = nil
+        check(fresh.writer.chooseLocalByDefault(qualifies: true) == .lowSpace, "default: free space that can't be read is skipped too")
+        // A Mac that can't run the model: nothing starts.
+        rigFree.value = 100_000_000_000
+        check(fresh.writer.chooseLocalByDefault(qualifies: false) == .unavailable && fresh.writer.phase == .off, "default: a Mac that can't run the model starts nothing")
+        // Exactly 5 GB free: the download starts and summaries on this Mac turn on.
+        rigFree.value = WriterIntegration.defaultLocalMinimumFree
+        check(fresh.writer.chooseLocalByDefault(qualifies: true) == .started, "default: 5 GB free (exactly), summaries on this Mac start by themselves")
+        check(fresh.defaults.string(forKey: WriterIntegration.intentKey) == "local" && !fresh.defaults.bool(forKey: WriterIntegration.unchosenKey),
+              "default: once started, it is a choice like any other (local saved, unchosen gone)")
+        for _ in 0..<300 { if case .on(.local) = fresh.writer.phase { break }; await sleep(0.02) }
+        check(fresh.writer.phase == .on(.local), "default: the download finishes and summaries on this Mac are on", "\(fresh.writer.phase)")
+        check(fresh.writer.chooseLocalByDefault(qualifies: true) == .alreadyChosen, "default: asked again, nothing changes")
+        await finish(fresh)
+
+        // Quit & Reopen during setup (Input Monitoring): the relaunch still knows nobody chose.
+        let firstLaunch = try await rig("default-relaunch")
+        let suite = firstLaunch.suite
+        await firstLaunch.writer.shutdown()
+        let relaunched = try await rig("default-relaunch", home: root.appendingPathComponent("default-relaunch"), suite: suite)
+        check(relaunched.writer.noChoiceYet, "default: after a relaunch, a new install is still nobody's choice")
+        check(relaunched.writer.chooseLocalByDefault(qualifies: true) == .started, "default: …and setup starts summaries on this Mac after it")
+        for _ in 0..<300 { if case .on(.local) = relaunched.writer.phase { break }; await sleep(0.02) }
+        await finish(relaunched)
+
+        // Asked while the launch's own check still runs: started once it finishes.
+        var asked: WriterIntegration.DefaultLocal?
+        let early = try await rig("default-early", configuring: { asked = $0.chooseLocalByDefault(qualifies: true) })
+        check(asked == .waiting, "default: asked during the launch's check, it waits", "\(String(describing: asked))")
+        for _ in 0..<300 { if case .on(.local) = early.writer.phase { break }; await sleep(0.02) }
+        check(early.writer.phase == .on(.local) && early.defaults.string(forKey: WriterIntegration.intentKey) == "local",
+              "default: …and starts once the check is done", "\(early.writer.phase)")
+        await finish(early)
+
+        // Turned off by the person (Settings): never turned on again by the default.
+        let off = try await rig("default-off")
+        off.writer.turnOff()
+        check(!off.writer.noChoiceYet && !off.defaults.bool(forKey: WriterIntegration.unchosenKey), "default: turning summaries off is a choice")
+        check(off.writer.chooseLocalByDefault(qualifies: true) == .alreadyChosen && off.writer.phase == .off && off.defaults.string(forKey: WriterIntegration.intentKey) == "off",
+              "default: a person who turned summaries off keeps them off")
+        await finish(off)
+
+        // An earlier build's install that saved off (an update): never the default.
+        let offSuite = "writer-state-\(UUID().uuidString)"
+        UserDefaults(suiteName: offSuite)!.set("off", forKey: WriterIntegration.intentKey)
+        let updated = try await rig("default-updated-off", suite: offSuite)
+        check(!updated.writer.noChoiceYet && updated.writer.chooseLocalByDefault(qualifies: true) == .alreadyChosen && updated.writer.phase == .off,
+              "default: an update whose off was saved before keeps summaries off")
+        await finish(updated)
+
+        // OpenRouter chosen (its key saved): never touched, even with the unchosen mark left over.
+        let cloudSuite = "writer-state-\(UUID().uuidString)"
+        let cloudDefaults = UserDefaults(suiteName: cloudSuite)!
+        cloudDefaults.set("cloud", forKey: WriterIntegration.intentKey)
+        cloudDefaults.set(true, forKey: WriterIntegration.unchosenKey)
+        let cloud = try await rig("default-cloud", suite: cloudSuite)
+        check(cloud.writer.cloudIntended && !cloud.writer.noChoiceYet, "default: OpenRouter chosen is a choice")
+        check(cloud.writer.chooseLocalByDefault(qualifies: true) == .alreadyChosen && cloud.defaults.string(forKey: WriterIntegration.intentKey) == "cloud"
+              && !cloud.defaults.bool(forKey: WriterIntegration.downloadingKey), "default: an OpenRouter user keeps OpenRouter (no switch, no download)")
+        await finish(cloud)
+
+        // Summaries on this Mac already on: kept as they are (nothing restarts or downloads again).
+        let localRig = try await rig("default-on")
+        try await on(localRig)
+        check(localRig.writer.chooseLocalByDefault(qualifies: true) == .alreadyChosen && localRig.writer.phase == .on(.local),
+              "default: summaries on this Mac already on are kept", "\(localRig.writer.phase)")
+        await finish(localRig)
+    }
+
     @MainActor static func main() async {
         setvbuf(stdout, nil, _IOLBF, 0)
-        let base = ProcessInfo.processInfo.environment["STATE_CHECK_ROOT"].map { URL(fileURLWithPath: $0, isDirectory: true) }
-            ?? FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
+        // Resolved (realpath): the model files are opened component by component with O_NOFOLLOW (BoundedRuntimeFile),
+        // as the app opens them under Application Support, so a root given as /var/tmp/... (a symlink to
+        // /private/var/tmp) refused every model file ("didn't pass its check"). Either spelling now works.
+        let given = ProcessInfo.processInfo.environment["STATE_CHECK_ROOT"] ?? NSTemporaryDirectory()
+        var resolved = given
+        if let real = realpath(given, nil) { resolved = String(cString: real); free(real) }
+        let base = URL(fileURLWithPath: resolved, isDirectory: true)
         root = base.appendingPathComponent("writer-state-" + UUID().uuidString)
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: root) }
@@ -220,6 +315,7 @@ actor FakeOpenRouter {
             ("past rewrite cooldown", catchUpRewriteCooldown), ("empty catch-up quiet", catchUpEmptyQuiet),
             ("catch-up beside today's rewrites", catchUpBesideTodayRewrites), ("catch-up never while typing", catchUpNotWhileTyping),
             ("writer version refresh", writerVersionRefresh),
+            ("summaries on this Mac by default for a new install", defaultLocal),
         ]
         let focused = Set(["writer version refresh", "past rewrite cooldown", "Summarize Now and rewrites"])
         let selected = CommandLine.arguments.contains("--only-regeneration") ? all.filter { focused.contains($0.0) } : all

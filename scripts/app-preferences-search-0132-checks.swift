@@ -1,16 +1,25 @@
 import Foundation
 @testable import MemoryCore
 import PrivacyPolicy
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 @main struct AppBindingChecks {
     @MainActor static func main() async throws {
+        ddReportAtExit()
         setbuf(stdout,nil)
         let root=URL(fileURLWithPath:"/private/tmp/daydream-app-bindings-"+UUID().uuidString)
         let store=try MemoryStore(home:root,writable:true,automaticallySyncSearch:false)
         // A ready vault, so the pending burst below could otherwise be saved.
         try store.attachVault(TypedTextVault(keyStore:InMemoryTypedKeyStore()));try store.setUpTypedVault();try store.acceptSafeTyping()
         var checks=0,stops=0
-        func check(_ value:Bool,_ label:String) {precondition(value,label);checks+=1;print("PASS "+label)}
+        func check(_ value:Bool,_ label:String) {if !(value) { ddFail(label); return };checks+=1;print("PASS "+label)}
         _=try store.ingest(Evidence(id:"original",at:iso(Date()),kind:"window.changed",app:"TextEdit",bundle:"com.apple.TextEdit",title:"Harmless orchard",synthetic:true))
         let action=try store.action("original")!
         _=try store.correctAction(id:action.id,text:"Orchard correction",expectedRevision:action.revision)

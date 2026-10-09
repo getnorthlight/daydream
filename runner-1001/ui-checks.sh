@@ -3,8 +3,7 @@
 # (The on-screen steps are in SKIP, so the headless runner logs them as SKIPPED-UI.)
 # APP recipe: Sources/MacMemApp/*.swift + the check + the built objects (with Sparkle).
 # UI recipe: the same without Sources/MacMemApp/*.swift and without Sparkle.
-# Never runs scripts/check-settings-hub.sh (it writes /private/tmp/daydream-ui-build). Every
-# /private/tmp/daydream- literal in the compiled copies (checks and MacMemApp sources) is rewritten
+# Every /private/tmp/daydream- literal in the compiled copies (checks and MacMemApp sources) is rewritten
 # to the short temp root $R, so nothing is created under /private/tmp/daydream-*.
 # The checks run with HOME and CFFIXED_USER_HOME in a scratch folder (UserDefaults stay there).
 set -uo pipefail
@@ -12,8 +11,7 @@ if [ -z "${UI_SOURCED:-}" ]; then echo "REFUSING direct UI runner; use run-headl
 R=${R:-${SOCKROOT:-$(mktemp -d /private/tmp/ddchk.XXXXXX)}}; mkdir -p "$R"; R=$(cd "$R" && pwd -P)
 UIHOME=$OUT/ui-home; mkdir -p "$UIHOME/Library/Preferences"
 DDOUT=$OUT/dd; mkdir -p "$DDOUT"
-APPSRC=$OUT/src/app; rm -rf "$APPSRC"; mkdir -p "$APPSRC"
-for f in Sources/MacMemApp/*.swift; do python3 "$C/copy-check-source.py" "$f" "$R" > "$APPSRC/$(basename "$f")"; done
+APPSRC=$(appsrc)
 uicheck() { python3 "$C/copy-check-source.py" "scripts/$1.swift" "$R" > "$OUT/src/$1.swift"; echo "$OUT/src/$1.swift"; }
 uiobjs() { for t in MemoryCore MemoryUI HistoryCore CoreIntegration PrivacyPolicy BrowserBridge WriterBackend CLlamaBridge BackupRestore; do ls "$B/$t.build/"*.o; done; }
 UIFLAGS=(-D DEVELOPMENT_SOURCE_CHECKS -parse-as-library -module-cache-path "$I/modcache" -I "$B/Modules"
@@ -37,12 +35,7 @@ APPCHECKS="settings-hub-checks dd-menubar-checks dd-app-menu-checks dd-app-model
 [ -f scripts/chrome-ask-checks.swift ] && APPCHECKS="$APPCHECKS chrome-ask-checks"
 # Anonymous usage counts: the sender never sends from a check build, the switch, the MCP helper's inbox, Advanced's renders.
 [ -f scripts/usage-counts-app-checks.swift ] && APPCHECKS="$APPCHECKS usage-counts-app-checks"
-for check in $APPCHECKS; do
-  src=$(uicheck $check)
-  step compile-$check swiftc "${UIFLAGS[@]}" -F "$B" -framework Sparkle -Xlinker -rpath -Xlinker "$B" \
-    "$APPSRC"/*.swift "$src" $(uiobjs) -lc++ -o "$OUT/$check"
-  step $check runui "$OUT/$check"
-done
+# Every APPCHECKS check runs once, flagged against $OB (owner-lane.sh's UI half, below); none runs unflagged.
 # typing-all ui track: the same typing UI check compiled with the owner flags against the owner
 # debug objects (run-checks.sh builds them as $OB): owner app lists and the Other websites row.
 # (sat/v1 dropped the DaydreamConnectionSetup package, so it is not in the object list.)
@@ -58,13 +51,7 @@ if [ -n "${OB:-}" ] && [ -f scripts/typing-ui-checks.swift ]; then
   # public-typing review (release, high): every other APP and UI check, flagged, against $OB (owner-lane.sh).
   OWNER_UI=1 source "$C/owner-lane.sh"
 fi
-# gold/connections-storage: dd-recall-checks joins the UI loop.
-for check in dd-kit-checks permission-settings-checks dd-recall-checks; do
-  [ -f "scripts/$check.swift" ] || continue
-  src=$(uicheck $check)
-  step compile-$check swiftc "${UIFLAGS[@]}" "$src" $(uiobjs) -lc++ -o "$OUT/$check"
-  step $check runui "$OUT/$check"
-done
+# dd-kit-checks, permission-settings-checks and dd-recall-checks run flagged in owner-lane.sh's UI half.
 # fix/setup-status: the permission window (UI recipe; the check uses MemoryUI without importing it, so its copy gets the
 # import); renders only, never a window ordered on screen.
 if [ -f scripts/permission-window-checks.swift ]; then

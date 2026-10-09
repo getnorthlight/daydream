@@ -4,14 +4,16 @@ import MemoryCore
 import WriterBackend
 
 @main struct CoreChecks {
-    static var passed=0
+    static var passed=0, failed=0
+    // Collect, then report: a false check prints FAIL and the run goes on (a check whose condition throws still stops it);
+    // the exit is non-zero at the end.
     static func check(_ condition:@autoclosure () throws -> Bool,_ label:String) throws {
-        guard try condition() else {throw NSError(domain:"CoreChecks",code:1,userInfo:[NSLocalizedDescriptionKey:label])}
+        guard try condition() else {failed += 1; print("FAIL \(label)"); return}
         passed += 1; print("PASS \(label)")
     }
     static func rejects(_ label:String,_ operation:() throws -> Void) throws {
         do {try operation()} catch {passed += 1; print("PASS \(label)");return}
-        throw NSError(domain:"CoreChecks",code:2,userInfo:[NSLocalizedDescriptionKey:label])
+        failed += 1; print("FAIL \(label) (was accepted)")
     }
     static func wire<T:Encodable,U:Decodable>(_ source:T,_ type:U.Type) throws -> U {
         try JSONDecoder().decode(type,from:JSONEncoder().encode(source))
@@ -35,6 +37,7 @@ import WriterBackend
         return noon<=now ? noon:calendar.date(byAdding:.day,value:-1,to:noon)!
     }
     static func main() throws {
+        setvbuf(stdout,nil,_IOLBF,0)
         let root=FileManager.default.temporaryDirectory.appendingPathComponent("writer-core-check-"+UUID().uuidString)
         defer {try? FileManager.default.removeItem(at:root)}
         let zone="America/New_York",now=recentNoon(zone),day=try DayScope.key(now,timezone:zone)
@@ -172,6 +175,7 @@ import WriterBackend
         let inboxNote=try CanonicalGrounding.salvage(#"{"title":"","bullets":[{"ids":["i1"],"text":"Had the inbox open."}]}"#,request:inboxRequest,view:inboxView,provider:CanonicalLocalWriter.provider)
         try check(!inboxNote.title.contains("@") && !inboxNote.title.contains("(23)") && !inboxNote.title.contains(" - Gmail") && inboxNote.title=="Email in Gmail",
                   "moment fallback title drops the account address, unread count and site suffix (\(inboxNote.title))")
+        if failed>0 {print("Core/provider integration: \(failed) failed, \(passed) passed"); try? FileManager.default.removeItem(at:root); exit(1)}
         print("Core/provider integration: \(passed) checks passed. Synthetic only; no model, cloud, capture or search scheduling.")
     }
 }

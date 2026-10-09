@@ -24,13 +24,21 @@ import AppKit
 import SwiftUI
 import MemoryCore
 import MemoryUI
+// Collect, then report: a failed check prints FAIL and the run goes on; the process exits 1 at the end if any failed
+// (an atexit handler, so every return path of main reports). stdout is line-buffered so FAIL lines survive a crash.
+var ddFailures = 0
+func ddFail(_ label: String) { ddFailures += 1; print("FAIL " + label) }
+func ddReportAtExit() {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    atexit { if ddFailures > 0 { print("\(ddFailures) failed"); fflush(stdout); _exit(1) } }
+}
 
 func fail(_ message: String) -> Never {
     fflush(stdout)
     FileHandle.standardError.write(Data("FAIL: \(message)\n".utf8))
     exit(1)
 }
-@MainActor func expect(_ condition: Bool, _ message: @autoclosure () -> String) { if !condition { fail(message()) } }
+@MainActor func expect(_ condition: Bool, _ message: @autoclosure () -> String) { if !condition { ddFail(message()) } }
 func pass(_ message: String) { print("PASS: \(message)"); fflush(stdout) }
 @MainActor func tick(_ seconds: Double = 0.05) async throws { try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000)) }
 func makePrivateDirectory(_ url: URL) throws {
@@ -63,6 +71,7 @@ func makePrivateDirectory(_ url: URL) throws {
 
 @main @MainActor struct RecordingModelChecks {
     static func main() async throws {
+        ddReportAtExit()
         DispatchQueue.global().asyncAfter(deadline: .now() + 90) {
             FileHandle.standardError.write(Data("FAIL: recording-model-checks watchdog expired after 90s\n".utf8))
             exit(2)
@@ -373,6 +382,11 @@ func makePrivateDirectory(_ url: URL) throws {
             expect(app.contains(pin), "MacMemApp.swift lost: \(pin)")
         }
         expect(!app.contains("Awake. Resume explicitly after sleep."), "wake still pauses a second time")
+        // Formerly check_shell.py: the real app never seeds the demo records into a person's history, and Settings is
+        // the one sheet (no Settings window or scene).
+        expect(!app.contains("SyntheticActivity.records()"), "MacMemApp.swift seeds SyntheticActivity.records() (demo records into a real history)")
+        expect(app.components(separatedBy: ".sheet(").count - 1 == 1 && app.contains(".sheet(isPresented:$model.settingsPresented)") && !app.contains("Window(\"Settings\""),
+               "Settings is not the app's one sheet (\(app.components(separatedBy: ".sheet(").count - 1) .sheet( calls)")
         // golden test 5 (G9): nothing pauses for an update before DayDream quits; the quit's own pause (above) does it.
         expect(!app.contains("pauseForUpdate") && !app.contains("pauseCapture(\"Paused for update."), "an update still pauses recording before the quit")
         let stop = app.components(separatedBy: "func stopCapture() {")[1].components(separatedBy: "func startCapture()")[0]

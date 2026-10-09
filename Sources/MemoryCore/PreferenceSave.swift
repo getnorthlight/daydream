@@ -21,6 +21,21 @@ public struct MemoryPreferences: Equatable {
         self.emailSubjects = emailSubjects
     }
 }
+/// rel-018: the one rule for an app identifier that can be skipped (saved in `blockedApps`). The app picker lists only
+/// apps that pass it (`LocalApp.catalog`), and the save, the menu's Exclude App and the checks use it too, so an app that
+/// can be ticked always saves. Any real bundle ID passes, including the underscores and spaces some games and App Store
+/// apps use (`com.studio.Space_Game`, `com.Company.Game Name`). Refused: empty, over 256 UTF-8 bytes, a control or
+/// format character, a comma (the app model joins the list with commas) or space at either end (it trims each entry).
+/// Matching is always the exact string (`ObservationPolicy`, `CaptureGate`), and the list is stored as JSON and bound
+/// as a parameter, so no other character needs a rule.
+public enum SkippedAppID {
+    public static let maxBytes = 256
+    public static func accepts(_ id: String) -> Bool {
+        !id.isEmpty && id.utf8.count <= maxBytes && !id.contains(",")
+            && id.trimmingCharacters(in: .whitespacesAndNewlines) == id
+            && !id.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+    }
+}
 public enum PreferenceSaveError: Error, Equatable {
     case invalidApps, invalidDomains, revisionConflict, captureMustBeStopped, storageUnavailable
 }
@@ -37,10 +52,7 @@ extension MemoryStore {
         guard preferences.blockedApps.count <= 256 else { throw PreferenceSaveError.invalidApps }
         // Entries that break today's rules. Each must already be saved (below): an entry an older build saved
         // is taken back unchanged, so it keeps skipping what it skipped and never blocks an unrelated save.
-        let unruledApps = preferences.blockedApps.filter { value in
-            !(!value.isEmpty && value.utf8.count <= 256 &&
-              value.range(of: "^[A-Za-z0-9][A-Za-z0-9.-]*$", options: .regularExpression) != nil)
-        }
+        let unruledApps = preferences.blockedApps.filter { !SkippedAppID.accepts($0) }
         var unruledDomains: [String] = []
         if let domains = preferences.blockedDomains {
             guard domains.count <= 256 else { throw PreferenceSaveError.invalidDomains }
