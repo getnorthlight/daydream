@@ -34,6 +34,10 @@ DayDream also checks its website for updates and downloads them from GitHub, unl
 
 No. Your activity is stored on your Mac, and we never receive your history, typed words, titles, sites or searches. DayDream has no account and no crash reporting. It does send anonymous usage counts to PostHog, like how often DayDream is opened or used by AI apps and which settings are on, with a random ID made for your copy of DayDream. Turn them off in Settings › Advanced › **Share anonymous usage counts**; **See what's sent** there shows exactly what goes. The full list is in the README's [Usage counts](README-details.md#usage-counts). If you open a GitHub issue, what you write there is public, so never paste your history into one.
 
+## Is my data sold or used to train AI?
+
+No. DayDream has no servers that hold your history, so there's nothing to sell or train on. It sends only anonymous usage counts, which you can turn off. If you connect an AI app, what it reads goes to that app's provider under their terms.
+
 ## Does it take screenshots or record my screen?
 
 No. It doesn't take screenshots, record the screen, read text off the screen, or use the microphone or camera. It reads app names and window titles through macOS Accessibility.
