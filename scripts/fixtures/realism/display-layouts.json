@@ -1,0 +1,25 @@
+{
+  "note": "Display layouts for realism-window-layouts (scripts/realism-app-checks.swift window-layouts). Rects are top-left-origin global points, as the window server reports them ([x, y, width, height]); primaryHeight is the main screen's height (the menu bar's screen), used to flip into AppKit coordinates. 'settings' is where System Settings' window was when setup's card opened it; 'setup' is setup's window size (660 x 632 as drawn on 10/8). Synthetic numbers shaped like the owner's Macs: no screen is read.",
+  "setup": [660, 632],
+  "guide": [360, 120],
+  "layouts": [
+    {"name": "macbook-air-13-notch-dock-bottom", "primaryHeight": 956,
+     "screen": [0, 0, 1470, 956], "visible": [0, 37, 1470, 856], "stageManager": false,
+     "settings": [378, 166, 715, 624]},
+    {"name": "mac-mini-1440p-dock-bottom (owner 10/8: System Settings at y 725, visible frame ends at 1350)", "primaryHeight": 1440,
+     "screen": [0, 0, 2560, 1440], "visible": [0, 25, 2560, 1325], "stageManager": false,
+     "settings": [1100, 725, 715, 624]},
+    {"name": "dual-display-secondary-left-and-higher (negative origin)", "primaryHeight": 982,
+     "screen": [-2560, -300, 2560, 1440], "visible": [-2560, -275, 2560, 1415], "stageManager": false,
+     "settings": [-1800, 100, 715, 624]},
+    {"name": "dual-display-secondary-above", "primaryHeight": 982,
+     "screen": [-200, -1080, 1920, 1080], "visible": [-200, -1055, 1920, 1055], "stageManager": false,
+     "settings": [300, -900, 715, 624]},
+    {"name": "macbook-pro-14-stage-manager", "primaryHeight": 982,
+     "screen": [0, 0, 1512, 982], "visible": [0, 38, 1512, 944], "stageManager": true,
+     "settings": [500, 200, 715, 624]},
+    {"name": "small-1280x800-too-narrow-for-the-pair", "primaryHeight": 800,
+     "screen": [0, 0, 1280, 800], "visible": [0, 25, 1280, 775], "stageManager": false,
+     "settings": [300, 120, 715, 624]}
+  ]
+}

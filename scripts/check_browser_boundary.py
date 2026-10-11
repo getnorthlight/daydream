@@ -68,7 +68,10 @@ FLAG_FILES = set(CHROME_TYPING_FILES) | {'Checks/main.swift', 'Checks/ChromeBrac
                                          # CODEX-E-1001: reviewed nonshipping copied headless check recipes.
                                          'runner-1001/run-checks.sh', 'runner-1001/owner-lane.sh',
                                          # Phase 1 (9a-9e): the wired lanes compile with both shipped flags, as owner-lane.
-                                         'runner-1001/wired-lanes.sh'} | RECIPE_AND_DOC_FILES
+                                         'runner-1001/wired-lanes.sh',
+                                         # test-phase2: the realism and recording-harness step fragments compile their
+                                         # checks with both shipped flags, as owner-lane (check recipes; nothing ships).
+                                         'runner-1001/steps.d/realism.sh', 'runner-1001/steps.d/recording-harness.sh'} | RECIPE_AND_DOC_FILES
 # Website typing (typing-all SPEC-LATER 4.2, the web track): its owner-only
 # row, rules and strings live in the Chrome typing core file; its end-to-end
 # check drives the actual EventCapture in the owner build.
@@ -126,6 +129,11 @@ OWNER_FLAG_FILES = {'PrivacyPolicy/Sources/PrivacyPolicy/OwnerTyping.swift', 'So
                     'scripts/docs-claims-checks.py', 'Sources/MemoryCore/WriterFacts.swift',
                     # CODEX-E-1001: reviewed nonshipping copied headless check recipes.
                     'runner-1001/run-checks.sh', 'runner-1001/owner-lane.sh', 'runner-1001/wired-lanes.sh',
+                    # test-phase2: the realism and recording-harness step fragments (owner-lane compile flags), the
+                    # harness driver's owner-build seam (an inert website-typing route: no live Chrome read), and the
+                    # staging check, which removes the flag from a fake packager's environment.
+                    'runner-1001/steps.d/realism.sh', 'runner-1001/steps.d/recording-harness.sh',
+                    'scripts/harness/CaptureDriver.swift', 'scripts/realism-staging-checks.py',
                     # Checks that compile an owner-build expectation (the checks targets and scripts; nothing ships):
                     'Checks/WebTypingChecks.swift',              # e214a29: website typing's owner-only checks
                     'scripts/day-review-checks.swift',           # ba46541: Messages typing fixtures in the owner lane

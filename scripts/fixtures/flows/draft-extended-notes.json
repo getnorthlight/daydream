@@ -1,0 +1,95 @@
+{
+  "schema": "daydream-timeline/1",
+  "synthetic": true,
+  "name": "draft-extended-notes",
+  "about": "Bug 8, second shape: a Notes draft left unsent for a minute while the summaries pass runs, finished with \"sig :(\" within the carry's two minutes, then a Chrome tab switch and the draft extended again in a new paragraph. Every word made up.",
+  "start": "2026-10-06T09:00:00-05:00",
+  "timeZone": "America/Chicago",
+  "install": {
+    "kind": "fresh"
+  },
+  "events": [
+    {
+      "at": 0,
+      "op": "launch",
+      "how": "opened"
+    },
+    {
+      "at": 0.5,
+      "op": "record",
+      "on": true
+    },
+    {
+      "at": 1,
+      "op": "front",
+      "app": "Notes",
+      "bundle": "com.apple.Notes",
+      "window": "n-1",
+      "title": "Fence ideas"
+    },
+    {
+      "at": 2,
+      "op": "type",
+      "text": "they kept the "
+    },
+    {
+      "at": 50,
+      "op": "writer"
+    },
+    {
+      "at": 60,
+      "op": "type",
+      "text": "sig :("
+    },
+    {
+      "at": 70,
+      "op": "front",
+      "app": "Google Chrome",
+      "bundle": "com.google.Chrome",
+      "window": "cw-1"
+    },
+    {
+      "at": 70.3,
+      "op": "tab",
+      "tab": "t-1",
+      "url": "https://example.net/fence-stain",
+      "title": "Synthetic fence stain colors"
+    },
+    {
+      "at": 76,
+      "op": "tab",
+      "tab": "t-2",
+      "url": "https://example.net/fence-height",
+      "title": "Synthetic fence height rules"
+    },
+    {
+      "at": 84,
+      "op": "front",
+      "app": "Notes",
+      "bundle": "com.apple.Notes",
+      "window": "n-1",
+      "title": "Fence ideas"
+    },
+    {
+      "at": 85,
+      "op": "key",
+      "key": "return"
+    },
+    {
+      "at": 86,
+      "op": "type",
+      "text": "maybe cedar instead"
+    },
+    {
+      "at": 100,
+      "op": "focus",
+      "field": "n-1-title"
+    }
+  ],
+  "expect": {
+    "pages": [
+      "Synthetic fence stain colors",
+      "Synthetic fence height rules"
+    ]
+  }
+}

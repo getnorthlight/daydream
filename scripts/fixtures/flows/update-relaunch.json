@@ -1,0 +1,81 @@
+{
+  "schema": "daydream-timeline/1",
+  "synthetic": true,
+  "name": "update-relaunch",
+  "about": "Bug 9: the person runs 0.1.7, installs the 0.1.8 update and DayDream relaunches itself (Sparkle): one app_updated with both release versions, no app_opened for the relaunch. Every word made up.",
+  "start": "2026-10-06T09:00:00-05:00",
+  "timeZone": "America/Chicago",
+  "install": {
+    "kind": "upgrade",
+    "from": "0.1.7 Beta (20261001120000)"
+  },
+  "events": [
+    {
+      "at": 0,
+      "op": "launch",
+      "how": "opened",
+      "version": "0.1.7 Beta (20261001120000)"
+    },
+    {
+      "at": 0.5,
+      "op": "record",
+      "on": true
+    },
+    {
+      "at": 1,
+      "op": "front",
+      "app": "TextEdit",
+      "bundle": "com.apple.TextEdit",
+      "window": "te-1",
+      "title": "notes.txt"
+    },
+    {
+      "at": 2,
+      "op": "type",
+      "text": "before the update"
+    },
+    {
+      "at": 20,
+      "op": "quit"
+    },
+    {
+      "at": 25,
+      "op": "launch",
+      "how": "update-relaunch",
+      "version": "0.1.8 Beta (20261008120000)"
+    },
+    {
+      "at": 30,
+      "op": "type",
+      "text": "after the update"
+    },
+    {
+      "at": 45,
+      "op": "window",
+      "window": "te-2",
+      "title": "Untitled"
+    }
+  ],
+  "expect": {
+    "opened": [
+      "other"
+    ],
+    "updated": [
+      [
+        "0.1.7 Beta (20261001120000)",
+        "0.1.8 Beta (20261008120000)"
+      ]
+    ],
+    "recordingAtEnd": true,
+    "typed": [
+      {
+        "bundle": "com.apple.TextEdit",
+        "words": "before the update"
+      },
+      {
+        "bundle": "com.apple.TextEdit",
+        "words": "after the update"
+      }
+    ]
+  }
+}

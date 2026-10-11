@@ -1,0 +1,36 @@
+Step fragments: the steps a package adds without editing run-checks.sh.
+
+run-checks.sh sources every runner-1001/steps.d/*.sh in lexical order, after wired-lanes.sh and before it writes
+SUMMARY. A fragment is bash sourced into the runner (not run on its own), so it has, and must only use:
+
+  step NAME CMD...   run CMD as step NAME (its log is $OUT/NAME.log; ONLY, LANES, TIER, DRYRUN and SKIP apply), in a
+                     process group of its own, killed at its time limit (runner-1001/bounded.sh: FAIL TIMEOUT NAME)
+  step_timeout NAME SECONDS
+                     this fragment's own time limit for step NAME (call it before the step); the row's `timeout`
+                     column does the same from the manifest fragment. Default STEP_TIMEOUT, 900 s
+  $OUT               this run's output folder (logs, binaries, scratch copies under $OUT/src)
+  $I                 the work folder (WORKDIR, resolved); $I/modcache is the module cache
+  $R                 the short socket root that stands in for /private/tmp (sun_path is 104 bytes)
+  $B / $OB           the public / owner debug build folders (arm64-apple-macosx/debug), read-only
+  appsrc             prints the shared scratch copy of Sources/MacMemApp/*.swift (headless permission seams)
+  app_link MB OUT CHECK [-D FLAG]...
+                     compiles CHECK (a scripts/*.swift that uses app types) against the debug build MB ($B or $OB) and
+                     the precompiled app module for those flags (`@testable import DDApp` is added); "${OMF[@]}" are the
+                     owner flags. Use it instead of compiling "$(appsrc)"/*.swift into the check again
+  oobjs T...         the owner objects of targets T (ls $OB/T.build/*.o)
+  relocated F        copies scripts/F with /private/tmp/ moved to $R; prints the copy's path
+  $CAPTURE           the core-source capture list (with the headless Coordinator copy)
+  $C                 runner-1001/, $WT the source tree (the current directory)
+
+Rules:
+- Every step NAME is one row of a scripts/checks-manifest.d/*.tsv fragment (the same columns as
+  scripts/checks-manifest.tsv plus `tier`, and optionally `timeout`); compile-NAME belongs to row NAME. A step listed
+  in two files is FAIL. A row's lane is a known one (verify-run-manifest.py KNOWN_LANES) or one the fragment declares
+  on a "# lanes: NAME" line; any other lane is refused.
+- A known failure is pinned in a scripts/checks-known-failures.d/*.tsv fragment (same columns as the pin file).
+- Guard optional parts with [ -f ... ] and have_ob, as run-checks.sh does, and do nothing outside step under
+  DRYRUN=1 except cheap file copies.
+- Never `exit` (it ends the whole run) and never set -e; never edit the tree, the build folders or anything outside
+  $OUT and $I.
+- Synthetic data and scratch HOMEs only ($OUT/<name>-home with CFFIXED_USER_HOME); no window on screen, no permission
+  read or prompt, no network.

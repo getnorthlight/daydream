@@ -1,0 +1,82 @@
+{
+  "schema": "daydream-timeline/1",
+  "synthetic": true,
+  "name": "upgrade-messages-off",
+  "about": "Bug 13, the other side: an upgrade from 0.1.7 where the person had turned Messages and email off; 0.1.8 keeps it off (the Messages draft is never saved) while TextEdit is. Every word and name made up.",
+  "start": "2026-10-06T09:00:00-05:00",
+  "timeZone": "America/Chicago",
+  "install": {
+    "kind": "upgrade",
+    "from": "0.1.7 Beta (20261001120000)",
+    "messagesAndEmail": false
+  },
+  "events": [
+    {
+      "at": 0,
+      "op": "launch",
+      "how": "opened",
+      "version": "0.1.8 Beta (20261008120000)"
+    },
+    {
+      "at": 0.5,
+      "op": "record",
+      "on": true
+    },
+    {
+      "at": 1,
+      "op": "front",
+      "app": "Messages",
+      "bundle": "com.apple.MobileSMS",
+      "window": "m-1",
+      "title": "Messages",
+      "place": "Sam Rivera"
+    },
+    {
+      "at": 2,
+      "op": "type",
+      "text": "see you at the game"
+    },
+    {
+      "at": 20,
+      "op": "focus",
+      "field": "m-search"
+    },
+    {
+      "at": 30,
+      "op": "front",
+      "app": "TextEdit",
+      "bundle": "com.apple.TextEdit",
+      "window": "te-1",
+      "title": "plan.txt"
+    },
+    {
+      "at": 31,
+      "op": "type",
+      "text": "buy stain"
+    },
+    {
+      "at": 45,
+      "op": "window",
+      "window": "te-2",
+      "title": "Untitled"
+    }
+  ],
+  "expect": {
+    "never": [
+      "see you at the game"
+    ],
+    "updated": [
+      [
+        "0.1.7 Beta (20261001120000)",
+        "0.1.8 Beta (20261008120000)"
+      ]
+    ],
+    "recordingAtEnd": true,
+    "typed": [
+      {
+        "bundle": "com.apple.TextEdit",
+        "words": "buy stain"
+      }
+    ]
+  }
+}

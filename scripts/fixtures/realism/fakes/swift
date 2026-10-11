@@ -1,0 +1,24 @@
+#!/bin/bash
+# Realism fake SwiftPM for scripts/realism-staging-checks.py (package.sh's builds). Builds NOTHING. It reproduces what
+# the owner hit on 10/07: a scratch folder that already holds a build is reused as is ("compiled nothing in 0.33 s"),
+# so the products keep the code they were built from. A scratch without that product "compiles" one: a file holding
+# every line of <package>/Sources/realism-marker.txt (the commit's marker), so a staged binary shows which commit it is.
+pkg=.; scratch=; product=; show=0
+while [ $# -gt 0 ]; do
+  case $1 in
+    --package-path) pkg=$2; shift ;;
+    --scratch-path) scratch=$2; shift ;;
+    --product) product=$2; shift ;;
+    --show-bin-path) show=1 ;;
+  esac; shift
+done
+bin=${scratch:-$pkg/.build}/release
+if [ "$show" = 1 ]; then echo "$bin"; exit 0; fi
+[ -n "$product" ] || exit 0
+mkdir -p "$bin/MacMem_MemoryUI.bundle"
+if [ -f "$bin/$product" ]; then
+  printf 'realism-fake-swift: %s reused in %s (compiled nothing)\n' "$product" "$bin" >> "${REALISM_SWIFT_LOG:-/dev/null}"
+else
+  { printf 'MACHO-FIXTURE %s\n' "$product"; cat "$pkg/Sources/realism-marker.txt"; } > "$bin/$product"; chmod 755 "$bin/$product"
+  printf 'realism-fake-swift: %s compiled in %s\n' "$product" "$bin" >> "${REALISM_SWIFT_LOG:-/dev/null}"
+fi

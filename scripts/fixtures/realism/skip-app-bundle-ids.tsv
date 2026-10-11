@@ -1,0 +1,28 @@
+# Bundle IDs for the skip-app realism check (owner bug 2, 0.1.7: Noah could not skip an app whose ID has an underscore).
+# Columns: bundle_id, display name, provenance. 'installed' = read from an app installed on the owner's build Mac on 2026-10-08
+# (Info.plist CFBundleIdentifier, metadata only). 'shape' = an ID shape real apps ship but that could not be verified on a
+# public page from this machine (Unity's default com.Company.ProductName keeps underscores and spaces from the product name).
+# Password managers (1Password, installed here too) are always private and never offered as a choice, so they are not rows.
+bundle_id	name	provenance
+com.google.drivefs	Google Drive	installed
+com.google.drivefs.shortcuts.sheets	Google Sheets	installed
+com.anthropic.claudefordesktop	Claude	installed
+com.BlueBubbles.BlueBubbles-Server	BlueBubbles	installed
+com.github.GitHubClient	GitHub Desktop	installed
+com.google.Chrome	Google Chrome	installed
+com.google.drivefs.shortcuts.docs	Google Docs	installed
+com.hegenberg.BetterSnapTool	BetterSnapTool	installed
+com.mitchellh.ghostty	Ghostty	installed
+com.openai.codex	ChatGPT	installed
+com.surfshark.vpnclient.macos.direct	Surfshark	installed
+dev.zed.Zed	Zed	installed
+io.tailscale.ipn.macsys	Tailscale	installed
+org.blenderfoundation.blender	Blender	installed
+com.apple.Image_Capture	Image Capture	installed (underscore; Apple's own)
+com.todesktop.230313mzl4w4u92	Cursor	shape (ToDesktop-built apps: digits after a dot)
+com.studio.Space_Game	Space Game	shape (underscore: the 0.1.8 fix commit's example)
+unity.Co.My_Game	My Game	shape (Unity default: underscore)
+com.Company.Game Name	Game Name	shape (Unity default: space)
+unity.Team Cherry.Hollow Knight	Hollow Knight	shape (Unity default: two spaces; unverified)
+com.example.café-notes	Café Notes	shape (non-ASCII letter)
+com.example.app+beta	App Beta	shape (plus sign)

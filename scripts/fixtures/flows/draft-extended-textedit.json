@@ -1,0 +1,83 @@
+{
+  "schema": "daydream-timeline/1",
+  "synthetic": true,
+  "name": "draft-extended-textedit",
+  "about": "Bug 8 (owner, 10/06): a note drafted in TextEdit, left unsent for over a minute while the summaries pass runs, then finished with \"sig :(\"; then Chrome, back, and the draft extended again. Every word made up.",
+  "start": "2026-10-06T09:00:00-05:00",
+  "timeZone": "America/Chicago",
+  "install": {
+    "kind": "fresh"
+  },
+  "events": [
+    {
+      "at": 0,
+      "op": "launch",
+      "how": "opened"
+    },
+    {
+      "at": 0.5,
+      "op": "record",
+      "on": true
+    },
+    {
+      "at": 1,
+      "op": "front",
+      "app": "TextEdit",
+      "bundle": "com.apple.TextEdit",
+      "window": "te-1",
+      "title": "feedback.txt"
+    },
+    {
+      "at": 2,
+      "op": "type",
+      "text": "i didn't like the "
+    },
+    {
+      "at": 8,
+      "op": "writer"
+    },
+    {
+      "at": 72,
+      "op": "type",
+      "text": "sig :("
+    },
+    {
+      "at": 80,
+      "op": "front",
+      "app": "Google Chrome",
+      "bundle": "com.google.Chrome",
+      "window": "cw-1"
+    },
+    {
+      "at": 80.2,
+      "op": "tab",
+      "tab": "t-1",
+      "url": "https://example.com/cedar-plan",
+      "title": "Cedar plan - Example"
+    },
+    {
+      "at": 95,
+      "op": "front",
+      "app": "TextEdit",
+      "bundle": "com.apple.TextEdit",
+      "window": "te-1",
+      "title": "feedback.txt"
+    },
+    {
+      "at": 96,
+      "op": "type",
+      "text": " but the layout is fine"
+    },
+    {
+      "at": 104,
+      "op": "window",
+      "window": "te-2",
+      "title": "Untitled"
+    }
+  ],
+  "expect": {
+    "pages": [
+      "Cedar plan - Example"
+    ]
+  }
+}

@@ -1,0 +1,21 @@
+#!/bin/bash
+# Realism fake codesign (scripts/realism-adhoc-identity-checks.py, realism-staging-checks.py). Signs NOTHING and reads no
+# keychain: it logs each call to $REALISM_CODESIGN_LOG and, for a --sign call on an .app, the bundle ID the app carries at
+# that moment (what macOS would bind the ad-hoc signature, and so every privacy row, to). `-d` answers as an ad-hoc seal.
+log=${REALISM_CODESIGN_LOG:?REALISM_CODESIGN_LOG}
+target=${!#}
+case " $* " in
+  *" --sign "*|*" -s "*)
+    id=-
+    if [ -f "$target/Contents/Info.plist" ]; then
+      id=$(/usr/bin/plutil -extract CFBundleIdentifier raw "$target/Contents/Info.plist" 2>/dev/null || echo -)
+      mkdir -p "$target/Contents/_CodeSignature" && printf 'fake seal %s\n' "$id" > "$target/Contents/_CodeSignature/CodeResources"
+    fi
+    identity=-; prev=; for a in "$@"; do [ "$prev" = --sign ] || [ "$prev" = -s ] && identity=$a; prev=$a; done
+    printf 'sign\tidentity=%s\tbundle=%s\t%s\n' "$identity" "$id" "$target" >> "$log" ;;
+  *" -d "*|*" --display "*)
+    printf 'display\t%s\n' "$target" >> "$log"
+    printf 'Executable=%s\nIdentifier=fixture\nCodeDirectory v=20500 size=1 flags=0x2(adhoc) hashes=1+0 location=embedded\nSignature=adhoc\nTeamIdentifier=not set\n' "$target" >&2 ;;
+  *) printf 'other\t%s\n' "$*" >> "$log" ;;
+esac
+exit 0

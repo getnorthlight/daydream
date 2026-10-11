@@ -1,0 +1,9 @@
+# recording-harness rows (lane flows): runner-1001/steps.d/recording-harness.sh; what each proves: scripts/harness/README.md.
+# This package adds the flows lane (verify-run-manifest.py refuses a lane neither known nor declared):
+# lanes: flows
+step	lane	config	file	needs	min_pass	status	reason	since	review_by	tier
+flow-oracle	flows	n/a	scripts/flow-oracle-checks.swift,scripts/harness/Timeline.swift,scripts/harness/Oracles.swift,scripts/fixtures/flows/*.json	headless	40	required				change
+flow-replay	flows	owner	scripts/flow-replay-checks.swift,scripts/harness/CaptureDriver.swift,scripts/harness/Timeline.swift,scripts/fixtures/flows/*.json	headless	62	known-failure	RC findings of the recording harness on the frozen 0.1.8 RC (10/08), owner's call: (1) CoreCaptureBinding saves an unpasted unit with pasted=nil (TypedSendFacts.apply: pasted ? true : nil) but TypedNarrativeCarry.certified needs pasted==false, so in real capture no carry forms: a draft continued after a long pause has its next part withheld as [withheld] and loses its sig :( ending (bug 8 end to end; the summaries-pass carry itself, re-saved with pasted=false, passes); (2) WebTypedRow.valid needs text for chrome-search-url-v1 but the row is sealed with empty text, so each Google search's typed row reads back <unreadable> (the page rows keep the words: bug 7 passes). Sources are frozen; pinned, not edited	2026-10-08	2026-10-22	change
+flow-app	flows	owner	scripts/flow-app-checks.swift,scripts/harness/Timeline.swift,scripts/fixtures/flows/*.json	headless	16	required				change
+flow-source-scan	flows	n/a	scripts/harness/source-scan.py,runner-1001/steps.d/recording-harness.sh,scripts/harness/README.md	headless	58	required				change
+tests-status	flows	n/a	scripts/harness/tests-status.py,Tests/README.md	headless	7	required				change

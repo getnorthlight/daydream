@@ -143,8 +143,7 @@ else
   orunui() { env HOME="$OUIHOME" CFFIXED_USER_HOME="$OUIHOME" DD_CHECK_OUT="$ODDOUT" "$@"; }
   for check in ${APPCHECKS/typing-ui-checks/}; do
     src=$(uicheck $check)
-    step compile-owner-$check swiftc "${OUIFLAGS[@]}" -F "$OB" -framework Sparkle -Xlinker -rpath -Xlinker "$OB" \
-      "$APPSRC"/*.swift "$src" $(ouiobjs) -lc++ -o "$OUT/owner-$check"
+    step compile-owner-$check app_link "$OB" "$OUT/owner-$check" "$src" "${OMF[@]}"
     step owner-$check orunui "$OUT/owner-$check"
   done
   # The UI recipe (no app sources): the kit, the permission settings and the honesty UI checks, flagged.

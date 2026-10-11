@@ -11,7 +11,8 @@
 //           removed, policy changes, a record dated ahead, retention) and a cost that does not grow with history; its
 //           whole-table check lets the heartbeat in between short transactions.
 //   E. G60  a writable open of an existing store needs no write lock (another connection's long write never fails it).
-//   F. G27 x G7 (final review)  a search for a word no row has, over 90,000 records, while the heartbeat writes: on the
+//   F. G27 x G7 (final review)  a search for a word no row has, over 90,000 records of a history in the write-ahead log
+//           (as the app keeps its own), while the heartbeat writes: on the
 //           recorder's own connection, on another connection and in another process (an AI app's search), the
 //           heartbeat's longest wait is under 50 ms (one whole-history statement made it wait 0.6 s at two months), and
 //           the search reads complete history through explicit bounded continuation (9dd9dc0 / df958b5).
@@ -25,6 +26,13 @@
 //           back, action pages ascending and descending, of all apps, one app and an app seldom used, over a day and the
 //           whole history, and all of it again without the time index and once another connection builds it.
 // Thresholds are thread-CPU ratios or bounds, so a loaded machine does not change the verdict.
+// test-p2 cadence-shard: the sections are independent, so with STORE_PERF_SHARDS=N (N > 1) the check re-executes itself
+// once per section (`--section`), N at a time. A to E (light, and D reads wall-clock ratios) run first; F (split into
+// its three places), G and H start once they have ended. The output is the serial run's, in its order: the first section
+// that fails ends the run there, as it always did. The default is 1, the serial run in this process: measured sharded,
+// F's search on the recorder's own connection, beside F's other two places, waited 99-713 ms in 4 of 6 runs (serial: about
+// 21 ms), a failure the pin's "FAIL: the heartbeat waited" prefix would hide; and F's search in another process (about
+// 220 s of the serial run's 286, or 391 on the owner build) bounds any sharded run anyway.
 import Foundation
 import SQLite3
 @testable import MemoryCore
@@ -158,28 +166,69 @@ func drain(_ store: MemoryStore, now: Date = Date()) throws -> Int {
         // Complete bounded search now follows every page in both writer and read-only
         // subprocess lanes. Keep a finite aggregate watchdog; latency assertions below
         // still require each recorder heartbeat under 50ms and exact full coverage.
-        DispatchQueue.global().asyncAfter(deadline: .now() + 1800) { FileHandle.standardError.write(Data("FAIL: store-perf-checks watchdog expired after 1800s\n".utf8)); exit(2) }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 1800) {
+            Shards.killAll()
+            FileHandle.standardError.write(Data("FAIL: store-perf-checks watchdog expired after 1800s\n".utf8)); exit(2)
+        }
+        // test-p2 cadence-shard: one section in a child (`--section <name> <root> <now>`): its output, then exit 0, with
+        // the failures it reported (STORE_PERF_KEEP_GOING=1) in <root>/failures; a failed expectation exits 1 as before.
+        if CommandLine.arguments.count == 5, CommandLine.arguments[1] == "--section" {
+            let root = URL(fileURLWithPath: CommandLine.arguments[3], isDirectory: true)
+            try section(CommandLine.arguments[2], root: root, now: Date(timeIntervalSince1970: Double(CommandLine.arguments[4])!))
+            try Data("\(failures)".utf8).write(to: root.appendingPathComponent("failures"))
+            fflush(stdout); exit(0)
+        }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("store-perf-" + UUID().uuidString, isDirectory: true)
         guard !root.path.hasPrefix("/private/tmp/daydream-"), !root.path.hasPrefix("/tmp/daydream-") else { fail("TMPDIR must be a private scratch folder") }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        try timestamps()
         // A fixed clock, 23:00 yesterday: "today" (the ten hours before it), "yesterday" and the older days never
         // straddle midnight, whenever the check runs. Every store call below gets this `now`.
         let now = Calendar.current.date(bySettingHour: 23, minute: 0, second: 0, of: Date().addingTimeInterval(-86_400))!
+        let width = ProcessInfo.processInfo.environment["STORE_PERF_SHARDS"].flatMap(Int.init) ?? 1
+        if width <= 1 {
+            for name in Shards.sections { try section(name, root: root, now: now) }
+        } else {
+            try Shards(root: root, now: now, width: width).run()
+        }
+        if failures > 0 { fail("\(failures) expectations failed") }
+        print("store-perf-checks passed")
+    }
+    /// The sections in the serial run's order. "stores" makes the two synthetic stores B, C and D share in one process
+    /// (a child of C or D makes its own, as the serial run had them by then); F is split into its three places.
+    static func section(_ name: String, root: URL, now: Date) throws {
+        switch name {
+        case "timestamps": try timestamps()
+        case "stores":
+            let (small, _, _) = try stores(root, now: now)
+            pass("synthetic stores: 3,000 records today and 60 yesterday; the large one 27,000 more before")
+            try todayRebuild(small, now: now)
+        case "indexes":
+            let (small, large, _) = try stores(root, now: now)
+            try indexes(root, small: small, large: large, now: now)
+        case "summaries":
+            let (small, large, fresh) = try stores(root, now: now)
+            // As C left them in the serial run: both opened writable (the time indexes made).
+            if fresh { for home in [small, large] { _ = try MemoryStore(home: home, writable: true, automaticallySyncSearch: false) } }
+            try summaries(root, small: small, large: large, now: now)
+        case "open-busy": try openWithoutWriteLock(root, now: now)
+        case "search-own": try searchLetsHeartbeatIn(root, now: now, part: 1)
+        case "search-reader": try searchLetsHeartbeatIn(root, now: now, part: 2)
+        case "search-process": try searchLetsHeartbeatIn(root, now: now, part: 3)
+        case "cold-today": try coldTodayRead(root, now: now)
+        case "short-reads": try shortReadsSameAnswers(root, now: now)
+        default: fail("unknown store-perf section \(name)")
+        }
+    }
+    /// The small and large synthetic stores, made once per process (`fresh`: made by this call).
+    static var madeStores: (URL, URL)?
+    static func stores(_ root: URL, now: Date) throws -> (URL, URL, Bool) {
+        if let (small, large) = madeStores { return (small, large, false) }
         let small = root.appendingPathComponent("small"), large = root.appendingPathComponent("large")
         try makeStore(small, today: 3000, yesterday: 60, past: 0, now: now)
         try makeStore(large, today: 3000, yesterday: 60, past: 27_000, now: now)
-        pass("synthetic stores: 3,000 records today and 60 yesterday; the large one 27,000 more before")
-        try todayRebuild(small, now: now)
-        try indexes(root, small: small, large: large, now: now)
-        try summaries(root, small: small, large: large, now: now)
-        try openWithoutWriteLock(root, now: now)
-        try searchLetsHeartbeatIn(root, now: now)
-        try coldTodayRead(root, now: now)
-        try shortReadsSameAnswers(root, now: now)
-        if failures > 0 { fail("\(failures) expectations failed") }
-        print("store-perf-checks passed")
+        madeStores = (small, large)
+        return (small, large, true)
     }
 
     // MARK: A. G17
@@ -461,10 +510,32 @@ func drain(_ store: MemoryStore, now: Date = Date()) throws -> Int {
         }
         return (waits.max() ?? 0, waits.count, workMs)
     }
-    static func searchLetsHeartbeatIn(_ root: URL, now: Date) throws {
+    /// F's month of history, made and warmed once per process (each of F's three places is a section of its own).
+    static var searchStore: (URL, MemoryStore)?
+    static func searchLetsHeartbeatIn(_ root: URL, now: Date, part: Int) throws {
+        let word = "zqxjv"
+        let (home, store) = try searchStore ?? makeSearchStore(root, now: now, word: word)
+        searchStore = (home, store)
+        switch part {
+        case 1: try searchOwn(store, word: word)
+        case 2: try searchReader(store, home: home, word: word)
+        default: try searchOtherProcess(store, home: home, word: word)
+        }
+    }
+    /// The history is made as the app makes its own (`liveHistory`): in SQLite's write-ahead log, the journal every
+    /// DayDream history has had since wal-1005 (HistoryJournal.swift; launch's preparation switches an older one).
+    /// F's history used to be a rollback-journal file (F predates WAL), where another process's read holds the
+    /// recorder's commit until the read's statement ends and the commit's busy wait (StoreWait.swift) wakes only at
+    /// 1, 3, 8, 18, 33, 53 ms: the heartbeat's longest wait in F's other process was the longest window statement rounded
+    /// up to that schedule, a tail of 2 heartbeats in 193,738 (26 to 97 ms over 15 runs, alone or not; up to 1.1 s beside
+    /// 7 workers), so its pinned failure ("the heartbeat waited") failed or passed by chance, and beside other work the
+    /// other process's reads once failed busy (code 5) behind the 2 kHz heartbeat. That rollback-journal hold is
+    /// HistoryJournalChecks' control ("in the rollback journal that read held the save up"); here, as in the app, no read
+    /// holds a save up (longest wait 5.4 ms alone, and the other process's search takes 40 s instead of 213 s).
+    static func makeSearchStore(_ root: URL, now: Date, word: String) throws -> (URL, MemoryStore) {
         let home = root.appendingPathComponent("search")
         try? FileManager.default.removeItem(at: home)
-        _ = try MemoryStore(home: home, writable: true, automaticallySyncSearch: false)
+        _ = try MemoryStore(home: home, writable: true, automaticallySyncSearch: false, liveHistory: true)
         do {
             // A month of history at DayDream's usual pace (about 3,000 a day), newest first.
             let raw = Raw(home)
@@ -477,9 +548,13 @@ func drain(_ store: MemoryStore, now: Date = Date()) throws -> Int {
             raw.exec("COMMIT")
         }
         let store = try MemoryStore(home: home, writable: true, automaticallySyncSearch: false)
+        let journal = try store.journalMode()
+        expect(journal == "wal", "F's history is not in the write-ahead log the app keeps its history in: \(journal)")
         try store.setCaptureState("recording", reason: CaptureSession.recordingReason)
-        let word = "zqxjv"
         _ = try store.searchResult(MemorySearchQuery(word, limit: 50))
+        return (home, store)
+    }
+    static func searchOwn(_ store: MemoryStore, word: String) throws {
         var answer: MemorySearchResult?, failed: Error?
         // 9dd9dc0 / df958b5: typo matching has a bounded scan budget. Follow its
         // explicit continuation to prove completeness without monopolizing the recorder.
@@ -489,10 +564,14 @@ func drain(_ store: MemoryStore, now: Date = Date()) throws -> Int {
                "the missing-word search did not finish coherent bounded continuation: \(String(describing: failed)) \(answer?.items.count ?? -1) \(answer?.next ?? "no continuation")")
         expect(own.longest < 50, String(format: "the heartbeat waited %.0f ms for a search on the recorder's connection (%.0f ms search)", own.longest, own.workMs))
         pass("a search for a missing word on the recorder's own connection completes all 90,000 records through bounded continuation, and the heartbeat waits under 50 ms")
+    }
+    static func searchReader(_ store: MemoryStore, home: URL, word: String) throws {
         let reader = try heartbeat(store) { _ = try? MemoryStore(home: home).searchResult(MemorySearchQuery(word, limit: 50)) }
         print(String(format: "  …on another connection in this process: %.0f ms; longest wait %.1f ms", reader.workMs, reader.longest))
         expect(reader.longest < 50, String(format: "the heartbeat waited %.0f ms for a search on another connection (%.0f ms search)", reader.longest, reader.workMs))
         pass("…on another connection in this process, the heartbeat waits under 50 ms")
+    }
+    static func searchOtherProcess(_ store: MemoryStore, home: URL, word: String) throws {
         var said = ""
         let other = try heartbeat(store) {
             let child = Process(), out = Pipe()
@@ -803,5 +882,65 @@ func drain(_ store: MemoryStore, now: Date = Date()) throws -> Int {
         other.exec("ROLLBACK")
         expect(ms < 1000, String(format: "the open waited %.0f ms for the other connection's write", ms))
         pass(String(format: "a writable open of an existing store succeeds in %.0f ms while another connection holds the write lock", ms))
+    }
+}
+
+/// test-p2 cadence-shard: the sections as child processes of this binary, `width` at a time; A to E first, then the rest.
+/// Each child's output is printed in the serial order once it ends; the first that failed (exit 1: its FAIL line, on
+/// standard error as before) or crashed ends the run with exit 1, and the children still running are stopped.
+final class Shards {
+    static let sections = ["timestamps", "stores", "indexes", "summaries", "open-busy", "search-own", "search-reader", "search-process", "cold-today", "short-reads"]
+    /// A to E: light, and D's heartbeat check is a wall-clock ratio, so nothing heavy runs beside them.
+    static let firstPhase = 5
+    private static let lock = NSLock()
+    private static var started: [Process] = []
+    /// The children still running, stopped (the watchdog, an early end).
+    static func killAll() {
+        lock.lock(); let all = started; lock.unlock()
+        for process in all where process.isRunning { kill(process.processIdentifier, SIGKILL) }
+    }
+    let root: URL, now: Date, width: Int
+    init(root: URL, now: Date, width: Int) { self.root = root; self.now = now; self.width = width }
+    func dir(_ name: String) -> URL { root.appendingPathComponent("section-" + name, isDirectory: true) }
+    func run() throws {
+        var processes: [String: Process] = [:], next = 0
+        func launch() throws {
+            let running = processes.values.filter(\.isRunning).count
+            // The second phase starts once every first-phase child has ended.
+            let firstDone = Self.sections.prefix(Self.firstPhase).allSatisfy { processes[$0]?.isRunning == false }
+            var free = width - running
+            while free > 0, next < Self.sections.count, next < Self.firstPhase || firstDone {
+                let name = Self.sections[next], d = dir(name)
+                try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+                FileManager.default.createFile(atPath: d.appendingPathComponent("out.log").path, contents: nil)
+                FileManager.default.createFile(atPath: d.appendingPathComponent("err.log").path, contents: nil)
+                let process = Process()
+                process.executableURL = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])
+                process.arguments = ["--section", name, d.path, String(now.timeIntervalSince1970)]
+                process.standardOutput = FileHandle(forWritingAtPath: d.appendingPathComponent("out.log").path)
+                process.standardError = FileHandle(forWritingAtPath: d.appendingPathComponent("err.log").path)
+                try process.run()
+                Self.lock.lock(); Self.started.append(process); Self.lock.unlock()
+                processes[name] = process; next += 1; free -= 1
+            }
+        }
+        for name in Self.sections {
+            try launch()
+            while processes[name] == nil || processes[name]!.isRunning { usleep(100_000); try launch() }
+            let process = processes[name]!, d = dir(name)
+            let out = (try? Data(contentsOf: d.appendingPathComponent("out.log"))) ?? Data()
+            let err = (try? Data(contentsOf: d.appendingPathComponent("err.log"))) ?? Data()
+            FileHandle.standardOutput.write(out); fflush(stdout)
+            if process.terminationReason == .uncaughtSignal || process.terminationStatus != 0 {
+                FileHandle.standardError.write(err)
+                Self.killAll()
+                if process.terminationReason == .uncaughtSignal {
+                    FileHandle.standardError.write(Data("FAIL: store-perf section \(name) crashed (signal \(process.terminationStatus))\n".utf8))
+                }
+                exit(1)
+            }
+            FileHandle.standardError.write(err)
+            failures += Int((try? String(contentsOf: d.appendingPathComponent("failures"), encoding: .utf8)) ?? "0") ?? 0
+        }
     }
 }

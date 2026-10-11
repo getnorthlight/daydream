@@ -1,0 +1,68 @@
+{
+  "schema": "daydream-timeline/1",
+  "synthetic": true,
+  "name": "sleep-and-wake",
+  "about": "The Mac sleeps in the middle of a draft (lid closed), wakes twenty minutes later, recording comes back after the wake settles, and the person goes on typing. Every word made up.",
+  "start": "2026-10-06T09:00:00-05:00",
+  "timeZone": "America/Chicago",
+  "install": {
+    "kind": "fresh"
+  },
+  "events": [
+    {
+      "at": 0,
+      "op": "launch",
+      "how": "opened"
+    },
+    {
+      "at": 0.5,
+      "op": "record",
+      "on": true
+    },
+    {
+      "at": 1,
+      "op": "front",
+      "app": "TextEdit",
+      "bundle": "com.apple.TextEdit",
+      "window": "te-1",
+      "title": "todo.txt"
+    },
+    {
+      "at": 2,
+      "op": "type",
+      "text": "call the lumber yard"
+    },
+    {
+      "at": 6,
+      "op": "sleep"
+    },
+    {
+      "at": 1206,
+      "op": "wake"
+    },
+    {
+      "at": 1215,
+      "op": "type",
+      "text": "and the hardware store"
+    },
+    {
+      "at": 1230,
+      "op": "window",
+      "window": "te-2",
+      "title": "Untitled"
+    }
+  ],
+  "expect": {
+    "recordingAtEnd": true,
+    "typed": [
+      {
+        "bundle": "com.apple.TextEdit",
+        "words": "call the lumber yard"
+      },
+      {
+        "bundle": "com.apple.TextEdit",
+        "words": "and the hardware store"
+      }
+    ]
+  }
+}

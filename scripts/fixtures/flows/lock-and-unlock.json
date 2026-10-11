@@ -1,0 +1,68 @@
+{
+  "schema": "daydream-timeline/1",
+  "synthetic": true,
+  "name": "lock-and-unlock",
+  "about": "The screen locks during a draft (Control-Command-Q), stays locked three minutes, unlocks; recording resumes and the draft goes on. Every word made up.",
+  "start": "2026-10-06T09:00:00-05:00",
+  "timeZone": "America/Chicago",
+  "install": {
+    "kind": "fresh"
+  },
+  "events": [
+    {
+      "at": 0,
+      "op": "launch",
+      "how": "opened"
+    },
+    {
+      "at": 0.5,
+      "op": "record",
+      "on": true
+    },
+    {
+      "at": 1,
+      "op": "front",
+      "app": "Notes",
+      "bundle": "com.apple.Notes",
+      "window": "n-1",
+      "title": "Errands"
+    },
+    {
+      "at": 2,
+      "op": "type",
+      "text": "pick up the stain"
+    },
+    {
+      "at": 8,
+      "op": "lock"
+    },
+    {
+      "at": 188,
+      "op": "unlock"
+    },
+    {
+      "at": 195,
+      "op": "type",
+      "text": "and brushes"
+    },
+    {
+      "at": 210,
+      "op": "window",
+      "window": "n-2",
+      "title": "Garden"
+    }
+  ],
+  "expect": {
+    "recordingAtEnd": true,
+    "typed": [
+      {
+        "bundle": "com.apple.Notes",
+        "words": "pick up the stain"
+      },
+      {
+        "bundle": "com.apple.Notes",
+        "words": "and brushes"
+      }
+    ]
+  }
+}

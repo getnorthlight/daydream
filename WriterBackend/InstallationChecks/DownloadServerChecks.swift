@@ -154,7 +154,11 @@ func downloadServerChecks() async throws {
     let base = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("download-server-check-" + UUID().uuidString)
     try fm.createDirectory(at: base, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     defer { try? fm.removeItem(at: base) }
-    let quick = DownloadPatience(firstWait: 0.01, maximumWait: 0.05, giveUpAfter: 5)
+    // The patience runs on a fake clock (as in 13) that moves only by the retry waits, never on the wall clock: under load
+    // a run of cuts that kept no byte (6 once cut 25 times in a row in 5.2 s) used up a 5-second wall-clock patience and
+    // the download stopped on the cut's -1005, which is not what any of these cases is about.
+    let quickClock = FakeClock()
+    let quick = DownloadPatience(firstWait: 0.01, maximumWait: 0.05, giveUpAfter: 5, now: { quickClock.now }, sleep: { quickClock.advance($0) })
     func chunks(stall: TimeInterval = 5) -> ModelRangeChunks { { url, offset in try await AssetDownload.transfer(from: url, offset: offset, total: bytes, stall: stall) } }
     func root(_ name: String) throws -> URL { let u = base.appendingPathComponent(name); try fm.createDirectory(at: u, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]); return u }
     func run(_ name: String, patience: DownloadPatience = quick, stall: TimeInterval = 5, _ plan: @escaping (Int, Int?) -> FakeReply) async throws -> (Result<URL, Error>, [(path: String, start: Int?)], ProgressLog, URL) {
@@ -197,21 +201,23 @@ func downloadServerChecks() async throws {
     require(finished(result) && log.map(\.start) == [nil, 500_000] && !progress.failedShown, "a stalled transfer times out and resumes at 500,000 (\(log.map(\.start)))")
     // 5. A server that ignores Range (200 with the whole file): the partial file starts over and the file is right.
     // A cut connection can keep none of its bytes (the in-flight case above), and then the next request asks for no Range.
-    // So 5 and 6 cut at the start until the partial file holds bytes, and play their scenario at the first Range request.
+    // So 5 and 6 start with a try that stalls (as in 4: it times out with its bytes delivered, where a cut kept none of
+    // them 25 times in a row under load), repeated until the partial file holds bytes, and play their scenario at the
+    // first Range request.
     final class FirstRange { var index: Int? }
     let ranged = FirstRange()
-    (result, log, _, _) = try await run("norange") { index, start in
+    (result, log, _, _) = try await run("norange", stall: 1) { index, start in
         if start != nil, ranged.index == nil { ranged.index = index }
-        return ranged.index == nil ? .serve(cut: 600_000) : .serve(range: false)
+        return ranged.index == nil ? .serve(cut: 600_000, stall: 4) : .serve(range: false)
     }
     let r5 = ranged.index ?? -1
     require(finished(result) && r5 >= 1 && log.count == r5 + 2 && (log[r5].start ?? 0) > 0 && log[r5 + 1].start == nil,
             "a server without Range: the partial starts over once, the file is right (\(log.map(\.start)))")
     // 6. A 206 with the wrong Content-Range is never appended: tried again, then right.
     let wrong = FirstRange()
-    (result, log, _, _) = try await run("wrongrange") { index, start in
+    (result, log, _, _) = try await run("wrongrange", stall: 1) { index, start in
         if start != nil, wrong.index == nil { wrong.index = index; return .serve(wrongRange: true) }
-        return wrong.index == nil ? .serve(cut: 300_000) : .serve()
+        return wrong.index == nil ? .serve(cut: 300_000, stall: 4) : .serve()
     }
     let r6 = wrong.index ?? -1
     require(finished(result) && r6 >= 1 && log.count == r6 + 2 && (log[r6].start ?? 0) > 0 && log[r6].start == log[r6 + 1].start,
@@ -233,12 +239,18 @@ func downloadServerChecks() async throws {
     if case .failure(DownloadInterruption.status(302, _)) = result {} else { require(false, "a refused redirect stops: \(result)") }
     require(log.count == 1, "a refused redirect stops at once")
     // 11. Out of patience: 503 forever, stopped after the patience ran out, with the bytes already here kept for Try Again.
-    let short = DownloadPatience(firstWait: 0.01, maximumWait: 0.05, giveUpAfter: 0.4)
-    // (Cut until the partial file holds bytes, as in 5 and 6, then 503 from the first Range request on.)
+    // The patience runs on a fake clock (as in 13) that moves only by the retry waits, so it is spent by the 503s alone.
+    // On the wall clock (0.4 s) it raced the first try under load: a cut connection can lose all its bytes (one integration
+    // run cut 41 times in a row before a byte stayed), and with no byte on disk the patience counts from the start, so it
+    // ran out on the cut's -1005 before any 503 was asked for. The first try stalls after 800,000 bytes instead (as in 4):
+    // a stalled try times out with its bytes delivered. (Until the partial file holds bytes, every try is that first try;
+    // 503 from the first Range request on.)
+    let patienceClock = FakeClock()
+    let short = DownloadPatience(firstWait: 0.01, maximumWait: 0.05, giveUpAfter: 0.4, now: { patienceClock.now }, sleep: { patienceClock.advance($0) })
     let down = FirstRange()
-    (result, log, progress, dir) = try await run("down", patience: short) { index, start in
+    (result, log, progress, dir) = try await run("down", patience: short, stall: 1) { index, start in
         if start != nil, down.index == nil { down.index = index }
-        return down.index == nil ? .serve(cut: 800_000) : .status(503)
+        return down.index == nil ? .serve(cut: 800_000, stall: 4) : .status(503)
     }
     let kept = (try? fm.attributesOfItem(atPath: dir.appendingPathComponent(hash + ".partial").path)[.size] as? NSNumber)?.intValue
     if case .failure(DownloadInterruption.status(503, _)) = result {} else { require(false, "503 forever stops: \(result)") }

@@ -41,12 +41,7 @@ APPCHECKS="settings-hub-checks dd-menubar-checks dd-app-menu-checks dd-app-model
 # (sat/v1 dropped the DaydreamConnectionSetup package, so it is not in the object list.)
 if [ -n "${OB:-}" ] && [ -f scripts/typing-ui-checks.swift ]; then
   src=$(uicheck typing-ui-checks)
-  OUIFLAGS=(-D DEVELOPMENT_SOURCE_CHECKS -D DAYDREAM_OWNER_TYPING -D DAYDREAM_CHROME_TYPING -parse-as-library -module-cache-path "$I/modcache" -I "$OB/Modules"
-    -Xcc -fmodule-map-file="$PWD/Sources/CSQLite/module.modulemap" -Xcc -fmodule-map-file="$OB/CLlamaBridge.build/module.modulemap"
-    -Xcc -I -Xcc "$PWD/WriterBackend/Sources/CLlamaBridge/include")
-  step compile-owner-typing-ui-checks swiftc "${OUIFLAGS[@]}" -F "$OB" -framework Sparkle -Xlinker -rpath -Xlinker "$OB" \
-    "$APPSRC"/*.swift "$src" $(for t in MemoryCore MemoryUI HistoryCore CoreIntegration PrivacyPolicy BrowserBridge WriterBackend CLlamaBridge BackupRestore; do ls "$OB/$t.build/"*.o; done) \
-    -lc++ -o "$OUT/owner-typing-ui-checks"
+  step compile-owner-typing-ui-checks app_link "$OB" "$OUT/owner-typing-ui-checks" "$src" "${OMF[@]}"
   step owner-typing-ui-checks runui env DD_EXPECT_OWNER=1 "$OUT/owner-typing-ui-checks"
   # public-typing review (release, high): every other APP and UI check, flagged, against $OB (owner-lane.sh).
   OWNER_UI=1 source "$C/owner-lane.sh"

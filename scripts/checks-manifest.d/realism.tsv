@@ -1,0 +1,12 @@
+# Realism (test-suite phase 2): the owner's own bugs replayed where DayDream meets macOS. Steps: runner-1001/steps.d/realism.sh.
+step	lane	config	file	needs	min_pass	status	reason	since	review_by	tier
+realism-adhoc-identity	release	n/a	scripts/realism-adhoc-identity-checks.py,scripts/fixtures/realism/realism_fixtures.py	headless	23	known-failure	frozen 0.1.8 RC bug (owner bug 3 class): developer-id-release.py sign --identity - (the ad-hoc structure dry run) seals the app under com.getnorthlight.daydream, never .adhoc; not fixed here (RC frozen)	2026-10-08	2026-10-22	change
+realism-staging	release	n/a	scripts/realism-staging-checks.py	headless	5	known-failure	frozen 0.1.8 RC bugs (owner bug 11, 10/07 stale live copy): developer-id-release.py stage accepts a reused --scratch, package.sh builds in the persistent .build[-owner] scratch, stage-local-ui-update.py stages a MacMem from an older commit; none checks the staged binary against HEAD; not fixed here (RC frozen)	2026-10-08	2026-10-22	change
+realism-source-scan	smoke	n/a	scripts/realism-source-scan-checks.py	headless	15	required				change
+realism-skip-app	setup-ui	owner	scripts/realism-app-checks.swift,scripts/realism-seams.py,scripts/fixtures/realism/skip-app-bundle-ids.tsv	headless	68	required				rc
+realism-writer-binding	setup-ui	owner	scripts/realism-app-checks.swift,scripts/realism-seams.py	headless	6	required				rc
+realism-setup-poll	setup-ui	owner	scripts/realism-app-checks.swift,scripts/realism-seams.py	headless	5	known-failure	frozen 0.1.8 RC bug (owner bug 5 again, in setup's own window): PermissionGrantView's 2 s poll is a Timer.publish made in the view's init (PermissionSetup.swift), so every redraw of setup restarts it; setup's card showed Allowed only after 3.7 s, or not within 15 s, and never under a parent that redraws every second (the card alone: 1.7 s); not fixed here (RC frozen)	2026-10-08	2026-10-22	rc
+realism-setup-start	setup-ui	owner	scripts/realism-app-checks.swift,scripts/realism-seams.py	headless	19	required				rc
+realism-tcc-states	setup-ui	owner	scripts/realism-app-checks.swift,scripts/realism-seams.py	headless	17	required				rc
+realism-drag-caches	setup-ui	owner	scripts/realism-app-checks.swift,scripts/realism-seams.py	headless	7	required				rc
+realism-window-layouts	setup-ui	owner	scripts/realism-app-checks.swift,scripts/realism-seams.py,scripts/fixtures/realism/display-layouts.json	headless	48	required				rc

@@ -1,0 +1,18 @@
+Manifest fragments: rows a package adds without editing scripts/checks-manifest.tsv.
+
+scripts/verify-run-manifest.py loads every scripts/checks-manifest.d/*.tsv (lexical order) after the manifest. A
+fragment has the manifest's columns plus `tier` (its header line is required):
+
+  step lane config file needs min_pass status reason since review_by tier
+
+- tier: smoke | change | rc | nightly (blank = rc). TIER=<t> runs that tier and every lower one.
+- lane: a known lane (smoke, setup-ui, capture, storage, ai-tools, release, perf: verify-run-manifest.py KNOWN_LANES) or
+  one a fragment declares on a "# lanes: a,b" comment line (recording-harness.tsv declares flows). Any other lane is
+  refused, so a typo can't quietly make a new lane. runner-1001/lanes.sh runs a declared lane like the others.
+- timeout (optional last column; a row may leave the cell out): the step's own time limit in seconds (default
+  STEP_TIMEOUT, 900 s). The runner kills a step still running at its limit with its process group; the verdict names it
+  TIMEOUT <step> (runner-1001/bounded.sh).
+- A step listed in two files (the manifest and a fragment, or two fragments) is FAIL.
+- The steps themselves are runner-1001/steps.d/*.sh (see the README there); its known failures go in
+  scripts/checks-known-failures.d/*.tsv.
+- The `file` column counts for the inventory (verify-run-manifest.py --inventory) like a manifest row's.

@@ -77,6 +77,8 @@ OWNER_FLAG_PASSERS = {'scripts/package.sh', 'scripts/developer-id-release.py', '
 CHECK_AND_QA_PASSERS = {
     'runner-1001/run-checks.sh', 'runner-1001/owner-lane.sh', 'runner-1001/ui-checks.sh',  # 858ec32: the owner lane
     'runner-1001/wired-lanes.sh',              # e90eba2: Phase 1's wired lanes, owner flags
+    'runner-1001/steps.d/realism.sh',          # test-phase2 realism: its app checks, owner flags
+    'runner-1001/steps.d/recording-harness.sh',  # test-phase2 recording harness: its flows, owner flags
     'scripts/agent-tools-evals.py',            # f2e15e7: agent-tools evals, owner lane
     'scripts/compile-legacy-qa-boundary.py',   # c92de61: asserts the QA stage's flags
     'scripts/day-review-checks.swift',         # ba46541: its compile line in a comment

@@ -1,0 +1,9 @@
+# flow-replay's pins: the frozen 0.1.8 RC's findings (reason: scripts/checks-manifest.d/recording-harness.tsv; scripts/harness/README.md, "RC findings").
+step	exit	fail
+flow-replay	1	FAIL [bug-8] draft-extended-notes: the draft continued after a long pause keeps its exact "sig :(" ending
+flow-replay	1	FAIL [bug-8] draft-extended-notes: nothing typed is withheld as a secret
+flow-replay	1	FAIL [bug-8] draft-extended-notes: the continuation is the same unit's next part, not a lost carry
+flow-replay	1	FAIL [bug-8] draft-extended-textedit: the draft continued after a long pause keeps its exact "sig :(" ending
+flow-replay	1	FAIL [bug-8] draft-extended-textedit: nothing typed is withheld as a secret
+flow-replay	1	FAIL [bug-8] draft-extended-textedit: the continuation is the same unit's next part, not a lost carry
+flow-replay	1	FAIL [flows] google-searches-chrome: each search's typed search row reads back with its words

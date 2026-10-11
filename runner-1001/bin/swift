@@ -1,10 +1,12 @@
 #!/bin/bash
 # Shim: cap every build and remove machine-specific source/debug roots.
 # The product string scan must check connection literals, not compile-root metadata.
+# The roots are the source tree and the build folders' root: SHARED_BUILDS when lanes.sh shares one (the work folder is
+# not a root then, so the flags, and with them SwiftPM's incremental state, stay the same from run to run), else WORKDIR.
 if [ "${1:-}" = build ]; then
   shift
   maps=()
-  for root in "${SRC:-}" "${WORKDIR:-}"; do
+  for root in "${SRC:-}" "${SHARED_BUILDS:-${WORKDIR:-}}"; do
     if [ -n "$root" ]; then maps+=(-Xswiftc -debug-prefix-map -Xswiftc "$root=." -Xswiftc -file-prefix-map -Xswiftc "$root=." -Xcc "-fdebug-prefix-map=$root=."); fi
   done
   case " $* " in *" --jobs "*|*" -j "*) exec /usr/bin/swift build "$@" "${maps[@]}";; esac

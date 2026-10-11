@@ -208,8 +208,14 @@ private func runAgentBridgeChecks(home: URL) throws {
     _ = try store.ingest(typedRow("ash-old", "zebraquilt older entry", at: now.addingTimeInterval(-3 * 86400)), now: now)
     let capability = try store.grant(client: "fixture-host", recipient: "fixture-local", scopes: MemoryStore.assistantScopes)
     let reader = TypedReader(client: "fixture-host", recipient: "fixture-local", capability: capability)
+    // A search reads every typed row here (751) and stops after `agentSearchWall` (3 s) of real time. Under a loaded
+    // machine (the int2 rc run: 22 workers, 8 at a time) the socket search took longer than that and answered
+    // incomplete, so "bridge client: search v2 total and hits" failed. The wall clock is checked on its own below
+    // (`cut`, a clock that ticks); every other search here reads a clock that doesn't move, so it always reads every row.
+    let stopped: () -> Date = { now }
     func ask(_ o: [String: Any], enabled: Bool = true) -> [String: Any] {
-        store.assistantBridgeAnswer(o.merging(["client": reader.client, "recipient": reader.recipient, "capability": reader.capability]) { $1 }, enabled: enabled)
+        store.assistantBridgeAnswer(o.merging(["client": reader.client, "recipient": reader.recipient, "capability": reader.capability]) { $1 }, enabled: enabled,
+                                    searchClock: stopped)
     }
 
     // words: 400 per request, the rest named in `more`; every word through the policy.
@@ -236,12 +242,13 @@ private func runAgentBridgeChecks(home: URL) throws {
               "bridge words: a reply stays under the socket limit and names the rest (\(bytes / 1000) KB)")
 
     // search v2: every row, the true total, the limit, a range, the wall clock.
-    let all = try store.assistantTypedSearch("zebraquilt row", start: nil, end: nil, limit: 20, reader: reader, enabled: true, now: now)
+    let all = try store.assistantTypedSearch("zebraquilt row", start: nil, end: nil, limit: 20, reader: reader, enabled: true, now: now, clock: stopped)
     try check(all.total == 450 && all.hits.count == 20 && all.complete && all.oldestScanned == nil, "bridge search: total counts every match (450), 20 listed, complete")
     try check(all.hits.first?.id == "ash-449" && all.hits.allSatisfy { !$0.snippet.contains("ref=") }, "bridge search: newest first, snippets through the policy")
-    let older = try store.assistantTypedSearch("zebraquilt older", start: nil, end: nil, limit: nil, reader: reader, enabled: true, now: now)
+    let older = try store.assistantTypedSearch("zebraquilt older", start: nil, end: nil, limit: nil, reader: reader, enabled: true, now: now, clock: stopped)
     try check(older.total == 1 && older.hits.first?.id == "ash-old", "bridge search: no 7-day window inside retention (a 3-day-old row is found)")
-    let ranged = try store.assistantTypedSearch("zebraquilt row", start: base.addingTimeInterval(100), end: base.addingTimeInterval(200), limit: 500, reader: reader, enabled: true, now: now)
+    let ranged = try store.assistantTypedSearch("zebraquilt row", start: base.addingTimeInterval(100), end: base.addingTimeInterval(200), limit: 500, reader: reader, enabled: true, now: now,
+                                                clock: stopped)
     try check(ranged.total == 100 && ranged.hits.count == 100, "bridge search: start..<end bounds the rows (100)")
     var ticks = 0.0
     let cut = try store.assistantTypedSearch("zebraquilt row", start: nil, end: nil, limit: 20, reader: reader, enabled: true, now: now, wall: 10,
@@ -250,7 +257,7 @@ private func runAgentBridgeChecks(home: URL) throws {
     let reply = ask(["op": "search", "query": "zebraquilt row", "limit": 5])
     try check(reply["status"] as? String == "ok" && (reply["hits"] as? [[String: String]])?.count == 5 && (reply["total"] as? Int) == 450 && reply["complete"] as? Bool == true,
               "bridge search op: hits, total, complete")
-    let legacy = try store.assistantTypedSearch("zebraquilt row", reader: reader, enabled: true, now: now)
+    let legacy = try store.assistantTypedSearch("zebraquilt row", reader: reader, enabled: true, now: now, clock: stopped)
     try check(legacy.count == 20 && legacy.allSatisfy { $0["id"] != nil && $0["at"] != nil && $0["snippet"] != nil }, "bridge search: the 0.1.4 form still answers")
 
     // In-process source (WP-D's fixture path): the same answers and errors.
@@ -262,16 +269,21 @@ private func runAgentBridgeChecks(home: URL) throws {
 
     // Over the real socket, read by a keyless reader the way `mac-mem mcp` reads.
     var enabled = true
-    let server = AssistantTypedBridgeServer(home: home) { request in store.assistantBridgeAnswer(request, enabled: enabled) }
+    let server = AssistantTypedBridgeServer(home: home) { request in store.assistantBridgeAnswer(request, enabled: enabled, searchClock: stopped) }
     try check(server.start(), "bridge listens in the scratch home")
     defer { server.stop() }
-    let client = AgentBridgeSource(home: home, client: reader.client, recipient: reader.recipient, capability: reader.capability)
+    var client = AgentBridgeSource(home: home, client: reader.client, recipient: reader.recipient, capability: reader.capability)
+    // The same for the socket's waits (8 s for words, 10 s for a search): beside 16 busy processes the 450 ids' first
+    // request took longer than 8 s here and read as "DayDream is closed". What these checks read is the answer, not how fast.
+    client.waitFactor = 30
     try check(client.policy() == AgentBridgePolicy(reachable: true, typedWords: true, vault: .ready), "bridge policy op: reachable, on, ready")
     let socketWords = try client.words(ids + ids.prefix(3) + ["", "ash-missing"])
     try check(socketWords.count == 450 && socketWords["ash-missing"] == nil, "bridge client: 450 ids over two requests, duplicates and unknown ids left out")
     let longWords = try client.words(longIDs)
     try check(longWords.count == 300 && longWords.values.allSatisfy { $0.hasPrefix("zebraquilt long words") }, "bridge client: long words over several requests within the budget")
+    let searchStart = Date()
     let found = try client.search("zebraquilt row", start: nil, end: nil, limit: 3)
+    print(String(format: "BENCH bridge client search over the socket: %d matches in %.0f ms (the client waits 10 s)", found.total, Date().timeIntervalSince(searchStart) * 1000))
     try check(found.total == 450 && found.hits.count == 3 && found.complete, "bridge client: search v2 total and hits")
 
     let reader2 = try MemoryStore(home: home)

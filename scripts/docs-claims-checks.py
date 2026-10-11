@@ -559,6 +559,28 @@ class TypesenseClaims(unittest.TestCase):
         self.assertIn("'--typesense-source-kit'", read("scripts/developer-id-release.py"))
 
 
+class McpNetworkClaim(unittest.TestCase):
+    """rel-019 (owner 10/10): the MCP server's `search` asks DayDream's own bundled Typesense on 127.0.0.1 over HTTP, so
+    no page may say it makes no network connection at all. Every page that describes its connections says the README's
+    words, and the old absolute claim is gone."""
+    WORDS = "connects to nothing outside your Mac: it only asks DayDream's own search server on `127.0.0.1`"
+    PAGES = ["README.md", "SECURITY.md", "docs/README-details.md", "docs/privacy-model.md"]
+
+    def test_pages_say_it_asks_the_local_search_server(self):
+        for rel in self.PAGES:
+            text = " ".join(read(rel).split())
+            self.assertIn(self.WORDS, text, rel)
+
+    def test_no_page_says_it_never_connects(self):
+        for rel in self.PAGES + ["docs/faq.md", "PRIVACY.md"]:
+            path = ROOT / rel
+            if not path.exists():
+                continue
+            text = " ".join(path.read_text().split()).lower()
+            for old in ["makes no network connection", "never connects to anything", "server itself never connects"]:
+                self.assertNotIn(old, text, f"{rel}: {old}")
+
+
 class DaydreamLicense(unittest.TestCase):
     """license-1005 (owner decision, "MIT."): DayDream's own code is MIT. Third-party components keep their own
     licenses: Typesense stays GPL-3.0, Qwen stays Apache-2.0, and the credits still name every one of them."""

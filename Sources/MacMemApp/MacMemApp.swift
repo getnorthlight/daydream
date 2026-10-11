@@ -208,6 +208,16 @@ import WriterBackend
     var wakeSystem=WakeSystem.live
     /// The one "DayDream stopped recording" notification; silent outside the app bundle.
     var noticeCenter=RecordingNoticeCenter.live
+    /// rel-019: the recording-off reminder (RecordingReminder.swift): its reads, its one panel and the day it last showed.
+    /// Inert outside the app bundle; the checks inject their own and call `reminderTick` themselves.
+    var reminderSystem=RecordingReminderSystem.live { didSet {reminderState=nil} }
+    /// The reminder's count and the day it last showed (read from `reminderSystem.defaults` at the first reading).
+    private(set) var reminderState:RecordingReminder?
+    /// The reminder is on screen.
+    private(set) var reminderShown=false
+    /// Where its Start Recording goes when setup must open first (the menu bar's routes, set by the menu bar item's label,
+    /// which exists from launch: a login launch shows no window); nil: the setup window the main window set.
+    var reminderRoutes:DaydreamMenuBarRoutes?
     /// The person wants recording on: set whenever recording starts, cleared when they pause or stop (or a setting
     /// they saved stops it) and when recording stops on its own. Sleep, a screen lock, a user switch and quitting
     /// leave it on, so recording starts again afterwards (at the next launch too: `LaunchResume`).
@@ -748,7 +758,11 @@ import WriterBackend
             })
             maintenance = Timer.scheduledTimer(withTimeInterval:60,repeats:true) { [weak self] _ in
                 // The summary job and a deletion that failed each run again, so their orange lines clear by themselves.
-                Task { @MainActor in self?.scheduleLegacySummaries(); self?.retryFailedDeletions() }
+                Task { @MainActor in
+                    self?.scheduleLegacySummaries(); self?.retryFailedDeletions()
+                    // rel-019: the recording-off reminder's reading, once a minute (the app only: `drives`).
+                    if self?.reminderSystem.drives == true {self?.reminderTick()}
+                }
             }
             }
             if let store {
@@ -1291,6 +1305,8 @@ import WriterBackend
         let running = coordinator?.recordingSettled ?? false
         #endif
         if recording != running { recording = running }
+        // rel-019: recording started (by any control): the recording-off reminder goes.
+        if running && reminderShown {hideReminder()}
         // A recorder that stopped itself (a failed save, a lost tap) is not live: drop it, so a lock that follows never
         // pauses it again with "Resumes after unlock" (EventCapture.onStopped does the same at once).
         if capture?.isStopped == true {capture=nil}
@@ -1652,6 +1668,58 @@ import WriterBackend
                 finish()
             }
         }
+    }
+    /// rel-019: where recording stands for the recording-off reminder (RecordingReminder.Standing). Reads only: the
+    /// state the surfaces show and the permissions' preflight read (never a request).
+    var reminderStanding:RecordingReminder.Standing {
+        guard development == nil,!recordingTrial,!functionalTrial else {return .notApplicable}
+        guard UserDefaults.standard.bool(forKey:Self.setupCompletedKey) else {return .setupUnfinished}
+        if pauseUntil != nil {return .timedPause}
+        // On, or DayDream starting it by itself: after a wake, a save, a failed save's wait, an import, a history opening.
+        if recording || recordingWanted || startWhenFree || resumeAfterSave || storageRetry.active || historyOpening
+            || (wake.suspended && wake.plan != .nothing) {return .recording}
+        if !Self.permissionsGranted() || inputNeedsReopen || resumeUnavailable == RecordingCopy.permissionBlocker {return .permissionMissing}
+        // rel-019 final: the two other places Start goes to setup first (`setupStepForStart`), read without its saves:
+        // Input Monitoring turned on after launch (it works once DayDream reopens: setup's Quit & Reopen) and a change
+        // that didn't save (setup's Apps page; a change still waiting for its short save delay is not one: Start saves
+        // it). The reminder never offers a Start that would open setup.
+        if PermissionRelaunch.reason(inputMonitoringAtLaunch:permissionsAtLaunch?.inputMonitoring,accessibility:true,inputMonitoring:true) != nil,
+           Self.canReopen() {return .permissionMissing}
+        if preferenceProblem != nil {return .blocked}
+        // Asleep, locked or switched away, Start's blocker is that ("Resume after waking"): not counted then (the reading
+        // says so), and not a reason to start the hour over.
+        if store == nil || coordinator == nil || launchLocation.blocksRecording || (awake && resumeUnavailable != nil) {return .blocked}
+        return .off
+    }
+    /// rel-019: one reading for the recording-off reminder (the minute timer in the app; the checks call it). Shows it once
+    /// recording has been off for about an hour of use, at most once a day; takes it down once recording isn't off.
+    func reminderTick() {
+        let standing=reminderStanding
+        if reminderShown && !RecordingReminder.stillApplies(standing) {hideReminder()}
+        let reading=RecordingReminder.Reading(standing:standing,idle:reminderSystem.idleSeconds(),locked:wakeSystem.screenLocked(),
+                                              asleep:!awake,onConsole:wakeSystem.onConsole())
+        var state=reminderState ?? RecordingReminder(shownDay:reminderSystem.defaults?.string(forKey:RecordingReminder.shownDayKey))
+        let show=state.read(reading,now:reminderSystem.now(),calendar:activity.calendar)
+        reminderState=state
+        guard show else {return}
+        reminderSystem.defaults?.set(state.shownDay,forKey:RecordingReminder.shownDayKey)
+        reminderShown=true
+        reminderSystem.show({ [weak self] in self?.reminderStart() },{ [weak self] in self?.hideReminder() })
+    }
+    /// The reminder's Start Recording: exactly the menu bar's Start Recording (its panel's `resume`, `requestStart`), which
+    /// records, or opens setup at the step that must be done first.
+    func reminderStart() {
+        hideReminder()
+        let routes=reminderRoutes ?? DaydreamMenuBarRoutes(openWindow:{ [weak self] id in
+            if id == "onboarding" {self?.openSetupWindow?()} else if id == "permissions" {self?.openPermissionsWindow?()}
+        })
+        DaydreamMenuBarPanel.actions(model:self,routes:routes).resume()
+    }
+    /// The reminder's ✕, or recording no longer off.
+    func hideReminder() {
+        guard reminderShown else {return}
+        reminderShown=false
+        reminderSystem.hide()
     }
     func startCapture() {
         guard development == nil else {return}
@@ -2575,6 +2643,8 @@ import WriterBackend
         inputWatchInterrupted()
         let effects=wake.begin(suspension,wantsRecording:recordingWanted,timedPauseUntil:pauseUntil,recorderActive:active)
         awake=false
+        // rel-019: the time across a sleep, lock or user switch is never use (the reminder's count).
+        reminderState?.interrupted()
         runWake(effects)
         refreshCaptureStatus()
         if suspension != .sleep {startWakeReconcile()}
@@ -3867,7 +3937,8 @@ struct MacMemApplication: App {
             if let model = session.model { DaydreamAppMenuBarPanel(model: model) }
             else { DaydreamMenuBarIsolatedPanel(line: session.preparing ? MenuBarMenu.preparingLine : MenuBarMenu.isolatedLine) }
         } label: {
-            if let model = session.model { DaydreamMenuBarLabel(model: model) }
+            // rel-019 final: the recording-off reminder's Start gets the menu bar's routes here (the label exists from launch).
+            if let model = session.model { DaydreamMenuBarLabel(model: model).modifier(RecordingReminderRoutes(model: model)) }
             else { DaydreamMenuBarIsolatedLabel() }
         }
         .menuBarExtraStyle(.window)

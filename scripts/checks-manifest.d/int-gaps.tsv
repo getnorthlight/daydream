@@ -1,0 +1,6 @@
+# test-p2-int: the gaps the integration closed. Steps: runner-1001/steps.d/int-gaps.sh. The optional timeout column is the
+# step's own time limit in seconds (runner-1001/bounded.sh; default STEP_TIMEOUT, 900 s).
+step	lane	config	file	needs	min_pass	status	reason	since	review_by	tier	timeout
+owner-summaries-this-mac	ai-tools	owner	scripts/summaries-this-mac-checks.swift	headless	13	required				change
+owner-coordinator-healthy	capture	owner	scripts/coordinator-healthy-checks.swift	headless	14	required				change
+runner-timeout-toy	smoke	n/a	scripts/runner-timeout-toy-checks.sh	headless	2	required				smoke	20

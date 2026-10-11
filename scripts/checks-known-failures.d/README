@@ -1,0 +1,9 @@
+Known-failure pin fragments: pins a package adds without editing scripts/checks-known-failures.tsv.
+
+scripts/verify-run-manifest.py loads every scripts/checks-known-failures.d/*.tsv (lexical order) after the pin file,
+with the same columns (header line required):
+
+  step exit fail
+
+Each step must be a known-failure row of the manifest or a manifest fragment. A step's pins live in one file: a step
+pinned in two files is FAIL.

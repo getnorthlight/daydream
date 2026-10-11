@@ -816,6 +816,15 @@ actor FakeOpenRouter {
         sink.cancel()
         await finish(second)
     }
+    /// Try Again, then its own pass, start to end. That pass runs a few tasks after `retry()` returns (the failed loads
+    /// forgotten, the held moments released, then a wake). A fixed sleep after `retry()` raced it under load: the
+    /// scenario's next `pass(.explicit)` found it still running and returned at once (its reason left to that pass), so
+    /// the failed loads it was meant to make hadn't happened when the phase was read. Waits for the event instead.
+    @MainActor static func retryAndSettle(_ rig: Rig) async {
+        let passes = rig.writer.counters.eventPasses
+        rig.writer.retry()
+        await until(30) { rig.writer.counters.eventPasses > passes && !rig.writer.passRunning }
+    }
     /// The model can't load twice in a row: its line and Try Again; a load that works clears it.
     @MainActor static func modelWontStart() async throws {
         let rig = try await rig("wont-start")
@@ -830,9 +839,7 @@ actor FakeOpenRouter {
         let states = try statuses(rig)
         check(!states.contains("pending"), "a model that won't load leaves nothing waiting for a Retry button", "\(states)")
         await rig.model.set(failLoad: false)
-        rig.writer.retry()
-        for _ in 0..<100 { if await rig.model.loads > 0 { break }; await sleep(0.02) }
-        await sleep(0.2)
+        await retryAndSettle(rig)
         check(rig.writer.phase == .on(.local), "Try Again: the model loads and summaries are on", "\(rig.writer.phase)")
         // fix/sx-all round 2: Try Again forgets the loads that failed before: one more failed load after it is not the
         // line again (it took two in a row), so the switch never snaps back at the next pass.
@@ -841,8 +848,7 @@ actor FakeOpenRouter {
         check(rig.writer.phase == .failed(.modelWontStart), "two failed loads in a row: the line again", "\(rig.writer.phase)")
         rig.clock.advance(120); try moment(rig, "w5", "Plan E", ago: 700)
         let before = await rig.model.loadAttempts
-        rig.writer.retry()
-        await sleep(0.3)
+        await retryAndSettle(rig)
         let triedAgain = await rig.model.loadAttempts - before
         check(rig.writer.phase == .on(.local) && triedAgain > 0, "Try Again resets the failed loads: its own failed load keeps the switch on", "\(rig.writer.phase)")
         rig.clock.advance(120); try moment(rig, "w6", "Plan F", ago: 700); await rig.writer.pass(.explicit)
@@ -851,8 +857,7 @@ actor FakeOpenRouter {
         // now (no waiting line). Only where background writing waits (Low Power Mode, under 20%, hot) does Try Again say
         // the model is tried when the Mac is plugged in.
         rig.power.value = .battery
-        rig.writer.retry()
-        await sleep(0.3)
+        await retryAndSettle(rig)
         check(rig.writer.phase == .on(.local) && !rig.writer.retryWaitsForPower,
               "Try Again on battery: the switch on, the model tried now (no waiting line)", "\(rig.writer.phase) \(rig.writer.retryWaitsForPower)")
         await rig.model.set(failLoad: true)
@@ -860,8 +865,7 @@ actor FakeOpenRouter {
         rig.clock.advance(120); try moment(rig, "w8", "Plan H", ago: 700); await rig.writer.pass(.explicit)
         var lowPower = ModelPower.battery; lowPower.lowPowerMode = true
         rig.power.value = lowPower
-        rig.writer.retry()
-        await sleep(0.3)
+        await retryAndSettle(rig)
         check(rig.writer.phase == .on(.local) && rig.writer.retryWaitsForPower
               && WriterPreferences.waitsForPowerLine == "The model is tried again when your Mac is plugged in.",
               "Try Again in Low Power Mode: the switch on, and its line says the model is tried when the Mac is plugged in", "\(rig.writer.phase)")
@@ -921,7 +925,9 @@ actor FakeOpenRouter {
         await rig.model.set(held: true)
         let ticksBefore = rig.writer.counters.passTicks
         let first = Task { await rig.writer.pass(.explicit) }
-        for _ in 0..<300 where await rig.model.answers == 0 { await sleep(0.01) }
+        // Waits for the event, not 300 short sleeps: under load (24 busy processes) the pass needed more than those 3 s to
+        // reach the model. 20 s at most each, so both waits stay inside the 60-second watchdog.
+        await until(20) { await rig.model.answers > 0 }
         check(await rig.model.answers > 0, "held: the first pass is writing (fixture)")
         let timerBefore = rig.writer.counters.timerPasses
         await rig.writer.pass(.timer)
@@ -938,7 +944,7 @@ actor FakeOpenRouter {
         await rig.model.set(held: true)
         let answersBefore = await rig.model.answers
         let note = Task { try await rig.writer.generate(day: target.day, timezone: zone, activityID: target.id, lastActivity: rig.clock.now.addingTimeInterval(-800)) }
-        for _ in 0..<300 where await rig.model.answers == answersBefore { await sleep(0.01) }
+        await until(20) { await rig.model.answers > answersBefore }
         let heldBefore = rig.writer.counters.heldPasses
         await rig.writer.pass(.timer)
         check(rig.writer.counters.heldPasses == heldBefore + 1, "held: the timer's pass during Summarize Now returns at once")

@@ -72,6 +72,9 @@ public struct AgentBridgeSource: AgentTypedSource {
     public var reader: TypedReader
     /// Set only by `mac-mem --local agent-preview` when the owner passed `AgentOwnerPreview.cliFlag`.
     public var ownerPreview: Bool
+    /// Checks only: each request waits this many times the app's wait (2 s policy, 8 s words, 10 s search), so a
+    /// loaded machine can't turn a slow answer into "DayDream is closed". The app and the CLI keep 1.
+    public var waitFactor = 1
 
     public init(home: URL, client: String = "", recipient: String = "", capability: String = "", ownerPreview: Bool = false) {
         self.home = home
@@ -93,7 +96,7 @@ public struct AgentBridgeSource: AgentTypedSource {
         return o
     }
     func answer(_ request: [String: Any], timeout: Int) throws -> [String: Any] {
-        guard let reply = AssistantTypedBridge.call(home: home, request, timeout: timeout) else { throw AgentBridgeError.unavailable(.appClosed) }
+        guard let reply = AssistantTypedBridge.call(home: home, request, timeout: timeout * max(1, waitFactor)) else { throw AgentBridgeError.unavailable(.appClosed) }
         if let error = AgentBridgeError.from(status: reply["status"] as? String) { throw error }
         return reply
     }

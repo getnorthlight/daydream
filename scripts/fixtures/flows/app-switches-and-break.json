@@ -1,0 +1,142 @@
+{
+  "schema": "daydream-timeline/1",
+  "synthetic": true,
+  "name": "app-switches-and-break",
+  "about": "A working stretch: Terminal, TextEdit and Chrome in turn, a typo fixed with backspaces, then a six-minute break away from the Mac and back to TextEdit. Every word made up.",
+  "start": "2026-10-06T09:00:00-05:00",
+  "timeZone": "America/Chicago",
+  "install": {
+    "kind": "fresh"
+  },
+  "events": [
+    {
+      "at": 0,
+      "op": "launch",
+      "how": "opened"
+    },
+    {
+      "at": 0.5,
+      "op": "record",
+      "on": true
+    },
+    {
+      "at": 1,
+      "op": "front",
+      "app": "Terminal",
+      "bundle": "com.apple.Terminal",
+      "window": "term-1",
+      "title": "build - zsh"
+    },
+    {
+      "at": 2,
+      "op": "type",
+      "text": "git status"
+    },
+    {
+      "at": 5,
+      "op": "key",
+      "key": "return"
+    },
+    {
+      "at": 12,
+      "op": "front",
+      "app": "TextEdit",
+      "bundle": "com.apple.TextEdit",
+      "window": "te-1",
+      "title": "plan.txt"
+    },
+    {
+      "at": 13,
+      "op": "type",
+      "text": "order the cedra"
+    },
+    {
+      "at": 15,
+      "op": "backspace",
+      "count": 3
+    },
+    {
+      "at": 16,
+      "op": "type",
+      "text": "dar boards"
+    },
+    {
+      "at": 30,
+      "op": "front",
+      "app": "Google Chrome",
+      "bundle": "com.google.Chrome",
+      "window": "cw-1"
+    },
+    {
+      "at": 30.3,
+      "op": "tab",
+      "tab": "t-1",
+      "url": "https://example.com/lumber",
+      "title": "Synthetic lumber yard"
+    },
+    {
+      "at": 45,
+      "op": "tab",
+      "tab": "t-2",
+      "url": "https://example.org/screws",
+      "title": "Synthetic screw sizes"
+    },
+    {
+      "at": 60,
+      "op": "front",
+      "app": "TextEdit",
+      "bundle": "com.apple.TextEdit",
+      "window": "te-1",
+      "title": "plan.txt"
+    },
+    {
+      "at": 61,
+      "op": "type",
+      "text": " on friday"
+    },
+    {
+      "at": 440,
+      "op": "input",
+      "kind": "click"
+    },
+    {
+      "at": 441,
+      "op": "type",
+      "text": "back from lunch"
+    },
+    {
+      "at": 460,
+      "op": "window",
+      "window": "te-2",
+      "title": "Untitled 2"
+    }
+  ],
+  "expect": {
+    "never": [
+      "cedra"
+    ],
+    "recordingAtEnd": true,
+    "typed": [
+      {
+        "bundle": "com.apple.Terminal",
+        "words": "git status"
+      },
+      {
+        "bundle": "com.apple.TextEdit",
+        "words": "order the cedar boards"
+      },
+      {
+        "bundle": "com.apple.TextEdit",
+        "words": " on friday"
+      },
+      {
+        "bundle": "com.apple.TextEdit",
+        "words": "back from lunch"
+      }
+    ],
+    "pages": [
+      "Synthetic lumber yard",
+      "Synthetic screw sizes"
+    ]
+  }
+}

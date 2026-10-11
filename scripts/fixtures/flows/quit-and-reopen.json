@@ -1,0 +1,73 @@
+{
+  "schema": "daydream-timeline/1",
+  "synthetic": true,
+  "name": "quit-and-reopen",
+  "about": "A draft typed, DayDream quit from its menu mid-sentence, opened again from the Dock a minute later, and the person types on. Every word made up.",
+  "start": "2026-10-06T09:00:00-05:00",
+  "timeZone": "America/Chicago",
+  "install": {
+    "kind": "fresh"
+  },
+  "events": [
+    {
+      "at": 0,
+      "op": "launch",
+      "how": "opened"
+    },
+    {
+      "at": 0.5,
+      "op": "record",
+      "on": true
+    },
+    {
+      "at": 1,
+      "op": "front",
+      "app": "TextEdit",
+      "bundle": "com.apple.TextEdit",
+      "window": "te-1",
+      "title": "letter.txt"
+    },
+    {
+      "at": 2,
+      "op": "type",
+      "text": "dear neighbor about the fence"
+    },
+    {
+      "at": 10,
+      "op": "quit"
+    },
+    {
+      "at": 70,
+      "op": "launch",
+      "how": "opened"
+    },
+    {
+      "at": 72,
+      "op": "type",
+      "text": "thanks for waiting"
+    },
+    {
+      "at": 90,
+      "op": "window",
+      "window": "te-2",
+      "title": "Untitled"
+    }
+  ],
+  "expect": {
+    "opened": [
+      "other",
+      "other"
+    ],
+    "recordingAtEnd": true,
+    "typed": [
+      {
+        "bundle": "com.apple.TextEdit",
+        "words": "dear neighbor about the fence"
+      },
+      {
+        "bundle": "com.apple.TextEdit",
+        "words": "thanks for waiting"
+      }
+    ]
+  }
+}

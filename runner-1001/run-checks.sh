@@ -14,7 +14,11 @@ WT=${SRC:-$(cd "$C/.." && pwd)}
 # Resolved: /var/tmp and /tmp are symlinks, and the writer's installer, the release tools and several stores refuse a
 # path under a symlink (or compare resolved paths), so a WORKDIR under /var/tmp failed them for that reason alone.
 I=${WORKDIR:-$WT/.build/checks}; mkdir -p "$I"; I=$(cd "$I" && pwd -P)
-BUILD=${BUILD:-$I/build-public}
+# SHARED_BUILDS (runner-1001/lanes.sh): the folder every build's scratch lives in (public/owner debug and release, the
+# PrivacyPolicy, WriterBackend, BrowserBridge and device-test packages), shared by a run's lanes and kept across runs
+# for incremental builds. Default: this work folder.
+SB=${SHARED_BUILDS:-$I}; mkdir -p "$SB"; SB=$(cd "$SB" && pwd -P)
+BUILD=${BUILD:-$SB/build-public}
 LABEL=${1:-run}
 OUT=$I/out-$LABEL
 rm -rf "$OUT"; mkdir -p "$OUT" "$I/tmp" "$I/modcache" "$OUT/src"
@@ -31,8 +35,10 @@ case "$I" in /private/var/*|/private/tmp/*)
   echo "      /var or /tmp symlink and the plan refuses the scratch folder. An app behaviour (reported, not hidden); use a"
   echo "      work folder outside /var and /tmp (for example ~/DaydreamReleases/<run>) for a clean run." ;;
 esac
-LANE_ONLY=
-if [ -n "${LANES:-}" ]; then LANE_ONLY=$(python3 scripts/verify-run-manifest.py --lanes-regex "$LANES") || { echo "REFUSING: bad LANES=$LANES"; exit 1; }; fi
+# TIER=smoke|change|rc|nightly runs that tier's rows and every lower tier's (default rc); LANES=a,b narrows to those
+# lanes (the builds always run). Both come from the manifest and its fragments (verify-run-manifest.py --select-regex).
+TIER=${TIER:-rc}
+LANE_ONLY=$(python3 scripts/verify-run-manifest.py --select-regex --lanes "${LANES:-}" --tier "$TIER") || { echo "REFUSING: bad LANES=${LANES:-} or TIER=$TIER"; exit 1; }
 # gold/int: every APP-recipe check builds MemoryViewModel with -D DEVELOPMENT_SOURCE_CHECKS, where the typing keys are
 # in memory (gold/lifecycle's MemoryViewModel.typedKeyStore). Refuse a tree without that seam: its checks would reach
 # the real Keychain at launch (TypedTextLaunch.wire).
@@ -50,12 +56,33 @@ skipped() { [ -n "${SKIP:-}" ] && [[ $1 =~ $SKIP ]]; }
 # DRYRUN=1 lists the steps (names and commands in $OUT/DRYRUN-steps.tsv) without building or running anything.
 # LANES=smoke,storage runs the steps the manifest (scripts/checks-manifest.tsv) puts in those lanes, plus the builds.
 # The run's result is scripts/verify-run-manifest.py over SUMMARY (see the end of this file), not a count of red steps.
+# PREBUILT=1 (runner-1001/lanes.sh's workers): the builds ran once before the lanes, into BUILD/OBUILD; skip them here.
+# Every step's wall time goes to $OUT/TIMES ("name seconds"); SUMMARY's format is unchanged.
+PREBUILT_RE='^(build|owner-build|app-module|owner-app-module)$'
+# Per-step time limit (runner-1001/bounded.sh): a step still running after its limit is killed with its whole process
+# group and fails as "FAIL TIMEOUT <step>" (exit 124); the verdict names it "TIMEOUT <step>". Default STEP_TIMEOUT
+# (900 s); a row's own limit is the manifest's (or its fragment's) `timeout` column; a step fragment can set one with
+# `step_timeout NAME SECONDS` before its step. (A mutation of the permission-drag-guide onDrag fix once hung its step,
+# and mutate.sh with it, for 37 minutes.)
+source "$C/bounded.sh"
+STEP_TIMEOUTS=$(python3 scripts/verify-run-manifest.py --timeouts) || { echo "REFUSING: the manifest's timeouts do not load"; exit 1; }
+trap 'end_step_groups; exit 143' TERM
+trap 'end_step_groups; exit 130' INT
+trap 'end_step_groups; exit 129' HUP
 step() { local name=$1; shift; if [ -n "${ONLY:-}" ] && ! [[ $name =~ $ONLY ]]; then return 0; fi
   if [ -n "${LANE_ONLY:-}" ] && ! [[ $name =~ $LANE_ONLY ]]; then return 0; fi
+  if [ -n "${PREBUILT:-}" ] && [[ $name =~ $PREBUILT_RE ]]; then return 0; fi
   if [ -n "${DRYRUN:-}" ]; then summary+=("$name DRYRUN"); printf '%s\t%s\n' "$name" "$*" >> "$OUT/DRYRUN-steps.tsv"; return 0; fi
-  if skipped "$name"; then summary+=("$name SKIPPED-UI"); echo "$name SKIPPED-UI"; return 0; fi; "$@" >"$OUT/$name.log" 2>&1; local rc=$?
+  if skipped "$name"; then summary+=("$name SKIPPED-UI"); echo "$name SKIPPED-UI"; return 0; fi
+  local t0=$SECONDS rc nic=
+  # COMPILE_NICE=N (lanes.sh: 10): builds and compiles run at that niceness, so that the checks running in other
+  # workers at the same time keep the CPU (core-adapter's 1-second wall-clock window failed under 11 workers' compiles).
+  if [ -n "${COMPILE_NICE:-}" ] && [[ $name =~ ^compile-|(^|-)build($|-)|app-module$ ]]; then nic=$COMPILE_NICE; fi
+  run_bounded "$name" "$(step_limit "$name")" "$OUT/$name.log" "$nic" "$@"; rc=$?
+  printf '%s %d\n' "$name" $((SECONDS-t0)) >> "$OUT/TIMES"
   if [ "$rc" -ne 0 ]; then failed_steps=$((failed_steps+1)); fi
-  summary+=("$name exit=$rc pass=$(passes "$OUT/$name.log")"); echo "$name exit=$rc"; }
+  summary+=("$name exit=$rc pass=$(passes "$OUT/$name.log")")
+  if grep -q "^FAIL TIMEOUT $name:" "$OUT/$name.log" 2>/dev/null; then echo "$name exit=$rc TIMEOUT"; else echo "$name exit=$rc"; fi; }
 # PASS lines: a check's PASS / unittest "... ok" / node "# pass" lines and its own "N passed" total line. Compiler output
 # never counts: a source excerpt ("129 |   print(\"... passed\")") or a diagnostic ("/path:12:3: warning: ...") quoting
 # "passed" made a build log count 1 in a fresh scratch and 0 in an incremental one.
@@ -66,12 +93,33 @@ objs() { for t in "$@"; do ls "$B/$t.build/"*.o; done; }
 # changed). Short because browser-app-0227 binds a UNIX socket in that root and
 # sun_path holds at most 104 bytes; the scratch path is longer than that.
 R=${SOCKROOT:-$(mktemp -d /private/tmp/ddchk.XXXXXX)}; mkdir -p "$R"; R=$(cd "$R" && pwd -P)  # resolved: /tmp is a symlink
-# One scratch copy of the app sources (copy-check-source.py: /private/tmp roots moved to $R, headless permission seams)
-# shared by every APP-recipe step; none of them edits it (the flash mutant copies it first).
+# One scratch copy of the app sources (copy-check-source.py --app: /private/tmp roots moved to $DD_CHECK_SOCKROOT, read at
+# run time, and the headless permission seams) shared by every APP-recipe step; none of them edits it (runner-1001/mutate.sh
+# mutates its own snapshot of the tree).
+export DD_CHECK_SOCKROOT=$R
 appsrc() { local d=$OUT/src/app-shared
-  if [ ! -f "$d/.done" ] && [ -z "${DRYRUN:-}" ]; then mkdir -p "$d"
-    for f in Sources/MacMemApp/*.swift; do python3 "$C/copy-check-source.py" "$f" "$R" > "$d/$(basename "$f")"; done; touch "$d/.done"; fi
+  if [ ! -f "$d/.done" ] && [ -z "${DRYRUN:-}" ]; then
+    python3 "$C/copy-check-source.py" --app "$d" "$R" Sources/MacMemApp/*.swift && touch "$d/.done"; fi
   echo "$d"; }
+# The precompiled app module (runner-1001/app-module.sh): appsrc compiled once per flag set (the app-module steps below,
+# keyed by a hash of the sources, flags, compiler and imported modules), and every APP-recipe check compiled alone with
+# `@testable import DDApp` and linked against it, instead of compiling the 86 app files again for each check.
+APPMOD=${APP_MODULE_CACHE:-$SB/app-module}
+OMF=(-D DAYDREAM_OWNER_TYPING -D DAYDREAM_CHROME_TYPING)
+appobjs() { [ -n "${DRYRUN:-}" ] && return 0
+  for t in MemoryCore MemoryUI HistoryCore CoreIntegration PrivacyPolicy BrowserBridge WriterBackend CLlamaBridge BackupRestore; do
+    [ -d "$1/$t.build" ] && ls "$1/$t.build/"*.o; done; }
+app_module() { MODCACHE="$I/modcache" bash "$C/app-module.sh" ensure "$APPMOD" "$(appsrc)" "$@"; }  # MB [flags]
+# app_link MB OUT CHECK [flags]: CHECK (its copy starts with `@testable import DDApp`; #sourceLocation keeps its file
+# and line numbers) compiled against MB with flags, linked with the module built from the same flags.
+app_link() { local mb=$1 out=$2 src=$3; shift 3; local mod tsrc
+  mod=$(app_module "$mb" "$@") || { echo "FAIL the app module did not build"; return 1; }
+  tsrc=$OUT/src/app-link-$(basename "$out").swift
+  { echo "@testable import DDApp"; printf '#sourceLocation(file: "%s", line: 1)\n' "$src"; sed '1s/^#!.*$//' "$src"; } > "$tsrc"
+  swiftc -D DEVELOPMENT_SOURCE_CHECKS "$@" -parse-as-library -module-cache-path "$I/modcache" -I "$mb/Modules" -I "$mod" \
+    -Xcc -fmodule-map-file="$PWD/Sources/CSQLite/module.modulemap" -Xcc -fmodule-map-file="$mb/CLlamaBridge.build/module.modulemap" \
+    -Xcc -I -Xcc "$PWD/WriterBackend/Sources/CLlamaBridge/include" -F "$mb" -framework Sparkle -Xlinker -rpath -Xlinker "$mb" \
+    "$tsrc" -Xlinker -force_load -Xlinker "$mod/libDDApp.a" $(appobjs "$mb") -lc++ -o "$out"; }
 # The owner objects exist (DRYRUN lists the owner steps without them).
 have_ob() { [ -n "${DRYRUN:-}" ] || [ -d "${OB:-/nonexistent}/MemoryCore.build" ]; }
 relocated() { local f=$1; sed -e "s#/private/tmp/#$R/#g" "scripts/$f" > "$OUT/src/$f"; echo "$OUT/src/$f"; }
@@ -83,13 +131,16 @@ APPDEPS=(MemoryCore HistoryCore CoreIntegration WriterBackend PrivacyPolicy Brow
 # red here names the cause.
 step git-checkout bash -c 'if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then echo "PASS the source tree is a git checkout"; else echo "FAIL the source tree is not a git checkout: run in a git worktree (git worktree add), not a copy"; exit 1; fi'
 # The manifest itself (no build): the runner's step list matches it, the verifier's own cases, no orphan check file.
-step manifest-dryrun bash -c "env -u ONLY -u LANES DRYRUN=1 SRC='$WT' WORKDIR='$I/dryrun' bash '$C/run-checks.sh' dry >/dev/null 2>&1; python3 scripts/verify-run-manifest.py --dryrun '$I/dryrun/out-dry/DRYRUN-steps.tsv'"
+step manifest-dryrun bash -c "env -u ONLY -u LANES -u PREBUILT TIER=nightly DRYRUN=1 SRC='$WT' WORKDIR='$I/dryrun' bash '$C/run-checks.sh' dry >/dev/null 2>&1; python3 scripts/verify-run-manifest.py --dryrun '$I/dryrun/out-dry/DRYRUN-steps.tsv'"
 step manifest-verifier-py python3 scripts/verify-run-manifest-checks.py
 step manifest-inventory python3 scripts/verify-run-manifest.py --inventory
+# Path selection (scripts/checks-paths.tsv): its rule language, and every manifest row reachable from a path rule.
+step select-lanes-py python3 "$C/select-lanes.py" --self-test
 # The deployment-target lint: every API and SF Symbols name newer than macOS 15 sits under #available (the compiler
 # misses symbol names, which draw nothing on macOS 15, and code under flags the build skips).
 step deployment-api-py python3 scripts/check_macos13_api.py
-step build swift build --jobs 3 --scratch-path "$BUILD" --disable-automatic-resolution
+step build swift build --jobs "${BUILD_JOBS:-3}" --scratch-path "$BUILD" --disable-automatic-resolution
+step app-module app_module "$B"
 # The duplicated checks run once, in the owner lane (owner-*: both shipped flags against the flagged objects $OB);
 # the unflagged build keeps the public-contract steps (its build, PrivacyChecks, the binary scans) and the checks
 # that have no owner twin yet.
@@ -144,12 +195,7 @@ fi
 if [ -f scripts/store-main-thread-checks.swift ]; then
   SMTSRC=$(appsrc); mkdir -p "$OUT/store-main-thread-home/Library/Preferences" "$OUT/store-main-thread-dd"
   sed -e "s#/private/tmp/daydream-#$R/daydream-#g" scripts/store-main-thread-checks.swift > "$OUT/src/store-main-thread-checks.swift"
-  step compile-store-main-thread swiftc -D DEVELOPMENT_SOURCE_CHECKS -parse-as-library ${PERF_STORE_SWIFT_FLAGS:-} -module-cache-path "$I/modcache" -I "$B/Modules" \
-    -Xcc -fmodule-map-file="$PWD/Sources/CSQLite/module.modulemap" -Xcc -fmodule-map-file="$B/CLlamaBridge.build/module.modulemap" \
-    -Xcc -I -Xcc "$PWD/WriterBackend/Sources/CLlamaBridge/include" -F "$B" -framework Sparkle -Xlinker -rpath -Xlinker "$B" \
-    "$SMTSRC"/*.swift "$OUT/src/store-main-thread-checks.swift" \
-    $(for t in MemoryCore MemoryUI HistoryCore CoreIntegration PrivacyPolicy BrowserBridge WriterBackend CLlamaBridge BackupRestore; do [ -d "$B/$t.build" ] && ls "$B/$t.build/"*.o; done) \
-    -lc++ -o "$OUT/store-main-thread"
+  step compile-store-main-thread app_link "$B" "$OUT/store-main-thread" "$OUT/src/store-main-thread-checks.swift" ${PERF_STORE_SWIFT_FLAGS:-}
   step store-main-thread env HOME="$OUT/store-main-thread-home" CFFIXED_USER_HOME="$OUT/store-main-thread-home" DD_CHECK_OUT="$OUT/store-main-thread-dd" "$OUT/store-main-thread"
   # claude/perf3-1005: the recorder's heartbeat, the status and typing refreshes, today's reread and a scroll of the day
   # run no statement on the main thread (StoreMainThread); the heartbeat writes only what changed. Offscreen window.
@@ -271,9 +317,9 @@ step compile-writer-app-integration swiftc -parse-as-library -target arm64-apple
   $(objs MemoryCore HistoryCore MemoryUI CoreIntegration PrivacyPolicy BrowserBridge) -lsqlite3 -lc++ -o "$OUT/writer-app-integration"
 mkdir -p "$OUT/writer-app-home"
 step writer-app-integration env HOME="$OUT/writer-app-home" CFFIXED_USER_HOME="$OUT/writer-app-home" "$OUT/writer-app-integration"
-step wb-package-build swift build --jobs 3 --package-path WriterBackend --scratch-path "$I/build-wb" --disable-automatic-resolution
+step wb-package-build swift build --jobs 3 --package-path WriterBackend --scratch-path "$SB/build-wb" --disable-automatic-resolution
 for name in WriterChecks CloudActivationChecks AdapterChecks InstallationChecks PromptChecks; do
-  step wb-$name bash -c "cd WriterBackend && '$I/build-wb/debug/$name'"
+  step wb-$name bash -c "cd WriterBackend && '$SB/build-wb/debug/$name'"
 done
 step compile-wb-scheduler swiftc -parse-as-library -module-cache-path "$I/modcache" WriterBackend/SchedulerChecks/Support.swift \
   WriterBackend/Sources/WriterBackend/PendingNoteScheduler.swift WriterBackend/SchedulerChecks/main.swift -o "$OUT/wb-scheduler"
@@ -332,14 +378,14 @@ step typed-claim-checks python3 scripts/typed-claim-checks.py -v
 step native-coverage-mjs "${NODE_BIN:-node}" --test BrowserBridge/fixtures/native-coverage-checks.mjs
 step harness-source-py python3 tools/chrome-device-test/check_harness_source.py -v
 step qa-harness-boundary-py python3 scripts/check-qa-harness-boundary.py -v
-step harness-build swift build --jobs 3 --package-path tools/chrome-device-test --scratch-path "$I/harness-build" --disable-automatic-resolution
-step harness-selftest "$I/harness-build/debug/chrome-device-test-selftest"
+step harness-build swift build --jobs 3 --package-path tools/chrome-device-test --scratch-path "$SB/harness-build" --disable-automatic-resolution
+step harness-selftest "$SB/harness-build/debug/chrome-device-test-selftest"
 # The Chrome-typing-only private build (-DDAYDREAM_CHROME_TYPING alone) is gone: nothing ships it. The owner build
 # (both flags, what every release stage builds) carries Chrome typing; binary-features below scans both builds.
 # Review C7: the release MacMem (what the public ships) carries no private
 # Chrome typing symbol or string either.
-step release-build swift build --jobs 3 -c release --product MacMem --scratch-path "$I/build-release" --disable-automatic-resolution
-step release-scan python3 scripts/chrome-typing-checks.py --binary "$I/build-release/release/MacMem"
+step release-build swift build --jobs 3 -c release --product MacMem --scratch-path "$SB/build-release" --disable-automatic-resolution
+step release-scan python3 scripts/chrome-typing-checks.py --binary "$SB/build-release/release/MacMem"
 # Safe typing E (categories slice): the legal gate runs as owner-typing-gate (public and owner release objects).
 step public-debug-scan python3 scripts/chrome-typing-checks.py --binary "$B/MacMem"
 # Owner switch (typing-all SPEC-LATER section 3). The owner build passes both
@@ -349,18 +395,16 @@ OWNERFLAGS=(-Xswiftc -DDAYDREAM_OWNER_TYPING -Xswiftc -DDAYDREAM_CHROME_TYPING)
 # build IS the shipped build. It builds every product (not only MacMem) so the product checks, the
 # PrivacyPolicy checks and the CLI checks below also run against the flagged code that ships. The
 # unflagged steps above stay: they pin the plain `swift build` a contributor gets.
-step owner-build swift build --jobs 3 --scratch-path "$I/build-owner" --disable-automatic-resolution "${OWNERFLAGS[@]}"
-OB=$I/build-owner/arm64-apple-macosx/debug
+step owner-build swift build --jobs "${BUILD_JOBS:-3}" --scratch-path "$SB/build-owner" --disable-automatic-resolution "${OWNERFLAGS[@]}"
+OB=$SB/build-owner/arm64-apple-macosx/debug
+step owner-app-module app_module "$OB" "${OMF[@]}"
+# A changed app file is a new key, a new build and its string in the linked binary (the staged-copy lesson, inside the runner).
+step app-module-selftest env MODCACHE="$I/modcache" bash "$C/app-module.sh" selftest "$APPMOD" "$(appsrc)" "$OB" "${OMF[@]}"
 step owner-MacMemChecks "$OB/MacMemChecks"
 # claude/perf3-1005: the main-thread guard check again, with both flags against the flagged objects (the shipped build).
 if [ -f scripts/store-main-thread-guard-checks.swift ] && [ -n "${SMTSRC:-}" ]; then
   mkdir -p "$OUT/owner-store-main-thread-guard-home/Library/Preferences" "$OUT/owner-store-main-thread-guard-dd"
-  step compile-owner-store-main-thread-guard swiftc -D DEVELOPMENT_SOURCE_CHECKS -D DAYDREAM_OWNER_TYPING -D DAYDREAM_CHROME_TYPING -parse-as-library -module-cache-path "$I/modcache" -I "$OB/Modules" \
-    -Xcc -fmodule-map-file="$PWD/Sources/CSQLite/module.modulemap" -Xcc -fmodule-map-file="$OB/CLlamaBridge.build/module.modulemap" \
-    -Xcc -I -Xcc "$PWD/WriterBackend/Sources/CLlamaBridge/include" -F "$OB" -framework Sparkle -Xlinker -rpath -Xlinker "$OB" \
-    "$SMTSRC"/*.swift "$OUT/src/store-main-thread-guard-checks.swift" \
-    $(for t in MemoryCore MemoryUI HistoryCore CoreIntegration PrivacyPolicy BrowserBridge WriterBackend CLlamaBridge BackupRestore; do [ -d "$OB/$t.build" ] && ls "$OB/$t.build/"*.o; done) \
-    -lc++ -o "$OUT/owner-store-main-thread-guard"
+  step compile-owner-store-main-thread-guard app_link "$OB" "$OUT/owner-store-main-thread-guard" "$OUT/src/store-main-thread-guard-checks.swift" "${OMF[@]}"
   step owner-store-main-thread-guard env HOME="$OUT/owner-store-main-thread-guard-home" CFFIXED_USER_HOME="$OUT/owner-store-main-thread-guard-home" DD_CHECK_OUT="$OUT/owner-store-main-thread-guard-dd" "$OUT/owner-store-main-thread-guard"
 fi
 step owner-ProductionBindingChecks "$OB/ProductionBindingChecks"
@@ -421,12 +465,7 @@ if [ -f scripts/capture-input-model-checks.swift ]; then # gold/capture-input, f
   OCIMSRC=$(appsrc)
   sed -e "s#/private/tmp/daydream-#$R/daydream-#g" scripts/capture-input-model-checks.swift > "$OUT/src/owner-capture-input-model-checks.swift"
   OCIMHOME=$OUT/owner-capture-input-model-home; OCIMDD=$OUT/owner-capture-input-model-dd; mkdir -p "$OCIMHOME/Library/Preferences" "$OCIMDD"
-  step compile-owner-capture-input-model swiftc -D DEVELOPMENT_SOURCE_CHECKS -DDAYDREAM_OWNER_TYPING -DDAYDREAM_CHROME_TYPING -parse-as-library -module-cache-path "$I/modcache" -I "$OB/Modules" \
-    -Xcc -fmodule-map-file="$PWD/Sources/CSQLite/module.modulemap" -Xcc -fmodule-map-file="$OB/CLlamaBridge.build/module.modulemap" \
-    -Xcc -I -Xcc "$PWD/WriterBackend/Sources/CLlamaBridge/include" -F "$OB" -framework Sparkle -Xlinker -rpath -Xlinker "$OB" \
-    "$OCIMSRC"/*.swift "$OUT/src/owner-capture-input-model-checks.swift" \
-    $(for t in MemoryCore MemoryUI HistoryCore CoreIntegration PrivacyPolicy BrowserBridge WriterBackend CLlamaBridge BackupRestore; do [ -d "$OB/$t.build" ] && ls "$OB/$t.build/"*.o; done) \
-    -lc++ -o "$OUT/owner-capture-input-model"
+  step compile-owner-capture-input-model app_link "$OB" "$OUT/owner-capture-input-model" "$OUT/src/owner-capture-input-model-checks.swift" "${OMF[@]}"
   step owner-capture-input-model env HOME="$OCIMHOME" CFFIXED_USER_HOME="$OCIMHOME" DD_CHECK_OUT="$OCIMDD" "$OUT/owner-capture-input-model"
 fi
 # gold/ui-copy (golden test 5): every reason the sources can write into the capture session has plain words (a source
@@ -439,29 +478,24 @@ fi
 if [ -f scripts/ui-copy-checks.swift ]; then
   UCHOME=$OUT/ui-copy-home; mkdir -p "$UCHOME/Library/Preferences"
   UCSRC=$(appsrc)
-  ucobjs() { for t in MemoryCore MemoryUI HistoryCore CoreIntegration PrivacyPolicy BrowserBridge WriterBackend CLlamaBridge BackupRestore; do
-    [ -d "$1/$t.build" ] && ls "$1/$t.build/"*.o; done; }
   for lane in owner; do
     UB=$OB; UF=(-D DAYDREAM_OWNER_TYPING -D DAYDREAM_CHROME_TYPING)
-    step compile-$lane-ui-copy swiftc ${UF[@]+"${UF[@]}"} -D DEVELOPMENT_SOURCE_CHECKS -parse-as-library -module-cache-path "$I/modcache" -I "$UB/Modules" \
-      -Xcc -fmodule-map-file="$PWD/Sources/CSQLite/module.modulemap" -Xcc -fmodule-map-file="$UB/CLlamaBridge.build/module.modulemap" \
-      -Xcc -I -Xcc "$PWD/WriterBackend/Sources/CLlamaBridge/include" -F "$UB" -framework Sparkle -Xlinker -rpath -Xlinker "$UB" \
-      "$UCSRC"/*.swift scripts/ui-copy-checks.swift $(ucobjs "$UB") -lc++ -o "$OUT/$lane-ui-copy"
+    step compile-$lane-ui-copy app_link "$UB" "$OUT/$lane-ui-copy" scripts/ui-copy-checks.swift ${UF[@]+"${UF[@]}"}
     step $lane-ui-copy env HOME="$UCHOME" CFFIXED_USER_HOME="$UCHOME" DD_SRC_ROOT="$PWD" "$OUT/$lane-ui-copy"
   done
 fi
-step owner-release-build swift build --jobs 3 -c release --product MacMem --scratch-path "$I/build-owner-release" --disable-automatic-resolution "${OWNERFLAGS[@]}"
+step owner-release-build swift build --jobs 3 -c release --product MacMem --scratch-path "$SB/build-owner-release" --disable-automatic-resolution "${OWNERFLAGS[@]}"
 # The other two release products a stage ships (developer-id-release.py SWIFT_BINARIES), flagged the same way.
-step owner-release-build-cli bash -c "swift build --jobs 3 -c release --product mac-mem --scratch-path '$I/build-owner-release' --disable-automatic-resolution ${OWNERFLAGS[*]} && swift build --jobs 3 -c release --product mac-mem-backup --scratch-path '$I/build-owner-release' --disable-automatic-resolution ${OWNERFLAGS[*]}"
+step owner-release-build-cli bash -c "swift build --jobs 3 -c release --product mac-mem --scratch-path '$SB/build-owner-release' --disable-automatic-resolution ${OWNERFLAGS[*]} && swift build --jobs 3 -c release --product mac-mem-backup --scratch-path '$SB/build-owner-release' --disable-automatic-resolution ${OWNERFLAGS[*]}"
 # What each MacMem carries (nm and strings): public debug and release hold no private Chrome typing or website typing
 # symbol, no Other websites row and no OWNER BUILD string, and do carry Chrome page history; the owner debug and release
 # carry website typing, its help and page history, and the owner debug carries every private symbol and string (so the
 # public scans are not vacuous). One step, every assertion reported.
-step binary-features python3 scripts/binary-feature-checks.py --public-debug "$B/MacMem" --public-release "$I/build-release/release/MacMem" \
-  --owner-debug "$OB/MacMem" --owner-release "$I/build-owner-release/release/MacMem"
+step binary-features python3 scripts/binary-feature-checks.py --public-debug "$B/MacMem" --public-release "$SB/build-release/release/MacMem" \
+  --owner-debug "$OB/MacMem" --owner-release "$SB/build-owner-release/release/MacMem"
 # Source rules, the compile guard, the release refusal, and probes linked
 # against the public and the owner RELEASE PrivacyPolicy objects.
-step owner-typing-gate python3 scripts/typing-release-gate-checks.py -v --release "$I/build-release/release" --owner "$I/build-owner-release/release" --tmp "$I/tmp"
+step owner-typing-gate python3 scripts/typing-release-gate-checks.py -v --release "$SB/build-release/release" --owner "$SB/build-owner-release/release" --tmp "$I/tmp"
 # public-typing review (release, high): the shipped-build lane. The swiftc checks above, compiled again with
 # both flags against the flagged objects ($OB) that every release stage builds (the UI half is in ui-checks.sh).
 # Cocoa Scripting parses Chrome's dictionary the way the Chrome typing code expects (a Chrome-shaped sdef fixture embedded
@@ -512,22 +546,15 @@ if [ -f scripts/recording-wake-checks.swift ]; then
   step recording-permission env HOME="$RECHOME" CFFIXED_USER_HOME="$RECHOME" DD_CHECK_OUT="$RECDD" "$OUT/recording-permission"
   RECSRC=$(appsrc)
   sed -e "s#/private/tmp/daydream-#$R/daydream-#g" scripts/recording-model-checks.swift > "$OUT/src/recording-model-checks.swift"
-  recobjs() { for t in MemoryCore MemoryUI HistoryCore CoreIntegration PrivacyPolicy BrowserBridge WriterBackend CLlamaBridge BackupRestore; do
-    [ -d "$B/$t.build" ] && ls "$B/$t.build/"*.o; done; }
-  step compile-recording-model swiftc -D DEVELOPMENT_SOURCE_CHECKS -parse-as-library -module-cache-path "$I/modcache" -I "$B/Modules" \
-    -Xcc -fmodule-map-file="$PWD/Sources/CSQLite/module.modulemap" -Xcc -fmodule-map-file="$B/CLlamaBridge.build/module.modulemap" \
-    -Xcc -I -Xcc "$PWD/WriterBackend/Sources/CLlamaBridge/include" -F "$B" -framework Sparkle -Xlinker -rpath -Xlinker "$B" \
-    "$RECSRC"/*.swift "$OUT/src/recording-model-checks.swift" $(recobjs) -lc++ -o "$OUT/recording-model"
+  step compile-recording-model app_link "$B" "$OUT/recording-model" "$OUT/src/recording-model-checks.swift"
   step recording-model env HOME="$RECHOME" CFFIXED_USER_HOME="$RECHOME" DD_CHECK_OUT="$RECDD" "$OUT/recording-model"
   # rc-018 RC3 (package A): the restart waits for System Settings' sheet, setup comes back in front on its page after
   # any relaunch, recording wanted survives it, the held memory window, the hand-back, the Live Test mark. The REAL
   # MemoryViewModel and setup with the check seams (in-memory defaults, nothing activates, hidden windows only).
   if [ -f scripts/setup-lifecycle-checks.swift ]; then
     SLCHOME=$OUT/setup-lifecycle-home; SLCDD=$OUT/setup-lifecycle-dd; mkdir -p "$SLCHOME/Library/Preferences" "$SLCDD"; chmod 700 "$SLCDD"
-    step compile-setup-lifecycle swiftc -D DEVELOPMENT_SOURCE_CHECKS -parse-as-library -module-cache-path "$I/modcache" -I "$B/Modules" \
-      -Xcc -fmodule-map-file="$PWD/Sources/CSQLite/module.modulemap" -Xcc -fmodule-map-file="$B/CLlamaBridge.build/module.modulemap" \
-      -Xcc -I -Xcc "$PWD/WriterBackend/Sources/CLlamaBridge/include" -F "$B" -framework Sparkle -Xlinker -rpath -Xlinker "$B" \
-      "$RECSRC"/*.swift scripts/setup-lifecycle-checks.swift $(recobjs) -lc++ -o "$OUT/setup-lifecycle"
+    # APP recipe through the precompiled app module (app_link), like recording-model: no compile of the 86 app files.
+    step compile-setup-lifecycle app_link "$B" "$OUT/setup-lifecycle" scripts/setup-lifecycle-checks.swift
     step setup-lifecycle env HOME="$SLCHOME" CFFIXED_USER_HOME="$SLCHOME" DD_CHECK_OUT="$SLCDD" "$OUT/setup-lifecycle"
   fi
   # gold/capture-input (golden 5 G32, G3): Input Monitoring turned on while DayDream runs sends every Start to
@@ -539,13 +566,7 @@ if [ -f scripts/recording-wake-checks.swift ]; then
   if [ -f scripts/lifecycle-model-checks.swift ]; then
     if have_ob; then
       OLCHOME=$OUT/owner-lifecycle-home; OLCDD=$OUT/owner-lifecycle-dd; mkdir -p "$OLCHOME/Library/Preferences" "$OLCDD"; chmod 700 "$OLCDD"
-      olcobjs() { for t in MemoryCore MemoryUI HistoryCore CoreIntegration PrivacyPolicy BrowserBridge WriterBackend CLlamaBridge BackupRestore; do
-        [ -d "$OB/$t.build" ] && ls "$OB/$t.build/"*.o; done; }
-      step compile-owner-lifecycle-model swiftc -D DEVELOPMENT_SOURCE_CHECKS -D DAYDREAM_OWNER_TYPING -D DAYDREAM_CHROME_TYPING -parse-as-library \
-        -module-cache-path "$I/modcache" -I "$OB/Modules" \
-        -Xcc -fmodule-map-file="$PWD/Sources/CSQLite/module.modulemap" -Xcc -fmodule-map-file="$OB/CLlamaBridge.build/module.modulemap" \
-        -Xcc -I -Xcc "$PWD/WriterBackend/Sources/CLlamaBridge/include" -F "$OB" -framework Sparkle -Xlinker -rpath -Xlinker "$OB" \
-        "$RECSRC"/*.swift scripts/lifecycle-model-checks.swift $(olcobjs) -lc++ -o "$OUT/owner-lifecycle-model"
+      step compile-owner-lifecycle-model app_link "$OB" "$OUT/owner-lifecycle-model" scripts/lifecycle-model-checks.swift "${OMF[@]}"
       step owner-lifecycle-model env HOME="$OLCHOME" CFFIXED_USER_HOME="$OLCHOME" DD_CHECK_OUT="$OLCDD" "$OUT/owner-lifecycle-model"
     fi
   fi
@@ -555,13 +576,7 @@ if [ -f scripts/recording-wake-checks.swift ]; then
   if [ -f scripts/permission-blip-checks.swift ]; then
     if have_ob; then
       OPBHOME=$OUT/owner-permission-blip-home; OPBDD=$OUT/owner-permission-blip-dd; mkdir -p "$OPBHOME/Library/Preferences" "$OPBDD"; chmod 700 "$OPBDD"
-      opbobjs() { for t in MemoryCore MemoryUI HistoryCore CoreIntegration PrivacyPolicy BrowserBridge WriterBackend CLlamaBridge BackupRestore; do
-        [ -d "$OB/$t.build" ] && ls "$OB/$t.build/"*.o; done; }
-      step compile-owner-permission-blip swiftc -D DEVELOPMENT_SOURCE_CHECKS -D DAYDREAM_OWNER_TYPING -D DAYDREAM_CHROME_TYPING -parse-as-library \
-        -module-cache-path "$I/modcache" -I "$OB/Modules" \
-        -Xcc -fmodule-map-file="$PWD/Sources/CSQLite/module.modulemap" -Xcc -fmodule-map-file="$OB/CLlamaBridge.build/module.modulemap" \
-        -Xcc -I -Xcc "$PWD/WriterBackend/Sources/CLlamaBridge/include" -F "$OB" -framework Sparkle -Xlinker -rpath -Xlinker "$OB" \
-        "$RECSRC"/*.swift scripts/permission-blip-checks.swift $(opbobjs) -lc++ -o "$OUT/owner-permission-blip"
+      step compile-owner-permission-blip app_link "$OB" "$OUT/owner-permission-blip" scripts/permission-blip-checks.swift "${OMF[@]}"
       step owner-permission-blip env HOME="$OPBHOME" CFFIXED_USER_HOME="$OPBHOME" DD_CHECK_OUT="$OPBDD" "$OUT/owner-permission-blip"
     fi
   fi
@@ -569,37 +584,16 @@ if [ -f scripts/recording-wake-checks.swift ]; then
   # surface SHOWS of the permissions follows a settled value (PermissionSettle): an off read changes it only once the
   # reads have stayed off for the settle time; a permission really off still shows within the bound; the person's own
   # Start, a first setup and the recorder are unchanged. The REAL MemoryViewModel with the check seams, plus the
-  # permission page and setup hosted in a window never ordered on screen. Then the mutation: the same check against a
-  # copy of the app source whose shown value takes every read as it is must FAIL (else the check guards nothing).
+  # permission page and setup hosted in a window never ordered on screen. Then the mutation (below): the same check
+  # against a copy of the app source whose shown value takes every read as it is must FAIL (else it guards nothing).
   if [ -f scripts/permission-flash-checks.swift ]; then
-    flash_mutant() { # <lane: "" | owner-> <modules dir> <objs fn> <flags...>
-      local lane=$1 mb=$2 objs=$3; shift 3
-      local src=$OUT/src/${lane}flash-mutant; rm -rf "$src"; mkdir -p "$src"; cp "$RECSRC"/*.swift "$src/"
-      python3 - "$src/MacMemApp.swift" <<'PY' || return 1
-import sys, pathlib
-p = pathlib.Path(sys.argv[1]); s = p.read_text()
-old = "else {shown=permissionShown.read(read,at:now,settle:settle,counts:awake && !wake.suspended)}"
-if s.count(old) != 1: print("FAIL: the settle line is not in MacMemApp.swift exactly once (%d)" % s.count(old)); sys.exit(1)
-p.write_text(s.replace(old, "else {shown=permissionShown.take(read)}"))
-PY
-      local home=$OUT/${lane}permission-flash-mutant-home dd=$OUT/${lane}permission-flash-mutant-dd; mkdir -p "$home/Library/Preferences" "$dd"; chmod 700 "$dd"
-      swiftc "$@" -D DEVELOPMENT_SOURCE_CHECKS -parse-as-library -module-cache-path "$I/modcache" -I "$mb/Modules" \
-        -Xcc -fmodule-map-file="$PWD/Sources/CSQLite/module.modulemap" -Xcc -fmodule-map-file="$mb/CLlamaBridge.build/module.modulemap" \
-        -Xcc -I -Xcc "$PWD/WriterBackend/Sources/CLlamaBridge/include" -F "$mb" -framework Sparkle -Xlinker -rpath -Xlinker "$mb" \
-        "$src"/*.swift scripts/permission-flash-checks.swift $($objs) -lc++ -o "$OUT/${lane}permission-flash-mutant" || { echo "FAIL: the mutant did not compile"; return 1; }
-      env HOME="$home" CFFIXED_USER_HOME="$home" DD_CHECK_OUT="$dd" DD_FLASH_ONLY=A,B,G "$OUT/${lane}permission-flash-mutant" > "$OUT/${lane}permission-flash-mutant.out" 2>&1
-      local rc=$? fails; fails=$(grep -cE '^FAIL' "$OUT/${lane}permission-flash-mutant.out")
-      if [ "$rc" -ne 0 ] && [ "$fails" -gt 0 ]; then echo "PASS [mutation] without the settle the flash checks fail: exit=$rc, $fails FAIL lines"; return 0; fi
-      echo "FAIL [mutation] without the settle the flash checks still pass (exit=$rc, $fails FAIL lines): they guard nothing"; return 1; }
     if have_ob; then
       OPFHOME=$OUT/owner-permission-flash-home; OPFDD=$OUT/owner-permission-flash-dd; mkdir -p "$OPFHOME/Library/Preferences" "$OPFDD"; chmod 700 "$OPFDD"
-      step compile-owner-permission-flash swiftc -D DEVELOPMENT_SOURCE_CHECKS -D DAYDREAM_OWNER_TYPING -D DAYDREAM_CHROME_TYPING -parse-as-library \
-        -module-cache-path "$I/modcache" -I "$OB/Modules" \
-        -Xcc -fmodule-map-file="$PWD/Sources/CSQLite/module.modulemap" -Xcc -fmodule-map-file="$OB/CLlamaBridge.build/module.modulemap" \
-        -Xcc -I -Xcc "$PWD/WriterBackend/Sources/CLlamaBridge/include" -F "$OB" -framework Sparkle -Xlinker -rpath -Xlinker "$OB" \
-        "$RECSRC"/*.swift scripts/permission-flash-checks.swift $(opbobjs) -lc++ -o "$OUT/owner-permission-flash"
+      step compile-owner-permission-flash app_link "$OB" "$OUT/owner-permission-flash" scripts/permission-flash-checks.swift "${OMF[@]}"
       step owner-permission-flash env HOME="$OPFHOME" CFFIXED_USER_HOME="$OPFHOME" DD_CHECK_OUT="$OPFDD" "$OUT/owner-permission-flash"
-      step owner-permission-flash-mutation flash_mutant owner- "$OB" opbobjs -D DAYDREAM_OWNER_TYPING -D DAYDREAM_CHROME_TYPING
+      # The mutation (nightly): scripts/mutations.d/tiers.tsv row flash-settle through runner-1001/mutate.sh, which puts
+      # the bug back in a scratch snapshot (the shown value takes every read as it is) and must see this step fail.
+      step owner-permission-flash-mutation env MUT_BUG='^flash-settle$' bash "$C/mutate.sh" "$I/mutate-flash" scripts/mutations.d/tiers.tsv
     fi
   fi
   # perm-1004 (owner 10/3): every surface names the missing permission and goes to its pane; Input Monitoring turned
@@ -629,13 +623,7 @@ PY
     if [ -f scripts/$LSCHECK-checks.swift ]; then
       if have_ob; then
         OLSHOME=$OUT/owner-$LSCHECK-home; OLSDD=$OUT/owner-$LSCHECK-dd; mkdir -p "$OLSHOME/Library/Preferences" "$OLSDD"; chmod 700 "$OLSDD"
-        olsobjs() { for t in MemoryCore MemoryUI HistoryCore CoreIntegration PrivacyPolicy BrowserBridge WriterBackend CLlamaBridge BackupRestore; do
-          [ -d "$OB/$t.build" ] && ls "$OB/$t.build/"*.o; done; }
-        step compile-owner-$LSCHECK swiftc -D DEVELOPMENT_SOURCE_CHECKS -D DAYDREAM_OWNER_TYPING -D DAYDREAM_CHROME_TYPING -parse-as-library \
-          -module-cache-path "$I/modcache" -I "$OB/Modules" \
-          -Xcc -fmodule-map-file="$PWD/Sources/CSQLite/module.modulemap" -Xcc -fmodule-map-file="$OB/CLlamaBridge.build/module.modulemap" \
-          -Xcc -I -Xcc "$PWD/WriterBackend/Sources/CLlamaBridge/include" -F "$OB" -framework Sparkle -Xlinker -rpath -Xlinker "$OB" \
-          "$RECSRC"/*.swift scripts/$LSCHECK-checks.swift $(olsobjs) -lc++ -o "$OUT/owner-$LSCHECK"
+        step compile-owner-$LSCHECK app_link "$OB" "$OUT/owner-$LSCHECK" scripts/$LSCHECK-checks.swift "${OMF[@]}"
         step owner-$LSCHECK env HOME="$OLSHOME" CFFIXED_USER_HOME="$OLSHOME" DD_CHECK_OUT="$OLSDD" "$OUT/owner-$LSCHECK"
       fi
     fi
@@ -658,13 +646,8 @@ fi
 if [ -f scripts/update-quit-checks.swift ]; then
   UQSRC=$(appsrc)
   UQHOME=$OUT/update-quit-home; mkdir -p "$UQHOME/Library/Preferences"
-  uqobjs() { for t in MemoryCore MemoryUI HistoryCore CoreIntegration PrivacyPolicy BrowserBridge WriterBackend CLlamaBridge BackupRestore; do
-    [ -d "$1/$t.build" ] && ls "$1/$t.build/"*.o; done; }
   uqcompile() { local name=$1 b=$2; shift 2
-    step compile-$name swiftc -D DEVELOPMENT_SOURCE_CHECKS "$@" -parse-as-library -module-cache-path "$I/modcache" -I "$b/Modules" \
-      -Xcc -fmodule-map-file="$PWD/Sources/CSQLite/module.modulemap" -Xcc -fmodule-map-file="$b/CLlamaBridge.build/module.modulemap" \
-      -Xcc -I -Xcc "$PWD/WriterBackend/Sources/CLlamaBridge/include" -F "$b" -framework Sparkle -Xlinker -rpath -Xlinker "$b" \
-      "$UQSRC"/*.swift scripts/update-quit-checks.swift $(uqobjs "$b") -lc++ -o "$OUT/$name"
+    step compile-$name app_link "$b" "$OUT/$name" scripts/update-quit-checks.swift "$@"
     step $name env HOME="$UQHOME" CFFIXED_USER_HOME="$UQHOME" "$OUT/$name"; }
   have_ob && uqcompile owner-update-quit "$OB" -D DAYDREAM_OWNER_TYPING -D DAYDREAM_CHROME_TYPING
 fi
@@ -713,8 +696,8 @@ if [ -f scripts/connect-config-checks.swift ]; then
   done
   step owner-connect-cli-py env DAYDREAM_TEST_CLI="$OB/mac-mem" python3 scripts/connect-cli-checks.py
   # No Horizon/SSH string in any built binary (public and owner, debug and release) or the sources: one scan.
-  step connect-horizon-py python3 scripts/connect-horizon-checks.py --binary "$I/build-release/release/MacMem" --binary "$B/MacMem" --binary "$B/mac-mem" \
-    --binary "$I/build-owner-release/release/MacMem" --binary "$I/build-owner-release/release/mac-mem" --binary "$OB/MacMem" --binary "$OB/mac-mem"
+  step connect-horizon-py python3 scripts/connect-horizon-checks.py --binary "$SB/build-release/release/MacMem" --binary "$B/MacMem" --binary "$B/mac-mem" \
+    --binary "$SB/build-owner-release/release/MacMem" --binary "$SB/build-owner-release/release/mac-mem" --binary "$OB/MacMem" --binary "$OB/mac-mem"
   # gold/connections-storage (G13, G45): an AI app's server carries on across an update, follows a repaired history.
   if [ -f scripts/mcp-update-checks.py ]; then
     step owner-mcp-update-py env DAYDREAM_TEST_CLI="$OB/mac-mem" python3 scripts/mcp-update-checks.py
@@ -734,12 +717,7 @@ if [ -f scripts/connect-config-checks.swift ]; then
   CONNHOME=$OUT/connect-home; CONNDD=$OUT/connect-dd; mkdir -p "$CONNHOME/Library/Preferences" "$CONNDD"
   CONNSRC=$(appsrc)
   sed -e "s#/private/tmp/daydream-#$R/daydream-#g" scripts/connection-review-checks.swift > "$OUT/src/connection-review-checks.swift"
-  connobjs() { for t in MemoryCore MemoryUI HistoryCore CoreIntegration PrivacyPolicy BrowserBridge WriterBackend CLlamaBridge BackupRestore; do
-    ls "$B/$t.build/"*.o; done; }
-  step compile-connection-review swiftc -D DEVELOPMENT_SOURCE_CHECKS -parse-as-library -module-cache-path "$I/modcache" -I "$B/Modules" \
-    -Xcc -fmodule-map-file="$PWD/Sources/CSQLite/module.modulemap" -Xcc -fmodule-map-file="$B/CLlamaBridge.build/module.modulemap" \
-    -Xcc -I -Xcc "$PWD/WriterBackend/Sources/CLlamaBridge/include" -F "$B" -framework Sparkle -Xlinker -rpath -Xlinker "$B" \
-    "$CONNSRC"/*.swift "$OUT/src/connection-review-checks.swift" $(connobjs) -lc++ -o "$OUT/connection-review"
+  step compile-connection-review app_link "$B" "$OUT/connection-review" "$OUT/src/connection-review-checks.swift"
   step connection-review env HOME="$CONNHOME" CFFIXED_USER_HOME="$CONNHOME" DD_CHECK_OUT="$CONNDD" "$OUT/connection-review"
 fi
 # gold/r2-copy-checks (item 4): check_shortcuts.py joins the suite. Its capture-state rule now reads the toolbar's
@@ -769,12 +747,7 @@ if [ -f scripts/preference-blocker-checks.swift ]; then
     PFBSRC=$(appsrc)
     sed -e "s#/private/tmp/daydream-#$R/daydream-#g" scripts/preference-blocker-checks.swift > "$OUT/src/preference-blocker-checks.swift"
     PFBHOME=$OUT/preference-blocker-home; mkdir -p "$PFBHOME/Library/Preferences"
-    step compile-preference-blocker-sources swiftc -D DEVELOPMENT_SOURCE_CHECKS -parse-as-library -module-cache-path "$I/modcache" -I "$B/Modules" \
-      -Xcc -fmodule-map-file="$PWD/Sources/CSQLite/module.modulemap" -Xcc -fmodule-map-file="$B/CLlamaBridge.build/module.modulemap" \
-      -Xcc -I -Xcc "$PWD/WriterBackend/Sources/CLlamaBridge/include" -F "$B" -framework Sparkle -Xlinker -rpath -Xlinker "$B" \
-      "$PFBSRC"/*.swift "$OUT/src/preference-blocker-checks.swift" \
-      $(for t in MemoryCore MemoryUI HistoryCore CoreIntegration PrivacyPolicy BrowserBridge WriterBackend CLlamaBridge BackupRestore; do [ -d "$B/$t.build" ] && ls "$B/$t.build/"*.o; done) \
-      -lc++ -o "$OUT/preference-blocker"
+    step compile-preference-blocker-sources app_link "$B" "$OUT/preference-blocker" "$OUT/src/preference-blocker-checks.swift"
     step preference-blocker-sources env HOME="$PFBHOME" CFFIXED_USER_HOME="$PFBHOME" "$OUT/preference-blocker" --sources-only
   else
     step preference-blocker-sources bash -c 'echo "FAIL: scripts/preference-blocker-checks.swift has no --sources-only mode; its S rules would need the whole check (UserDefaults.standard, Keychain)"; exit 1'
@@ -808,9 +781,14 @@ done
 step rc-summary-ux-pause bash WriterBackend/PauseChecks/run.sh
 # Phase 1 commit 9: the check files no step ran before (owner objects, scratch homes), by lane.
 source "$C/wired-lanes.sh"
+# Step fragments (runner-1001/steps.d/README): each *.sh, in lexical order, with this file's step/OUT/I/R/B/OB/appsrc/
+# oobjs/relocated/CAPTURE. Their rows are scripts/checks-manifest.d/*.tsv.
+for frag in "$C"/steps.d/*.sh; do [ -f "$frag" ] && source "$frag"; done
 printf '%s\n' ${summary[@]+"${summary[@]}"} | tee "$OUT/SUMMARY"
 [ -n "${DRYRUN:-}" ] && exit 0
 # The result: every selected manifest step ran (or is a named known failure / a window-lane skip), nothing unlisted ran.
 echo "($failed_steps steps exited non-zero; the manifest decides which of them are known)"
-python3 scripts/verify-run-manifest.py --summary "$OUT/SUMMARY" --only "${ONLY:-}" --lanes "${LANES:-}" | tee "$OUT/VERDICT"
+# NO_VERDICT=1: a lanes.sh worker; lanes.sh verifies every worker's SUMMARY together (with the builds' own).
+if [ -n "${NO_VERDICT:-}" ]; then echo "(no verdict here: runner-1001/lanes.sh verifies the combined SUMMARY)"; exit 0; fi
+python3 scripts/verify-run-manifest.py --summary "$OUT/SUMMARY" --only "${ONLY:-}" --lanes "${LANES:-}" --tier "$TIER" | tee "$OUT/VERDICT"
 exit "${PIPESTATUS[0]}"

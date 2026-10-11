@@ -617,6 +617,9 @@ private struct AdmissionGuardedInference:LocalInference {
     }
     /// A pass is running (`pass`'s loop): it takes any reason left in `rerun` when its tick ends.
     private var passing=false
+    /// Checks only: a pass is running. Try Again's own pass starts a few tasks after `retry()` returns; a pass a check
+    /// makes while it runs returns at once (its reason left for that pass), so the check waits for this to clear first.
+    var passRunning:Bool {passing}
     /// What makes `tick` refuse to start. claude/summary-fail-1003: a Summarize Now waiting for the writer holds it too,
     /// so no new background look starts between the batch it waits for and the click.
     private var writerHeld:Bool {writerBusy || clicksWaiting>0}

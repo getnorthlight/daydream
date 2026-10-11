@@ -1,280 +1,288 @@
 # DayDream check manifest: one row per runner step that must appear in SUMMARY (compile-X belongs to row X).
 # Read by scripts/verify-run-manifest.py, whose verdict is the run's result (runner-1001/run-checks.sh).
-# lane: smoke | setup-ui | capture | storage | ai-tools | release | perf   (LANES=a,b runs those lanes plus the builds)
+# lane: smoke | setup-ui | capture | storage | ai-tools | release | perf, or a fragment's own (LANES=a,b runs those lanes plus the builds)
 # config: owner (both shipped flags, the release configuration) | public-contract (pins on the unflagged build a
 #   contributor gets) | public (unflagged objects; Phase 2 moves these onto the owner build) | n/a (source scans)
 # needs: headless | window (Phase 2 window lane) | typesense | model
 # min_pass: fewest PASS lines the step must print (blank = prints none: builds, JSON-reporting steps). A known failure needs one.
 # status: required | known-failure (reason, since, review_by and min_pass required; its exit code and FAIL lines are
 #   pinned in scripts/checks-known-failures.tsv, any other failure is FAIL; passing is XPASS) | window-only (dated too)
-step	lane	config	file	needs	min_pass	status	reason	since	review_by
-git-checkout	smoke	n/a	-	headless	1	required			
-manifest-dryrun	smoke	n/a	scripts/checks-manifest.tsv,scripts/checks-known-failures.tsv	headless	1	required			
-manifest-verifier-py	smoke	n/a	scripts/verify-run-manifest-checks.py	headless	45	required			
-manifest-inventory	smoke	n/a	scripts/checks-inventory-exempt.tsv	headless	1	required			
-build	smoke	public-contract	-	headless		required			
-deployment-api-py	smoke	n/a	scripts/check_macos13_api.py	headless	6	required			
-store-perf	perf	public	scripts/store-perf-checks.swift	headless	14	known-failure	timing assertions under load; moves to the Phase 2 perf lane and is not edited in Phase 1	2026-10-07	2026-10-22
-perf-1002	setup-ui	public	scripts/perf-1002-checks.swift	headless	12	required			
-perf-1003	storage	public	scripts/perf-1003-checks.swift	headless	28	required			
-what-happened-fold	storage	public	scripts/what-happened-fold-checks.swift	headless	1	required			
-tap-handoff	capture	public	scripts/tap-handoff-checks.swift	headless	21	required			
-no-draft-display	storage	public	scripts/no-draft-display-checks.swift	headless	1	required			
-search-words	storage	public	scripts/search-words-checks.swift	headless	13	required			
-store-main-thread-source-py	storage	n/a	scripts/store-main-thread-source-checks.py	headless	14	required			
-store-main-thread	storage	public	scripts/store-main-thread-checks.swift	headless	3	required			
-privacy-build	smoke	public-contract	-	headless		required			
-PrivacyChecks	smoke	public-contract	PrivacyPolicy/Checks/*.swift	headless	207	required			
-typed-boundary-space	capture	public	PrivacyPolicy/Checks/TypingChecks.swift,scripts/typed-boundary-space-checks.swift	headless	76	required			
-search-app-label	storage	public	scripts/search-app-label-checks.swift	headless	18	required			
-typing-wiring-source-py	capture	n/a	scripts/typing-wiring-source-checks.py	headless	10	required			
-typing-public-lane-py	capture	public-contract	scripts/typing-public-lane-checks.py	headless	7	required			
-main-thread-apis-py	capture	n/a	scripts/check_main_thread_apis.py	headless	28	required			
-onboarding-flow	setup-ui	public	scripts/onboarding-flow-checks.swift	headless	75	required			
-skipped-app-id	setup-ui	public	scripts/skipped-app-id-checks.swift	headless	43	required			
-permission-drag-guide	setup-ui	public	scripts/permission-drag-guide-checks.swift	headless	201	required			
-search-depth	storage	public	scripts/search-depth-checks.swift	headless	63	required			
-search-prefilter	storage	public	scripts/search-prefilter-checks.swift	headless	75	required			
-search-fallback-coverage	storage	public	scripts/search-fallback-coverage-checks.swift	headless	22	required			
-store-format	storage	public	scripts/store-format-checks.swift	headless	18	required			
-store-integrity	storage	public	scripts/store-integrity-checks.swift	headless	68	required			
-backup-depth	storage	public	scripts/backup-depth-checks.swift	headless	10	required			
-backup-native	storage	public	BackupRestore/Tests/NativeChecks.swift	headless	55	required			
-notes-golden	ai-tools	public	scripts/notes-golden-checks.swift	headless	32	required			
-writer-quiet	ai-tools	public	scripts/writer-quiet-checks.swift	headless	15	required			
-writer-app-integration	ai-tools	public	WriterBackend/AppIntegrationChecks/*	headless	3	required			
-wb-package-build	ai-tools	public	-	headless		required			
-wb-WriterChecks	ai-tools	public	WriterBackend/Checks/*.swift	headless	2	required			
-wb-CloudActivationChecks	ai-tools	public	WriterBackend/CloudActivationChecks/*.swift	headless	1	required			
-wb-AdapterChecks	ai-tools	public	WriterBackend/AdapterChecks/*.swift	headless	35	required			
-wb-InstallationChecks	ai-tools	public	WriterBackend/InstallationChecks/*.swift	headless	24	required			
-wb-PromptChecks	ai-tools	public	WriterBackend/PromptChecks/*.swift	headless	67	required			
-wb-scheduler	ai-tools	public	WriterBackend/SchedulerChecks/*	headless	29	required			
-wb-batch	ai-tools	public	WriterBackend/BatchChecks/*	headless	25	required			
-download-time	ai-tools	public	scripts/download-time-checks.swift	headless	1	required			
-notes-quality	ai-tools	public	scripts/notes-quality-checks.swift	headless	199	required			
-summary-terminal	ai-tools	public	scripts/summary-terminal-checks.swift	headless	85	required			
-summary-ready	ai-tools	public	scripts/summary-ready-checks.swift	headless	171	required			
-moment-cards	ai-tools	public	scripts/moment-cards-checks.swift	headless	70	required			
-action-audit	storage	public	scripts/action-audit-checks.swift	headless	19	required			
-browser-boundary-py	capture	n/a	scripts/check_browser_boundary.py	headless	24	required			
-typed-claim-checks	capture	n/a	scripts/typed-claim-checks.py	headless	7	required			
-usage-counts-py	setup-ui	n/a	scripts/usage-counts-checks.py	headless	15	required			
-native-coverage-mjs	capture	n/a	BrowserBridge/fixtures/native-coverage-checks.mjs	headless	1	required			
-harness-source-py	capture	n/a	tools/chrome-device-test/check_harness_source.py	headless	19	required			
-qa-harness-boundary-py	capture	n/a	scripts/check-qa-harness-boundary.py	headless	29	required			
-harness-build	capture	public	-	headless		required			
-harness-selftest	capture	public	-	headless	1	required			
-release-build	release	public-contract	-	headless		required			
-release-scan	release	public-contract	scripts/chrome-typing-checks.py	headless	2	required			
-public-debug-scan	release	public-contract	scripts/chrome-typing-checks.py	headless	2	required			
-binary-features	release	public-contract	scripts/binary-feature-checks.py	headless	25	required			
-owner-build	smoke	owner	-	headless		required			
-owner-MacMemChecks	smoke	owner	Checks/*.swift	headless	7613	required			
-owner-store-main-thread-guard	storage	owner	scripts/store-main-thread-guard-checks.swift	headless	4	required			
-owner-ProductionBindingChecks	smoke	owner	-	headless	43	required			
-owner-privacy-build	smoke	owner	-	headless		required			
-owner-PrivacyChecks	smoke	owner	PrivacyPolicy/Checks/*.swift	headless	207	required			
-owner-production-capture	capture	owner	scripts/production-event-capture-checks.swift	headless	686	required			
-owner-chrome-offmain	capture	owner	scripts/chrome-offmain-checks.swift	headless	28	required			
-owner-ai-read-typed	capture	owner	scripts/ai-read-typed-checks.swift	headless	74	required			
-typing-e2e	capture	public	scripts/typing-e2e-checks.swift	headless	285	required			
-owner-typed-secret-fuzz	capture	owner	scripts/typed-secret-fuzz-checks.swift	headless	1	required			
-owner-recording-fault	capture	owner	scripts/recording-fault-checks.swift	headless	37	required			
-owner-save-path	capture	owner	scripts/save-path-checks.swift	headless	126	required			
-owner-capture-input	capture	owner	scripts/capture-input-checks.swift	headless	214	required			
-owner-typing-unlock-delivery	capture	owner	scripts/typing-unlock-delivery-checks.swift	headless	15	required			
-owner-capture-input-model	capture	owner	scripts/capture-input-model-checks.swift	headless	7	required			
-owner-ui-copy	setup-ui	owner	scripts/ui-copy-checks.swift	headless	769	required			
-owner-release-build	release	owner	-	headless		required			
-owner-release-build-cli	release	owner	-	headless		required			
-owner-typing-gate	release	owner	scripts/typing-release-gate-checks.py	headless	18	required			
-owner-chrome-parse	release	owner	scripts/chrome-apple-event-parse-checks.swift	headless	19	required			
-owner-day-review	ai-tools	owner	scripts/day-review-checks.swift	headless	207	required			
-owner-search-results-ui	storage	owner	scripts/search-results-ui-checks.swift	headless	128	required			
-owner-day-review-eval	ai-tools	owner	scripts/day-review-eval-checks.swift	headless	96	required			
-owner-day-review-eval-score	ai-tools	owner	scripts/day-review-eval.py	headless	1	required			
-owner-typed-store	capture	owner	scripts/typed-store-checks.swift	headless	262	required			
-owner-preference-save	setup-ui	owner	scripts/preference-save-checks.swift	headless	85	required			
-owner-typing-choice	setup-ui	owner	scripts/onboarding-typing-choice-checks.swift	headless	41	required			
-owner-memory-controls	setup-ui	owner	scripts/memory-controls-checks.swift	headless	68	required			
-owner-onboarding-staging	setup-ui	owner	scripts/onboarding-staging-checks.swift	headless	43	required			
-owner-data-home-migration	setup-ui	owner	scripts/data-home-migration-checks.swift	headless	63	required			
-owner-launch-preparation	storage	owner	scripts/launch-preparation-checks.swift	headless	16	required			
-owner-store-perf	perf	owner	scripts/store-perf-checks.swift	headless	14	known-failure	timing assertions under load; moves to the Phase 2 perf lane and is not edited in Phase 1	2026-10-07	2026-10-22
-owner-typed-launch	capture	owner	scripts/typed-launch-checks.swift	headless	43	required			
-owner-native-witness	capture	owner	scripts/native-focus-witness-checks.swift	headless	186	required			
-owner-core-adapter	capture	owner	scripts/core-adapter-checks.swift	headless	151	required			
-core-adapter	capture	public-contract	scripts/core-adapter-checks.swift	headless	152	required			
-owner-messages-store	capture	owner	scripts/messages-store-checks.swift	headless	1	required			
-owner-level-binding	ai-tools	owner	scripts/level-binding-checks.swift	headless	29	required			
-owner-writer-retention	ai-tools	owner	scripts/writer-retention-checks.swift	headless	15	required			
-owner-cloud-scope	ai-tools	owner	scripts/cloud-scope-checks.swift	headless	23	required			
-owner-summary-sends	ai-tools	owner	scripts/summary-sends-checks.swift	headless	86	required			
-owner-summary-fail	ai-tools	owner	scripts/summary-fail-checks.swift	headless	133	required			
-owner-writer-cadence	ai-tools	owner	scripts/writer-cadence-checks.swift	headless	66	required			
-owner-writer-state	ai-tools	owner	scripts/writer-state-checks.swift	headless	189	required			
-owner-writer-spin	ai-tools	owner	scripts/writer-spin-checks.swift	headless	12	required			
-owner-notes-writer	ai-tools	owner	scripts/notes-writer-checks.swift	headless	23	required			
-owner-browser-app-0227	capture	owner	scripts/browser-app-0227-checks.swift	headless	22	required			
-owner-browser-provider-0240	capture	owner	scripts/browser-provider-0240-checks.swift	headless	24	required			
-owner-app-bindings-0132	capture	owner	scripts/app-preferences-search-0132-checks.swift	headless	26	required			
-owner-native-receipt-0053	capture	owner	scripts/native-receipt-0053-checks.swift	headless	40	required			
-owner-connect-config	ai-tools	owner	scripts/connect-config-checks.swift	headless	166	required			
-owner-connect-diagnostics	ai-tools	owner	scripts/connect-diagnostics-checks.swift	headless	40	required			
-signing-plan-py	release	n/a	scripts/check_signing_plan.py	headless	15	required			
-developer-id-release-py	release	n/a	scripts/check_developer_id_release.py	headless	112	required			
-search-payload-py	release	n/a	scripts/check_search_payload.py	headless	30	required			
-owner-updates-py	release	owner	scripts/check_updates.py	headless	42	required			
-packaging-py	release	n/a	scripts/check_daydream_packaging.py	headless	4	required			
-brand-py	smoke	n/a	scripts/check_daydream_brand.py	headless	1	required			
-uninstall-plan	setup-ui	public	scripts/uninstall-plan-checks.swift	headless	236	required			
-recording-wake	capture	public	scripts/recording-wake-checks.swift	headless	418	required			
-dd-recording-state	capture	public	scripts/dd-recording-state-checks.swift	headless	292	required			
-lock-notice-delivery	capture	public	scripts/lock-notice-delivery-checks.swift	headless	8	required			
-recording-permission	setup-ui	public	scripts/recording-permission-checks.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22
-recording-model	setup-ui	public	scripts/recording-model-checks.swift	headless	13	required			
-setup-lifecycle	setup-ui	public	scripts/setup-lifecycle-checks.swift	headless	166	required			
-owner-lifecycle-model	setup-ui	owner	scripts/lifecycle-model-checks.swift	headless	193	required			
-owner-permission-blip	setup-ui	owner	scripts/permission-blip-checks.swift	headless	122	required			
-owner-permission-flash	setup-ui	owner	scripts/permission-flash-checks.swift	headless	144	required			
-owner-permission-flash-mutation	setup-ui	owner	-	headless	1	required			
-permission-prompt-py	setup-ui	n/a	scripts/permission-prompt-checks.py	headless	42	required			
-test-copy-identity-py	setup-ui	n/a	scripts/test-copy-identity-checks.py	headless	30	required			
-owner-permission-guidance	setup-ui	owner	scripts/permission-guidance-checks.swift	headless	46	required			
-owner-launch-state	setup-ui	owner	scripts/launch-state-checks.swift	headless	105	required			
-owner-single-copy	setup-ui	owner	scripts/single-copy-checks.swift	headless	42	required			
-owner-store-main-hold	storage	owner	scripts/store-main-hold-checks.swift	headless	27	required			
-sparkle-pin	release	n/a	scripts/bootstrap-sparkle.py	headless		required			
-updates-json	release	n/a	scripts/release.py	headless		required			
-update-builds-py	release	n/a	scripts/check_update_builds.py	headless	23	required			
-owner-update-quit	release	owner	scripts/update-quit-checks.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22
-docs-claims-py	release	n/a	scripts/docs-claims-checks.py	headless	54	required			
-docs-dmg-background	release	public	scripts/dmg-background.swift	headless		required			
-docs-install-render	release	public	scripts/docs-install-render.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22
-honesty-release-switch-py	release	n/a	scripts/honesty-release-switch-checks.py	headless	5	required			
-honesty-switch-off	release	public	scripts/honesty-switch-off-checks.sh	headless	30	required			
-honesty-ui	setup-ui	public	scripts/honesty-ui-checks.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22
-connect-toml	ai-tools	public	scripts/connect-toml-checks.swift	headless	117	required			
-connect-skill	ai-tools	public	scripts/connect-skill-checks.swift	headless	43	required			
-connect-horizon-py	release	public-contract	scripts/connect-horizon-checks.py	headless	58	required			
-owner-connect-cli-py	ai-tools	owner	scripts/connect-cli-checks.py	headless	6	required			
-owner-mcp-update-py	ai-tools	owner	scripts/mcp-update-checks.py	headless	19	required			
-owner-mcp-interfaces-py	ai-tools	owner	scripts/check_interfaces.py	headless		required			
-owner-mcp-readiness-py	ai-tools	owner	scripts/mcp-readiness-checks.py	headless	5	required			
-owner-mcp-resources-py	ai-tools	owner	scripts/check_action_resources.py	headless		required			
-owner-mcp-tool-hints-py	ai-tools	owner	scripts/mcp-tool-hint-checks.py	headless	5	required			
-mcp-skill-py	ai-tools	n/a	scripts/mcp-skill-checks.py	headless	4	required			
-agent-skill-embed-py	ai-tools	n/a	scripts/agent-skill-embed.py	headless	1	required			
-connection-review	ai-tools	public	scripts/connection-review-checks.swift	headless	182	required			
-shortcuts-py	smoke	n/a	scripts/check_shortcuts.py	headless	45	required			
-compile-wb-core-lib	ai-tools	public	-	headless		required			
-wb-core	ai-tools	public	WriterBackend/CoreChecks.swift	headless	37	required			
-compile-clock-shift	ai-tools	public	scripts/clock-shift.c	headless		required			
-compile-clock-shift-probe	ai-tools	public	scripts/clock-shift-probe.swift	headless		required			
-wb-core-clock	ai-tools	public	scripts/wb-core-clock-checks.sh	headless	62	required			
-preference-blocker-sources	setup-ui	public	scripts/preference-blocker-checks.swift	headless	11	required			
-owner-typing-ui-checks	setup-ui	owner	scripts/typing-ui-checks.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22
-owner-settings-hub-checks	setup-ui	owner	scripts/settings-hub-checks.swift	headless	899	required			
-owner-dd-menubar-checks	setup-ui	owner	scripts/dd-menubar-checks.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22
-owner-dd-app-menu-checks	setup-ui	owner	scripts/dd-app-menu-checks.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22
-owner-dd-app-model-checks	setup-ui	owner	scripts/dd-app-model-checks.swift	headless	31	required			
-owner-dd-settings-status-checks	setup-ui	owner	scripts/dd-settings-status-checks.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22
-owner-chrome-pages-ui-checks	setup-ui	owner	scripts/chrome-pages-ui-checks.swift	headless	38	required			
-owner-save-path-app-checks	setup-ui	owner	scripts/save-path-app-checks.swift	headless	17	required			
-owner-history-set-aside-checks	storage	owner	scripts/history-set-aside-checks.swift	headless	32	required			
-owner-setup-upgrade-checks	setup-ui	owner	scripts/setup-upgrade-checks.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22
-owner-onboarding-screen-checks	setup-ui	owner	scripts/onboarding-screen-checks.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22
-owner-dd-first-launch-checks	setup-ui	owner	scripts/dd-first-launch-checks.swift	headless	12	required			
-owner-chrome-ask-checks	setup-ui	owner	scripts/chrome-ask-checks.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22
-owner-usage-counts-app-checks	setup-ui	owner	scripts/usage-counts-app-checks.swift	headless	74	required			
-owner-dd-kit-checks	setup-ui	owner	scripts/dd-kit-checks.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22
-owner-permission-settings-checks	setup-ui	owner	scripts/permission-settings-checks.swift	headless	81	required			
-owner-honesty-ui-checks	setup-ui	owner	scripts/honesty-ui-checks.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22
-owner-dd-recall-checks	storage	owner	scripts/dd-recall-checks.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22
-permission-window-checks	setup-ui	public	scripts/permission-window-checks.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22
-settings-0013-py	setup-ui	n/a	scripts/settings-0013-checks.py	headless	6	required			
-rc-messages-owner	capture	owner	scripts/messages-moment-checks.swift	headless	68	required			
-rc-summary-ux-snapshot	ai-tools	owner	scripts/summary-ux-snapshot-checks.swift	headless	30	required			
-rc-summary-ux-owner-view	ai-tools	owner	scripts/summary-ux-owner-view-checks.swift	headless	38	required			
-rc-summary-ux-intent	ai-tools	owner	scripts/summary-ux-intent-checks.swift	headless	15	required			
-rc-summary-ux-scheduling	ai-tools	owner	scripts/summary-ux-scheduling-checks.swift	headless	104	required			
-rc-summary-ux-pause	ai-tools	owner	WriterBackend/PauseChecks/*	headless	11	required			
-dd-focus-list	setup-ui	owner	scripts/dd-focus-list-checks.swift	headless	393	required			
-timeline-card-condense	setup-ui	owner	scripts/timeline-card-condense-checks.swift	headless	322	required			
-dd-status	setup-ui	owner	scripts/dd-status-checks.swift	headless	966	required			
-dd-status-surfaces-safety	setup-ui	owner	scripts/dd-status-surfaces-safety-checks.swift	headless	231	required			
-dd-today-data	setup-ui	owner	scripts/dd-today-data-checks.swift	headless	241	required			
-day-navigation	setup-ui	owner	scripts/day-navigation-checks.swift	headless	1	required			
-layout-loop	setup-ui	owner	scripts/layout-loop-checks.swift	headless	6	required			
-page-links	setup-ui	owner	scripts/page-links-checks.swift	headless	21	required			
-site-icon	setup-ui	owner	scripts/site-icon-checks.swift	headless	1	required			
-settings-condense	setup-ui	owner	scripts/settings-condense-checks.swift	headless	42	required			
-owner-source-detail	setup-ui	owner	scripts/owner-source-detail-checks.swift	headless	56	required			
-owner-source-preview	setup-ui	owner	scripts/owner-source-preview-checks.swift	headless	48	required			
-terminal-details	setup-ui	owner	scripts/terminal-details-checks.swift	headless	43	required			
-preview-app	setup-ui	owner	scripts/preview-app-checks.swift	headless	58	required			
-dd-moment-menus	setup-ui	owner	scripts/dd-moment-menus-checks.swift	headless	18	required			
-timeline-session-grouping	setup-ui	owner	scripts/timeline-session-grouping-checks.swift,scripts/fixtures/derived-session-interval-pattern.json	headless	128	required			
-main-layout-stress	setup-ui	owner	scripts/main-layout-stress.swift	headless	3	required			
-main-layout-stress-dense	setup-ui	owner	scripts/main-layout-stress.swift	headless	3	required			
-preview-paths	setup-ui	n/a	-	headless	3	required			
-forget-range	storage	owner	scripts/forget-range-checks.swift	headless	29	required			
-fuzzy-search	storage	owner	scripts/fuzzy-search-checks.swift	headless	80	required			
-search-context	storage	owner	scripts/search-context-checks.swift	headless	54	required			
-search-progressive	storage	owner	scripts/search-progressive-checks.swift	headless	34	required			
-search-typed	storage	owner	scripts/search-typed-checks.swift	headless	37	required			
-retention	storage	owner	scripts/retention-checks.swift	headless	49	required			
-core-production	storage	owner	scripts/core-production-checks.swift	headless	43	required			
-sig-indexer-maintenance	storage	owner	scripts/sig-indexer-maintenance-checks.swift	headless	67	required			
-sig-maintenance-fixed	storage	owner	scripts/sig-maintenance-fixed-checks.swift	headless	58	required			
-typesense-binary	storage	n/a	packaging/TypesenseRuntime/local-typesense-v30.2.json	typesense	1	required			
-search-launch	storage	owner	scripts/search-launch-checks.swift	typesense	26	required			
-production-search	storage	owner	scripts/production-search-checks.swift	typesense	31	required			
-typesense-tests	storage	owner	scripts/search-test-runner.swift,Tests/MemoryCoreTests/TypesenseTests.swift	typesense	12	required			
-contact-shape-pipeline	capture	owner	scripts/contact-shape-pipeline-checks.swift	headless	55	required			
-recipient-authority	capture	owner	scripts/recipient-authority-checks.swift	headless	23	required			
-messages-recorder-regression	capture	owner	scripts/messages-recorder-regression-checks.swift	headless	141	required			
-messages-safety	capture	owner	scripts/messages-safety-checks.swift	headless	1	required			
-sig-context-capture	capture	owner	scripts/sig-context-capture-checks.swift	headless		required			
-sig-context-negative	capture	owner	scripts/sig-context-negative-checks.swift	headless	90	required			
-sig-emoticon	capture	owner	scripts/sig-emoticon-checks.swift	headless	145	required			
-native-intake-boundary	capture	owner	scripts/native-intake-boundary-checks.swift	headless	328	known-failure	real app bug (regression in 9b2b2ba, 10/02, the commit that last edited this check): 6 of 36 boundary negatives keep the typed spaces that e8b1e44 drops on uncertain input (cases 2,3,13,22,23,34, e.g. 17 spaces kept); 334/334 on e8b1e44; needs the owner to say which rule stands	2026-10-08	2026-10-22
-c1-search-contract-py	capture	n/a	scripts/c1-search-contract-checks.py	headless	31	required			
-c1-search-contract-controls	capture	n/a	scripts/c1-search-contract-checks.py	headless	2	required			
-recording-replay	capture	public	scripts/test-recording-replay.sh,scripts/recording-session-replay.swift,scripts/fixtures/recording-session-synthetic.json	headless	2	required			
-fallback-compat	ai-tools	owner	scripts/fallback-compat-checks.swift	headless	44	required			
-summary-action-isolation	ai-tools	owner	scripts/summary-action-isolation-checks.swift	headless	35	required			
-summary-clause	ai-tools	owner	scripts/summary-clause-checks.swift	headless	125	required			
-summary-coherence	ai-tools	owner	scripts/summary-coherence-checks.swift	headless	64	required			
-summary-copy-facts	ai-tools	owner	scripts/summary-copy-facts-checks.swift	headless	66	required			
-summary-fallback	ai-tools	owner	scripts/summary-fallback-checks.swift	headless	34	required			
-stale-card	ai-tools	owner	scripts/stale-card-checks.swift	headless	1	required			
-overnight-summary-detail	ai-tools	owner	scripts/overnight-summary-detail-checks.swift	headless	42	required			
-summary-regeneration	ai-tools	owner	scripts/summary-regeneration-checks.swift	headless	87	required			
-sig-note-prepare-fixed	ai-tools	owner	scripts/sig-note-prepare-fixed-checks.swift	headless		required			
-scheduler-production	ai-tools	owner	WriterBackend/SchedulerChecks/main.swift	headless	29	required			
-agent-tools-evals-py	ai-tools	owner	scripts/agent-tools-evals.py	headless		required			
-migration-py	ai-tools	owner	scripts/check_migration.py	headless	8	known-failure	real app bug: migration-init --policy-file writes a policy without continuationSince and the import's first writable open stamps it (4075149, 9/26), so migration-import refuses the dry run's policySHA256 (10 of 18 tests)	2026-10-08	2026-10-22
-migration-inventory-py	ai-tools	n/a	scripts/check_migration_inventory.py	headless	3	required			
-search-interfaces-py	ai-tools	owner	scripts/check_search_interfaces.py	headless	6	required			
-functional-payload-py	release	n/a	scripts/check_functional_payload.py	headless	7	required			
-functional-trial-py	release	n/a	scripts/check_functional_trial.py	headless	9	required			
-writer-macos15-inputs-py	release	n/a	scripts/check_writer_macos15_inputs.py	headless	7	required			
-dev-refresh-py	release	n/a	scripts/check-dev-refresh.py	headless	7	required			
-title-clean	smoke	owner	scripts/title-clean-checks.swift	headless	21	required			
-bb-core-ingestion	capture	owner	BrowserBridge/fixtures/core-ingestion-checks.swift	headless	1	required			
-bb-package-build	capture	public	-	headless		required			
-bb-BrowserBridgeChecks	capture	public	BrowserBridge/Checks/*.swift	headless	1	required			
-bb-DiagnosticChecks	capture	public	BrowserBridge/DiagnosticChecks/*.swift	headless	1	required			
-bb-MetadataChecks	capture	public	BrowserBridge/MetadataChecks/*.swift	headless	1	required			
-bb-local-transport	capture	public	BrowserBridge/fixtures/local-transport-checks.swift	headless	1	required			
-bb-production-setup	capture	public	BrowserBridge/fixtures/production-setup-checks.swift	headless	1	required			
-bb-extension-mjs	capture	n/a	BrowserBridge/fixtures/extension-checks.mjs	headless	1	required			
-bb-key-store-mjs	capture	n/a	BrowserBridge/fixtures/key-store-checks.mjs	headless	1	required			
-bb-authenticated-mjs	capture	public	BrowserBridge/fixtures/authenticated-checks.mjs	headless	1	required			
-bb-diagnostic-transport-mjs	capture	public	BrowserBridge/fixtures/diagnostic-transport-checks.mjs	headless		required			
-server-parity-py	capture	n/a	tools/chrome-device-test/kit/check_server_parity.py	headless	1	required			
-backup-restore-py	storage	n/a	BackupRestore/test_backup_restore.py	headless	12	required			
-wb-signed-runtime	ai-tools	public	WriterBackend/SignedRuntimeChecks/*	headless	3	required			
-runtime-distribution-py	ai-tools	n/a	WriterBackend/check_runtime_distribution.py	headless	1	required			
+# tier: smoke | change | rc | nightly (blank = rc). TIER=<t> runs that tier and every lower one; public twins of owner steps,
+#   the release builds and their scans are rc; mutation runs are nightly. Fragments (scripts/checks-manifest.d/*.tsv) carry it too.
+# timeout (optional; a row may leave the cell out): the step's own time limit in seconds; default STEP_TIMEOUT, 900 s. A step still
+#   running at its limit is killed with its process group and fails as TIMEOUT <step> (runner-1001/bounded.sh).
+step	lane	config	file	needs	min_pass	status	reason	since	review_by	tier	timeout
+git-checkout	smoke	n/a	-	headless	1	required				smoke
+manifest-dryrun	smoke	n/a	scripts/checks-manifest.tsv,scripts/checks-known-failures.tsv	headless	1	required				smoke
+manifest-verifier-py	smoke	n/a	scripts/verify-run-manifest-checks.py	headless	93	required				smoke
+manifest-inventory	smoke	n/a	scripts/checks-inventory-exempt.tsv	headless	1	required				smoke
+select-lanes-py	smoke	n/a	runner-1001/select-lanes.py,scripts/checks-paths.tsv	headless	36	required				smoke
+build	smoke	public-contract	-	headless		required				smoke
+app-module	smoke	public	runner-1001/app-module.sh	headless		required				change
+deployment-api-py	smoke	n/a	scripts/check_macos13_api.py	headless	6	required				smoke
+store-perf	perf	public	scripts/store-perf-checks.swift	headless	25	required				rc
+perf-1002	setup-ui	public	scripts/perf-1002-checks.swift	headless	12	required				change
+perf-1003	storage	public	scripts/perf-1003-checks.swift	headless	28	required				change
+what-happened-fold	storage	public	scripts/what-happened-fold-checks.swift	headless	1	required				change
+tap-handoff	capture	public	scripts/tap-handoff-checks.swift	headless	21	required				change
+no-draft-display	storage	public	scripts/no-draft-display-checks.swift	headless	1	required				change
+search-words	storage	public	scripts/search-words-checks.swift	headless	13	required				change
+store-main-thread-source-py	storage	n/a	scripts/store-main-thread-source-checks.py	headless	14	required				smoke
+store-main-thread	storage	public	scripts/store-main-thread-checks.swift	headless	3	required				change
+privacy-build	smoke	public-contract	-	headless		required				rc
+PrivacyChecks	smoke	public-contract	PrivacyPolicy/Checks/*.swift	headless	207	required				rc
+typed-boundary-space	capture	public	PrivacyPolicy/Checks/TypingChecks.swift,scripts/typed-boundary-space-checks.swift	headless	76	required				change
+search-app-label	storage	public	scripts/search-app-label-checks.swift	headless	18	required				change
+typing-wiring-source-py	capture	n/a	scripts/typing-wiring-source-checks.py	headless	10	required				smoke
+typing-public-lane-py	capture	public-contract	scripts/typing-public-lane-checks.py	headless	7	required				change
+main-thread-apis-py	capture	n/a	scripts/check_main_thread_apis.py	headless	28	required				smoke
+onboarding-flow	setup-ui	public	scripts/onboarding-flow-checks.swift	headless	75	required				change
+skipped-app-id	setup-ui	public	scripts/skipped-app-id-checks.swift	headless	43	required				change
+permission-drag-guide	setup-ui	public	scripts/permission-drag-guide-checks.swift	headless	202	required				change
+search-depth	storage	public	scripts/search-depth-checks.swift	headless	63	required				change
+search-prefilter	storage	public	scripts/search-prefilter-checks.swift	headless	75	required				change
+search-fallback-coverage	storage	public	scripts/search-fallback-coverage-checks.swift	headless	22	required				change
+store-format	storage	public	scripts/store-format-checks.swift	headless	18	required				change
+store-integrity	storage	public	scripts/store-integrity-checks.swift	headless	68	required				change
+backup-depth	storage	public	scripts/backup-depth-checks.swift	headless	10	required				change
+backup-native	storage	public	BackupRestore/Tests/NativeChecks.swift	headless	55	required				change
+notes-golden	ai-tools	public	scripts/notes-golden-checks.swift	headless	32	required				change
+writer-quiet	ai-tools	public	scripts/writer-quiet-checks.swift	headless	15	required				change
+writer-app-integration	ai-tools	public	WriterBackend/AppIntegrationChecks/*	headless	3	required				change
+wb-package-build	ai-tools	public	-	headless		required				change
+wb-WriterChecks	ai-tools	public	WriterBackend/Checks/*.swift	headless	2	required				change
+wb-CloudActivationChecks	ai-tools	public	WriterBackend/CloudActivationChecks/*.swift	headless	1	required				change
+wb-AdapterChecks	ai-tools	public	WriterBackend/AdapterChecks/*.swift	headless	35	required				change
+wb-InstallationChecks	ai-tools	public	WriterBackend/InstallationChecks/*.swift	headless	24	required				change
+wb-PromptChecks	ai-tools	public	WriterBackend/PromptChecks/*.swift	headless	67	required				change
+wb-scheduler	ai-tools	public	WriterBackend/SchedulerChecks/*	headless	29	required				change
+wb-batch	ai-tools	public	WriterBackend/BatchChecks/*	headless	25	required				change
+download-time	ai-tools	public	scripts/download-time-checks.swift	headless	1	required				change
+notes-quality	ai-tools	public	scripts/notes-quality-checks.swift	headless	199	required				change
+summary-terminal	ai-tools	public	scripts/summary-terminal-checks.swift	headless	85	required				change
+summary-ready	ai-tools	public	scripts/summary-ready-checks.swift	headless	171	required				change
+moment-cards	ai-tools	public	scripts/moment-cards-checks.swift	headless	70	required				change
+action-audit	storage	public	scripts/action-audit-checks.swift	headless	19	required				change
+browser-boundary-py	capture	n/a	scripts/check_browser_boundary.py	headless	24	required				smoke
+typed-claim-checks	capture	n/a	scripts/typed-claim-checks.py	headless	7	required				smoke
+usage-counts-py	setup-ui	n/a	scripts/usage-counts-checks.py	headless	15	required				smoke
+native-coverage-mjs	capture	n/a	BrowserBridge/fixtures/native-coverage-checks.mjs	headless	1	required				smoke
+harness-source-py	capture	n/a	tools/chrome-device-test/check_harness_source.py	headless	19	required				smoke
+qa-harness-boundary-py	capture	n/a	scripts/check-qa-harness-boundary.py	headless	29	required				smoke
+harness-build	capture	public	-	headless		required				change
+harness-selftest	capture	public	-	headless	1	required				change
+release-build	release	public-contract	-	headless		required				rc
+release-scan	release	public-contract	scripts/chrome-typing-checks.py	headless	2	required				rc
+public-debug-scan	release	public-contract	scripts/chrome-typing-checks.py	headless	2	required				change
+binary-features	release	public-contract	scripts/binary-feature-checks.py	headless	25	required				rc
+owner-build	smoke	owner	-	headless		required				smoke
+owner-app-module	smoke	owner	runner-1001/app-module.sh	headless		required				change
+app-module-selftest	smoke	owner	runner-1001/app-module.sh	headless	5	required				rc
+owner-MacMemChecks	smoke	owner	Checks/*.swift	headless	7613	required				smoke
+owner-store-main-thread-guard	storage	owner	scripts/store-main-thread-guard-checks.swift	headless	4	required				change
+owner-ProductionBindingChecks	smoke	owner	-	headless	43	required				smoke
+owner-privacy-build	smoke	owner	-	headless		required				smoke
+owner-PrivacyChecks	smoke	owner	PrivacyPolicy/Checks/*.swift	headless	207	required				smoke
+owner-production-capture	capture	owner	scripts/production-event-capture-checks.swift	headless	686	required				change
+owner-chrome-offmain	capture	owner	scripts/chrome-offmain-checks.swift	headless	28	required				change
+owner-ai-read-typed	capture	owner	scripts/ai-read-typed-checks.swift	headless	74	required				change
+typing-e2e	capture	public	scripts/typing-e2e-checks.swift	headless	285	required				change
+owner-typed-secret-fuzz	capture	owner	scripts/typed-secret-fuzz-checks.swift	headless	1	required				change
+owner-recording-fault	capture	owner	scripts/recording-fault-checks.swift	headless	37	required				change
+owner-save-path	capture	owner	scripts/save-path-checks.swift	headless	126	required				change
+owner-capture-input	capture	owner	scripts/capture-input-checks.swift	headless	214	required				change
+owner-typing-unlock-delivery	capture	owner	scripts/typing-unlock-delivery-checks.swift	headless	15	required				change
+owner-capture-input-model	capture	owner	scripts/capture-input-model-checks.swift	headless	7	required				change
+owner-ui-copy	setup-ui	owner	scripts/ui-copy-checks.swift	headless	769	required				change
+owner-release-build	release	owner	-	headless		required				rc
+owner-release-build-cli	release	owner	-	headless		required				rc
+owner-typing-gate	release	owner	scripts/typing-release-gate-checks.py	headless	18	required				rc
+owner-chrome-parse	release	owner	scripts/chrome-apple-event-parse-checks.swift	headless	19	required				change
+owner-day-review	ai-tools	owner	scripts/day-review-checks.swift	headless	207	required				change
+owner-search-results-ui	storage	owner	scripts/search-results-ui-checks.swift	headless	128	required				change
+owner-day-review-eval	ai-tools	owner	scripts/day-review-eval-checks.swift	headless	96	required				change
+owner-day-review-eval-score	ai-tools	owner	scripts/day-review-eval.py	headless	1	required				change
+owner-typed-store	capture	owner	scripts/typed-store-checks.swift	headless	262	required				change
+owner-preference-save	setup-ui	owner	scripts/preference-save-checks.swift	headless	85	required				change
+owner-typing-choice	setup-ui	owner	scripts/onboarding-typing-choice-checks.swift	headless	41	required				change
+owner-memory-controls	setup-ui	owner	scripts/memory-controls-checks.swift	headless	68	required				change
+owner-onboarding-staging	setup-ui	owner	scripts/onboarding-staging-checks.swift	headless	43	required				change
+owner-data-home-migration	setup-ui	owner	scripts/data-home-migration-checks.swift	headless	63	required				change
+owner-launch-preparation	storage	owner	scripts/launch-preparation-checks.swift	headless	16	required				change
+owner-store-perf	perf	owner	scripts/store-perf-checks.swift	headless	25	required				change
+owner-typed-launch	capture	owner	scripts/typed-launch-checks.swift	headless	43	required				change
+owner-native-witness	capture	owner	scripts/native-focus-witness-checks.swift	headless	186	required				change
+owner-core-adapter	capture	owner	scripts/core-adapter-checks.swift	headless	151	required				change
+core-adapter	capture	public-contract	scripts/core-adapter-checks.swift	headless	152	required				rc
+owner-messages-store	capture	owner	scripts/messages-store-checks.swift	headless	1	required				change
+owner-level-binding	ai-tools	owner	scripts/level-binding-checks.swift	headless	29	required				change
+owner-writer-retention	ai-tools	owner	scripts/writer-retention-checks.swift	headless	15	required				change
+owner-cloud-scope	ai-tools	owner	scripts/cloud-scope-checks.swift	headless	23	required				change
+owner-summary-sends	ai-tools	owner	scripts/summary-sends-checks.swift	headless	86	required				change
+owner-summary-fail	ai-tools	owner	scripts/summary-fail-checks.swift	headless	133	required				change
+owner-writer-cadence	ai-tools	owner	scripts/writer-cadence-checks.swift	headless	77	required				rc	1800
+owner-writer-state	ai-tools	owner	scripts/writer-state-checks.swift	headless	189	required				change
+owner-writer-spin	ai-tools	owner	scripts/writer-spin-checks.swift	headless	12	required				change
+owner-notes-writer	ai-tools	owner	scripts/notes-writer-checks.swift	headless	23	required				change
+owner-browser-app-0227	capture	owner	scripts/browser-app-0227-checks.swift	headless	22	required				change
+owner-browser-provider-0240	capture	owner	scripts/browser-provider-0240-checks.swift	headless	24	required				change
+owner-app-bindings-0132	capture	owner	scripts/app-preferences-search-0132-checks.swift	headless	26	required				change
+owner-native-receipt-0053	capture	owner	scripts/native-receipt-0053-checks.swift	headless	40	required				change
+owner-connect-config	ai-tools	owner	scripts/connect-config-checks.swift	headless	166	required				change
+owner-connect-diagnostics	ai-tools	owner	scripts/connect-diagnostics-checks.swift	headless	40	required				change
+signing-plan-py	release	n/a	scripts/check_signing_plan.py	headless	15	required				smoke
+developer-id-release-py	release	n/a	scripts/check_developer_id_release.py	headless	112	required				smoke
+search-payload-py	release	n/a	scripts/check_search_payload.py	headless	30	required				smoke
+owner-updates-py	release	owner	scripts/check_updates.py	headless	42	required				change
+packaging-py	release	n/a	scripts/check_daydream_packaging.py	headless	4	required				smoke
+brand-py	smoke	n/a	scripts/check_daydream_brand.py	headless	1	required				smoke
+uninstall-plan	setup-ui	public	scripts/uninstall-plan-checks.swift	headless	236	required				change
+recording-wake	capture	public	scripts/recording-wake-checks.swift	headless	418	required				change
+dd-recording-state	capture	public	scripts/dd-recording-state-checks.swift	headless	292	required				change
+lock-notice-delivery	capture	public	scripts/lock-notice-delivery-checks.swift	headless	8	required				change
+recording-permission	setup-ui	public	scripts/recording-permission-checks.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22	change
+recording-model	setup-ui	public	scripts/recording-model-checks.swift	headless	13	required				change
+setup-lifecycle	setup-ui	public	scripts/setup-lifecycle-checks.swift	headless	167	required				change
+owner-lifecycle-model	setup-ui	owner	scripts/lifecycle-model-checks.swift	headless	193	required				change
+owner-permission-blip	setup-ui	owner	scripts/permission-blip-checks.swift	headless	122	required				change
+owner-permission-flash	setup-ui	owner	scripts/permission-flash-checks.swift	headless	144	required				change
+owner-permission-flash-mutation	setup-ui	owner	scripts/mutations.d/tiers.tsv,runner-1001/mutate.sh	headless	1	required				nightly	2400
+permission-prompt-py	setup-ui	n/a	scripts/permission-prompt-checks.py	headless	42	required				smoke
+test-copy-identity-py	setup-ui	n/a	scripts/test-copy-identity-checks.py	headless	30	required				smoke
+owner-permission-guidance	setup-ui	owner	scripts/permission-guidance-checks.swift	headless	46	required				change
+owner-launch-state	setup-ui	owner	scripts/launch-state-checks.swift	headless	105	required				change
+owner-single-copy	setup-ui	owner	scripts/single-copy-checks.swift	headless	42	required				change
+owner-store-main-hold	storage	owner	scripts/store-main-hold-checks.swift	headless	27	required				change
+sparkle-pin	release	n/a	scripts/bootstrap-sparkle.py	headless		required				smoke
+updates-json	release	n/a	scripts/release.py	headless		required				smoke
+update-builds-py	release	n/a	scripts/check_update_builds.py	headless	23	required				smoke
+owner-update-quit	release	owner	scripts/update-quit-checks.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22	change
+docs-claims-py	release	n/a	scripts/docs-claims-checks.py	headless	54	required				smoke
+docs-dmg-background	release	public	scripts/dmg-background.swift	headless		required				change
+docs-install-render	release	public	scripts/docs-install-render.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22	change
+honesty-release-switch-py	release	n/a	scripts/honesty-release-switch-checks.py	headless	5	required				smoke
+honesty-switch-off	release	public	scripts/honesty-switch-off-checks.sh	headless	30	required				rc
+honesty-ui	setup-ui	public	scripts/honesty-ui-checks.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22	change
+connect-toml	ai-tools	public	scripts/connect-toml-checks.swift	headless	117	required				change
+connect-skill	ai-tools	public	scripts/connect-skill-checks.swift	headless	43	required				change
+connect-horizon-py	release	public-contract	scripts/connect-horizon-checks.py	headless	58	required				rc
+owner-connect-cli-py	ai-tools	owner	scripts/connect-cli-checks.py	headless	6	required				change
+owner-mcp-update-py	ai-tools	owner	scripts/mcp-update-checks.py	headless	19	required				change
+owner-mcp-interfaces-py	ai-tools	owner	scripts/check_interfaces.py	headless		required				change
+owner-mcp-readiness-py	ai-tools	owner	scripts/mcp-readiness-checks.py	headless	5	required				change
+owner-mcp-resources-py	ai-tools	owner	scripts/check_action_resources.py	headless		required				change
+owner-mcp-tool-hints-py	ai-tools	owner	scripts/mcp-tool-hint-checks.py	headless	5	required				change
+mcp-skill-py	ai-tools	n/a	scripts/mcp-skill-checks.py	headless	4	required				smoke
+agent-skill-embed-py	ai-tools	n/a	scripts/agent-skill-embed.py	headless	1	required				smoke
+connection-review	ai-tools	public	scripts/connection-review-checks.swift	headless	182	required				change
+shortcuts-py	smoke	n/a	scripts/check_shortcuts.py	headless	45	required				smoke
+compile-wb-core-lib	ai-tools	public	-	headless		required				change
+wb-core	ai-tools	public	WriterBackend/CoreChecks.swift	headless	37	required				change
+compile-clock-shift	ai-tools	public	scripts/clock-shift.c	headless		required				change
+compile-clock-shift-probe	ai-tools	public	scripts/clock-shift-probe.swift	headless		required				change
+wb-core-clock	ai-tools	public	scripts/wb-core-clock-checks.sh	headless	62	required				change
+preference-blocker-sources	setup-ui	public	scripts/preference-blocker-checks.swift	headless	11	required				change
+owner-typing-ui-checks	setup-ui	owner	scripts/typing-ui-checks.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22	change
+owner-settings-hub-checks	setup-ui	owner	scripts/settings-hub-checks.swift	headless	899	required				change
+owner-dd-menubar-checks	setup-ui	owner	scripts/dd-menubar-checks.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22	change
+owner-dd-app-menu-checks	setup-ui	owner	scripts/dd-app-menu-checks.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22	change
+owner-dd-app-model-checks	setup-ui	owner	scripts/dd-app-model-checks.swift	headless	31	required				change
+owner-dd-settings-status-checks	setup-ui	owner	scripts/dd-settings-status-checks.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22	change
+owner-chrome-pages-ui-checks	setup-ui	owner	scripts/chrome-pages-ui-checks.swift	headless	38	required				change
+owner-save-path-app-checks	setup-ui	owner	scripts/save-path-app-checks.swift	headless	17	required				change
+owner-history-set-aside-checks	storage	owner	scripts/history-set-aside-checks.swift	headless	32	required				change
+owner-setup-upgrade-checks	setup-ui	owner	scripts/setup-upgrade-checks.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22	change
+owner-onboarding-screen-checks	setup-ui	owner	scripts/onboarding-screen-checks.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22	change
+owner-dd-first-launch-checks	setup-ui	owner	scripts/dd-first-launch-checks.swift	headless	12	required				change
+owner-chrome-ask-checks	setup-ui	owner	scripts/chrome-ask-checks.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22	change
+owner-usage-counts-app-checks	setup-ui	owner	scripts/usage-counts-app-checks.swift	headless	74	required				change
+owner-dd-kit-checks	setup-ui	owner	scripts/dd-kit-checks.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22	change
+owner-permission-settings-checks	setup-ui	owner	scripts/permission-settings-checks.swift	headless	81	required				change
+owner-honesty-ui-checks	setup-ui	owner	scripts/honesty-ui-checks.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22	change
+owner-dd-recall-checks	storage	owner	scripts/dd-recall-checks.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22	change
+permission-window-checks	setup-ui	public	scripts/permission-window-checks.swift	window		window-only	hosts an on-screen AppKit window; the headless runner skips it (Phase 2 window lane)	2026-10-08	2026-10-22	change
+settings-0013-py	setup-ui	n/a	scripts/settings-0013-checks.py	headless	6	required				smoke
+rc-messages-owner	capture	owner	scripts/messages-moment-checks.swift	headless	68	required				change
+rc-summary-ux-snapshot	ai-tools	owner	scripts/summary-ux-snapshot-checks.swift	headless	30	required				change
+rc-summary-ux-owner-view	ai-tools	owner	scripts/summary-ux-owner-view-checks.swift	headless	38	required				change
+rc-summary-ux-intent	ai-tools	owner	scripts/summary-ux-intent-checks.swift	headless	15	required				change
+rc-summary-ux-scheduling	ai-tools	owner	scripts/summary-ux-scheduling-checks.swift	headless	104	required				change
+rc-summary-ux-pause	ai-tools	owner	WriterBackend/PauseChecks/*	headless	11	required				change
+dd-focus-list	setup-ui	owner	scripts/dd-focus-list-checks.swift	headless	393	required				change
+timeline-card-condense	setup-ui	owner	scripts/timeline-card-condense-checks.swift	headless	322	required				change
+dd-status	setup-ui	owner	scripts/dd-status-checks.swift	headless	966	required				change
+dd-status-surfaces-safety	setup-ui	owner	scripts/dd-status-surfaces-safety-checks.swift	headless	231	required				change
+dd-today-data	setup-ui	owner	scripts/dd-today-data-checks.swift	headless	241	required				change
+day-navigation	setup-ui	owner	scripts/day-navigation-checks.swift	headless	1	required				change
+layout-loop	setup-ui	owner	scripts/layout-loop-checks.swift	headless	6	required				change
+page-links	setup-ui	owner	scripts/page-links-checks.swift	headless	21	required				change
+site-icon	setup-ui	owner	scripts/site-icon-checks.swift	headless	1	required				change
+settings-condense	setup-ui	owner	scripts/settings-condense-checks.swift	headless	42	required				change
+owner-source-detail	setup-ui	owner	scripts/owner-source-detail-checks.swift	headless	56	required				change
+owner-source-preview	setup-ui	owner	scripts/owner-source-preview-checks.swift	headless	48	required				change
+terminal-details	setup-ui	owner	scripts/terminal-details-checks.swift	headless	43	required				change
+preview-app	setup-ui	owner	scripts/preview-app-checks.swift	headless	58	required				change
+dd-moment-menus	setup-ui	owner	scripts/dd-moment-menus-checks.swift	headless	18	required				change
+timeline-session-grouping	setup-ui	owner	scripts/timeline-session-grouping-checks.swift,scripts/fixtures/derived-session-interval-pattern.json	headless	128	required				change
+main-layout-stress	setup-ui	owner	scripts/main-layout-stress.swift	headless	3	required				change
+main-layout-stress-dense	setup-ui	owner	scripts/main-layout-stress.swift	headless	3	required				change
+preview-paths	setup-ui	n/a	-	headless	3	required				change
+forget-range	storage	owner	scripts/forget-range-checks.swift	headless	29	required				change
+fuzzy-search	storage	owner	scripts/fuzzy-search-checks.swift	headless	80	required				change
+search-context	storage	owner	scripts/search-context-checks.swift	headless	54	required				change
+search-progressive	storage	owner	scripts/search-progressive-checks.swift	headless	34	required				change
+search-typed	storage	owner	scripts/search-typed-checks.swift	headless	37	required				change
+retention	storage	owner	scripts/retention-checks.swift	headless	49	required				change
+core-production	storage	owner	scripts/core-production-checks.swift	headless	43	required				change
+sig-indexer-maintenance	storage	owner	scripts/sig-indexer-maintenance-checks.swift	headless	67	required				change
+sig-maintenance-fixed	storage	owner	scripts/sig-maintenance-fixed-checks.swift	headless	58	required				change
+typesense-binary	storage	n/a	packaging/TypesenseRuntime/local-typesense-v30.2.json	typesense	1	required				change
+search-launch	storage	owner	scripts/search-launch-checks.swift	typesense	26	required				change
+production-search	storage	owner	scripts/production-search-checks.swift	typesense	31	required				change
+typesense-tests	storage	owner	scripts/search-test-runner.swift,Tests/MemoryCoreTests/TypesenseTests.swift	typesense	12	required				change
+contact-shape-pipeline	capture	owner	scripts/contact-shape-pipeline-checks.swift	headless	55	required				change
+recipient-authority	capture	owner	scripts/recipient-authority-checks.swift	headless	23	required				change
+messages-recorder-regression	capture	owner	scripts/messages-recorder-regression-checks.swift	headless	141	required				change
+messages-safety	capture	owner	scripts/messages-safety-checks.swift	headless	1	required				change
+sig-context-capture	capture	owner	scripts/sig-context-capture-checks.swift	headless		required				change
+sig-context-negative	capture	owner	scripts/sig-context-negative-checks.swift	headless	90	required				change
+sig-emoticon	capture	owner	scripts/sig-emoticon-checks.swift	headless	145	required				change
+native-intake-boundary	capture	owner	scripts/native-intake-boundary-checks.swift	headless	328	known-failure	real app bug (regression in 9b2b2ba, 10/02, the commit that last edited this check): 6 of 36 boundary negatives keep the typed spaces that e8b1e44 drops on uncertain input (cases 2,3,13,22,23,34, e.g. 17 spaces kept); 334/334 on e8b1e44; needs the owner to say which rule stands	2026-10-08	2026-10-22	change
+c1-search-contract-py	capture	n/a	scripts/c1-search-contract-checks.py	headless	31	required				smoke
+c1-search-contract-controls	capture	n/a	scripts/c1-search-contract-checks.py	headless	2	required				smoke
+recording-replay	capture	public	scripts/test-recording-replay.sh,scripts/recording-session-replay.swift,scripts/fixtures/recording-session-synthetic.json	headless	2	required				change
+fallback-compat	ai-tools	owner	scripts/fallback-compat-checks.swift	headless	44	required				change
+summary-action-isolation	ai-tools	owner	scripts/summary-action-isolation-checks.swift	headless	35	required				change
+summary-clause	ai-tools	owner	scripts/summary-clause-checks.swift	headless	125	required				change
+summary-coherence	ai-tools	owner	scripts/summary-coherence-checks.swift	headless	64	required				change
+summary-copy-facts	ai-tools	owner	scripts/summary-copy-facts-checks.swift	headless	66	required				change
+summary-fallback	ai-tools	owner	scripts/summary-fallback-checks.swift	headless	34	required				change
+stale-card	ai-tools	owner	scripts/stale-card-checks.swift	headless	1	required				change
+overnight-summary-detail	ai-tools	owner	scripts/overnight-summary-detail-checks.swift	headless	42	required				change
+summary-regeneration	ai-tools	owner	scripts/summary-regeneration-checks.swift	headless	87	required				change
+sig-note-prepare-fixed	ai-tools	owner	scripts/sig-note-prepare-fixed-checks.swift	headless		required				change
+scheduler-production	ai-tools	owner	WriterBackend/SchedulerChecks/main.swift	headless	29	required				change
+agent-tools-evals-py	ai-tools	owner	scripts/agent-tools-evals.py	headless		required				change
+migration-py	ai-tools	owner	scripts/check_migration.py	headless	8	known-failure	real app bug: migration-init --policy-file writes a policy without continuationSince and the import's first writable open stamps it (4075149, 9/26), so migration-import refuses the dry run's policySHA256 (10 of 18 tests)	2026-10-08	2026-10-22	change
+migration-inventory-py	ai-tools	n/a	scripts/check_migration_inventory.py	headless	3	required				smoke
+search-interfaces-py	ai-tools	owner	scripts/check_search_interfaces.py	headless	6	required				change
+functional-payload-py	release	n/a	scripts/check_functional_payload.py	headless	7	required				smoke
+functional-trial-py	release	n/a	scripts/check_functional_trial.py	headless	9	required				smoke
+writer-macos15-inputs-py	release	n/a	scripts/check_writer_macos15_inputs.py	headless	7	required				smoke
+dev-refresh-py	release	n/a	scripts/check-dev-refresh.py	headless	7	required				smoke
+title-clean	smoke	owner	scripts/title-clean-checks.swift	headless	21	required				smoke
+bb-core-ingestion	capture	owner	BrowserBridge/fixtures/core-ingestion-checks.swift	headless	1	required				change
+bb-package-build	capture	public	-	headless		required				change
+bb-BrowserBridgeChecks	capture	public	BrowserBridge/Checks/*.swift	headless	1	required				change
+bb-DiagnosticChecks	capture	public	BrowserBridge/DiagnosticChecks/*.swift	headless	1	required				change
+bb-MetadataChecks	capture	public	BrowserBridge/MetadataChecks/*.swift	headless	1	required				change
+bb-local-transport	capture	public	BrowserBridge/fixtures/local-transport-checks.swift	headless	1	required				change
+bb-production-setup	capture	public	BrowserBridge/fixtures/production-setup-checks.swift	headless	1	required				change
+bb-extension-mjs	capture	n/a	BrowserBridge/fixtures/extension-checks.mjs	headless	1	required				smoke
+bb-key-store-mjs	capture	n/a	BrowserBridge/fixtures/key-store-checks.mjs	headless	1	required				smoke
+bb-authenticated-mjs	capture	public	BrowserBridge/fixtures/authenticated-checks.mjs	headless	1	required				change
+bb-diagnostic-transport-mjs	capture	public	BrowserBridge/fixtures/diagnostic-transport-checks.mjs	headless		required				change
+server-parity-py	capture	n/a	tools/chrome-device-test/kit/check_server_parity.py	headless	1	required				change
+backup-restore-py	storage	n/a	BackupRestore/test_backup_restore.py	headless	12	required				smoke
+wb-signed-runtime	ai-tools	public	WriterBackend/SignedRuntimeChecks/*	headless	3	required				change
+runtime-distribution-py	ai-tools	n/a	WriterBackend/check_runtime_distribution.py	headless	1	required				smoke

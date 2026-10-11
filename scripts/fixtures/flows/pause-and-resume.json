@@ -1,0 +1,96 @@
+{
+  "schema": "daydream-timeline/1",
+  "synthetic": true,
+  "name": "pause-and-resume",
+  "about": "The person pauses DayDream, types while paused (never saved), resumes, then takes a timed 2-minute pause that ends by itself. Every word made up.",
+  "start": "2026-10-06T09:00:00-05:00",
+  "timeZone": "America/Chicago",
+  "install": {
+    "kind": "fresh"
+  },
+  "events": [
+    {
+      "at": 0,
+      "op": "launch",
+      "how": "opened"
+    },
+    {
+      "at": 0.5,
+      "op": "record",
+      "on": true
+    },
+    {
+      "at": 1,
+      "op": "front",
+      "app": "TextEdit",
+      "bundle": "com.apple.TextEdit",
+      "window": "te-1",
+      "title": "notes.txt"
+    },
+    {
+      "at": 2,
+      "op": "type",
+      "text": "before the pause"
+    },
+    {
+      "at": 20,
+      "op": "pause"
+    },
+    {
+      "at": 22,
+      "op": "type",
+      "text": "typed while paused"
+    },
+    {
+      "at": 40,
+      "op": "resume"
+    },
+    {
+      "at": 42,
+      "op": "type",
+      "text": "after resuming"
+    },
+    {
+      "at": 60,
+      "op": "pause",
+      "seconds": 120
+    },
+    {
+      "at": 65,
+      "op": "type",
+      "text": "during the timed pause"
+    },
+    {
+      "at": 200,
+      "op": "type",
+      "text": "after the timed pause"
+    },
+    {
+      "at": 220,
+      "op": "window",
+      "window": "te-2",
+      "title": "Untitled"
+    }
+  ],
+  "expect": {
+    "never": [
+      "typed while paused",
+      "during the timed pause"
+    ],
+    "recordingAtEnd": true,
+    "typed": [
+      {
+        "bundle": "com.apple.TextEdit",
+        "words": "before the pause"
+      },
+      {
+        "bundle": "com.apple.TextEdit",
+        "words": "after resuming"
+      },
+      {
+        "bundle": "com.apple.TextEdit",
+        "words": "after the timed pause"
+      }
+    ]
+  }
+}

@@ -1,0 +1,2 @@
+bug	step	file	old	new	note
+flash-settle	owner-permission-flash	Sources/MacMemApp/MacMemApp.swift	else {shown=permissionShown.read(read,at:now,settle:settle,counts:awake && !wake.suspended)}	else {shown=permissionShown.take(read)}	permflash-015 (owner 10/4, "the permission screen flashes for two frames though everything is on"): the shown permission value takes every read as it is, without the settle; the flash checks must fail (row 0: the mutant run-checks.sh used to build by hand)

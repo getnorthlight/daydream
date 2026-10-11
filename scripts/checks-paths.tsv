@@ -1,0 +1,53 @@
+# Path selection rules for runner-1001/select-lanes.py: which manifest rows a changed path touches.
+# glob: with a "/", the whole repo-relative path ("*" stays in one folder, "**" crosses folders); without, the file name
+#   at any depth; a leading "/" anchors a file name at the repo root. Every matching rule counts (their steps are unioned).
+# targets: lane:NAME (lane:* = every lane) | step:GLOB | config:C | own (rows whose `file` matches) | uses (rows whose
+#   runner command, check file or loaded scripts/ helper names the path; an app file reaches every APP-recipe step) |
+#   all (the full rc tier) | none (nothing reads it).
+# A path no rule selects a row for falls back to the full rc tier. The builds are always selected.
+glob	targets	reason
+/Package.swift	all	the package graph: every target and product
+/Package.resolved	all	the dependency pins: every build
+runner-1001/**	all	the runner: every step's recipe
+scripts/verify-run-manifest.py	all	the verdict of every run
+scripts/verify-run-manifest-checks.py	own	the verifier's own cases
+scripts/checks-manifest.tsv	step:manifest-*,step:select-lanes-py	rows, tiers and pins: the manifest steps check them; the steps themselves run at rc
+scripts/checks-known-failures.tsv	step:manifest-*	the pins (verified by every run's verdict)
+scripts/checks-inventory-exempt.tsv	step:manifest-inventory	the inventory's exemptions
+scripts/checks-paths.tsv	step:select-lanes-py	these rules (select-lanes.py --self-test)
+scripts/checks-manifest.d/**	step:manifest-*	a package's rows (its steps are runner-1001/steps.d: the full rc tier)
+scripts/checks-known-failures.d/**	step:manifest-*	a package's pins
+scripts/mutations.d/**	none	mutation rows run in nightly runs (runner-1001/mutate.sh), not per change
+scripts/fixtures/**	uses	a fixture: the steps whose check reads it
+scripts/**	own,uses	a check file: its own rows; a helper or tool: the steps that run or load it
+Sources/HistoryCore/**	lane:*	the history core: linked by every lane
+Sources/MemoryCore/**	lane:*	the store and capture core: linked by every lane
+Sources/CSQLite/**	lane:*	SQLite's module map: every lane
+Sources/MemoryUI/**	lane:*	the UI module: linked by every APP-recipe and most model checks, in every lane
+Sources/MacMemApp/**	lane:setup-ui,lane:capture,uses	the app: setup, permissions and capture lanes, plus every step that compiles or scans the file (all APP-recipe steps through the app module, the writer steps for Writer*.swift)
+Sources/MacMemCLI/**	lane:storage,lane:ai-tools,uses	mac-mem: search, MCP and migration steps run it
+PrivacyPolicy/**	lane:*	the privacy policy: every lane links it
+adapters/**	lane:ai-tools,lane:capture,uses	CoreIntegration: the writer and capture bindings
+WriterBackend/**	lane:ai-tools	the summary writer package
+BrowserBridge/**	lane:capture	the browser bridge package and its fixtures
+BackupRestore/**	lane:storage	backup and restore
+Checks/**	step:owner-MacMemChecks,step:agent-tools-evals-py,uses	MacMemChecks (and the AI-app tool evals that run it)
+UIRender/**	step:dd-*,uses	the UI render tool
+Tests/**	own,uses	XCTest bodies run through scripts/search-test-runner.swift
+tools/chrome-device-test/**	lane:capture	the device-test kit (harness, page server)
+tools/**	uses	capture fixtures and helper tools
+packaging/**	lane:release	what a release stage packs
+docs/**	step:docs-claims-py,step:docs-dmg-background,step:docs-install-render	the docs: the release docs steps only
+*.md	step:docs-claims-py,step:docs-dmg-background,step:docs-install-render	any Markdown page: the release docs steps only
+docs/agent-tools/**	uses	the AI-app tool notes MacMemChecks and the evals read
+/RELEASE.md	uses	the release steps the checks pin (developer-id-release, usage counts, claims)
+/README.md	uses	claims and brand checks read it
+/PRIVACY.md	uses	claims, browser-boundary and the honesty checks read it
+/THIRD-PARTY-NOTICES.md	uses	release payload and notice checks read it
+/LICENSE	uses	release payload checks read it
+/NOTICE	uses	release payload checks read it
+skills/**	uses	the DayDream Agent Skill: the MCP and skill checks
+qa/**	uses	QA tooling the boundary checks scan
+evidence-0930/**	uses	evidence the boundary checks scan
+.github/**	uses	issue templates the docs and update checks read
+/.gitignore	step:git-checkout,step:test-copy-identity-py,step:typing-wiring-source-py,uses	what git tracks: the checks that read git ls-files / check-ignore

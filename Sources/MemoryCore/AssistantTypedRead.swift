@@ -136,10 +136,11 @@ extension MemoryStore {
         }
         return AgentTypedSearchResult(hits: hits, total: total, complete: complete, oldestScanned: complete ? nil : oldest)
     }
-    /// The 0.1.4 form: the last `days` days, at most `limit` (≤ 20) hits as id, at and an excerpt.
-    public func assistantTypedSearch(_ query: String, reader: TypedReader, enabled: Bool, days: Int = 7, limit: Int = 20, now: Date = Date()) throws -> [[String: String]] {
+    /// The 0.1.4 form: the last `days` days, at most `limit` (≤ 20) hits as id, at and an excerpt. `clock` is for checks.
+    public func assistantTypedSearch(_ query: String, reader: TypedReader, enabled: Bool, days: Int = 7, limit: Int = 20, now: Date = Date(),
+                                     clock: () -> Date = Date.init) throws -> [[String: String]] {
         let start = now.addingTimeInterval(-Double(max(1, min(days, 31))) * 86400)
-        return try assistantTypedSearch(query, start: start, end: nil, limit: max(1, min(limit, 20)), reader: reader, enabled: enabled, now: now)
+        return try assistantTypedSearch(query, start: start, end: nil, limit: max(1, min(limit, 20)), reader: reader, enabled: enabled, now: now, clock: clock)
             .hits.map { ["id": $0.id, "at": $0.at, "snippet": $0.snippet] }
     }
 
@@ -147,7 +148,9 @@ extension MemoryStore {
     /// The bridge server calls this only for a peer running as this user (`getpeereid`). `peerPID`: the socket peer's
     /// process (`AgentBridgePeer.peerPID`) when the server knows it; otherwise an owner preview's own `pid` field is
     /// checked. Ops: `policy` (no grant needed: the setting and the key's state), `words`, `search` (v2).
-    public func assistantBridgeAnswer(_ request: [String: Any], enabled: Bool, peerPID: pid_t? = nil, now: Date = Date()) -> [String: Any] {
+    /// `searchClock`: the clock `search` reads its `agentSearchWall` from (for checks; the app passes none).
+    public func assistantBridgeAnswer(_ request: [String: Any], enabled: Bool, peerPID: pid_t? = nil, now: Date = Date(),
+                                      searchClock: () -> Date = Date.init) -> [String: Any] {
         guard let r = AgentBridgeRequest(bridge: request) else { return ["status": "error"] }
         if r.op == .policy { return ["status": "ok", "typedWords": enabled, "vault": agentVaultState.rawValue] }
         var owner = false
@@ -168,7 +171,7 @@ extension MemoryStore {
                 return reply
             case .search:
                 return try agentTypedSearch(r.query ?? "", start: r.start, end: r.end, limit: r.limit, reader: reader, ownerPreview: owner,
-                                            enabled: enabled, now: now).bridgeReply
+                                            enabled: enabled, now: now, clock: searchClock).bridgeReply
             case .policy:
                 return ["status": "error"]
             }

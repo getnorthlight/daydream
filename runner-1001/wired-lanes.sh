@@ -7,10 +7,6 @@ if have_ob; then
 WOBJ=(MemoryCore HistoryCore MemoryUI WriterBackend CoreIntegration PrivacyPolicy BrowserBridge CLlamaBridge BackupRestore)
 WFLAGS=(-parse-as-library -D DEVELOPMENT_SOURCE_CHECKS -D DAYDREAM_OWNER_TYPING -D DAYDREAM_CHROME_TYPING -module-cache-path "$I/modcache"
   -I "$OB/Modules" -I Sources/CSQLite -Xcc -fmodule-map-file="$OB/CLlamaBridge.build/module.modulemap")
-# The APP recipe: every app source (appsrc: headless permission seams) and Sparkle, as ui-checks.sh builds its APP checks.
-WAPPFLAGS=(-parse-as-library -D DEVELOPMENT_SOURCE_CHECKS -D DAYDREAM_OWNER_TYPING -D DAYDREAM_CHROME_TYPING -module-cache-path "$I/modcache"
-  -I "$OB/Modules" -Xcc -fmodule-map-file="$PWD/Sources/CSQLite/module.modulemap" -Xcc -fmodule-map-file="$OB/CLlamaBridge.build/module.modulemap"
-  -Xcc -I -Xcc "$PWD/WriterBackend/Sources/CLlamaBridge/include" -F "$OB" -framework Sparkle -Xlinker -rpath -Xlinker "$OB")
 wobjs() { [ -n "${DRYRUN:-}" ] && return 0; for t in "${WOBJ[@]}"; do ls "$OB/$t.build/"*.o; done; }
 # wdirs NAME: the step's scratch folders (W). wscratch NAME: those, and its check source copied with the /private/tmp
 # roots moved to $R (copy-check-source.py).
@@ -27,10 +23,10 @@ ow() { local name=$1; shift; local srcs=()
   wscratch "$name"
   step compile-$name swiftc "${WFLAGS[@]}" ${srcs[@]+"${srcs[@]}"} "$OUT/src/$name-checks.swift" $(wobjs) -lsqlite3 -lc++ -o "$OUT/$name"
   wrun "$name" "$OUT/$name" "$@"; }
-# owapp NAME [-- ARGS...]: the APP recipe.
+# owapp NAME [-- ARGS...]: the APP recipe (run-checks.sh app_link: the check against the precompiled app module).
 owapp() { local name=$1; shift; [ $# -gt 0 ] && shift
-  wscratch "$name"; local src; src=$(appsrc)
-  step compile-$name swiftc "${WAPPFLAGS[@]}" "$src"/*.swift "$OUT/src/$name-checks.swift" $(wobjs) -lc++ -o "$OUT/$name"
+  wscratch "$name"
+  step compile-$name app_link "$OB" "$OUT/$name" "$OUT/src/$name-checks.swift" "${OMF[@]}"
   wrun "$name" "$OUT/$name" "$@"; }
 
 # --- setup-ui ---------------------------------------------------------------------------------------------------------
@@ -131,8 +127,8 @@ fi
 # capture: the BrowserBridge package (its own targets, no flags): native, diagnostic and metadata checks, the relay and
 # setup fixtures, and the extension's node checks against the package's own binaries. Synthetic keys and temporary
 # endpoints only; no browser is launched.
-BBD=$I/build-bb/debug
-step bb-package-build swift build --jobs 3 --package-path BrowserBridge --scratch-path "$I/build-bb" --disable-automatic-resolution
+BBD=$SB/build-bb/debug
+step bb-package-build swift build --jobs 3 --package-path BrowserBridge --scratch-path "$SB/build-bb" --disable-automatic-resolution
 step bb-BrowserBridgeChecks "$BBD/BrowserBridgeChecks"
 step bb-DiagnosticChecks "$BBD/DiagnosticChecks" --checks
 step bb-MetadataChecks "$BBD/BrowserMetadataChecks"
@@ -149,7 +145,7 @@ step bb-authenticated-mjs "${NODE_BIN:-node}" BrowserBridge/fixtures/authenticat
 step bb-diagnostic-transport-mjs bash -c 'out=$("${NODE_BIN:-node}" BrowserBridge/fixtures/diagnostic-transport-checks.mjs "$1" "$2" 2>&1); rc=$?; printf "%s\n" "$out"; for d in $(printf "%s\n" "$out" | sed -n "s#.*\"directory\":\"\(/private/tmp/diag-livewire-[A-Za-z0-9]*\)\".*#\1#p"); do rm -rf "$d"; done; exit $rc' _ "$BBD/DiagnosticChecks" "$BBD/BrowserBridgeDiagnosticHost"
 # capture: the device-test kit's page server matches the Python one byte for byte (loopback only; harness-build's binary).
 mkdir -p "$I/server-parity"
-step server-parity-py python3 tools/chrome-device-test/kit/check_server_parity.py --serve "$I/harness-build/debug/chrome-device-test-serve" --work "$I/server-parity"
+step server-parity-py python3 tools/chrome-device-test/kit/check_server_parity.py --serve "$SB/harness-build/debug/chrome-device-test-serve" --work "$I/server-parity"
 # storage: the backup/restore tool's own unittest (synthetic folders).
 step backup-restore-py python3 BackupRestore/test_backup_restore.py -v
 # ai-tools: the writer runtime distribution plan (synthetic dylib; nothing is signed or executed).

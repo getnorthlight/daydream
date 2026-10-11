@@ -1,0 +1,90 @@
+{
+  "schema": "daydream-timeline/1",
+  "synthetic": true,
+  "name": "google-searches-chrome",
+  "about": "Bug 7 (owner, 10/04: \"I went to different google sites\"): four Google searches in Chrome, each its own results page, with a tab switch and a page read in between. Every search is made up.",
+  "start": "2026-10-07T14:00:00-05:00",
+  "timeZone": "America/Chicago",
+  "install": {
+    "kind": "fresh"
+  },
+  "events": [
+    {
+      "at": 0,
+      "op": "launch",
+      "how": "opened"
+    },
+    {
+      "at": 0.5,
+      "op": "record",
+      "on": true
+    },
+    {
+      "at": 1,
+      "op": "front",
+      "app": "Google Chrome",
+      "bundle": "com.google.Chrome",
+      "window": "cw-1"
+    },
+    {
+      "at": 1.2,
+      "op": "tab",
+      "tab": "t-1",
+      "url": "https://www.google.com/search?q=cedar+planter+box+plans",
+      "title": "cedar planter box plans - Google Search"
+    },
+    {
+      "at": 20,
+      "op": "tab",
+      "tab": "t-1",
+      "url": "https://www.google.com/search?q=how+long+does+cedar+last+outside&sca_esv=1",
+      "title": "how long does cedar last outside - Google Search"
+    },
+    {
+      "at": 41,
+      "op": "tab",
+      "tab": "t-2",
+      "url": "https://example.org/cedar-guide",
+      "title": "A synthetic cedar guide"
+    },
+    {
+      "at": 70,
+      "op": "tab",
+      "tab": "t-1",
+      "url": "https://www.google.com/search?q=galvanized+screws+vs+stainless",
+      "title": "galvanized screws vs stainless - Google Search"
+    },
+    {
+      "at": 95,
+      "op": "input",
+      "kind": "click"
+    },
+    {
+      "at": 96,
+      "op": "tab",
+      "tab": "t-1",
+      "url": "https://www.google.com/search?sca_esv=1&q=planter+liner+fabric",
+      "title": "planter liner fabric - Google Search"
+    },
+    {
+      "at": 130,
+      "op": "front",
+      "app": "TextEdit",
+      "bundle": "com.apple.TextEdit",
+      "window": "te-1",
+      "title": "shopping.txt"
+    }
+  ],
+  "expect": {
+    "pages": [
+      "cedar planter box plans",
+      "how long does cedar last outside",
+      "A synthetic cedar guide",
+      "galvanized screws vs stainless",
+      "planter liner fabric"
+    ],
+    "never": [
+      "sca_esv"
+    ]
+  }
+}

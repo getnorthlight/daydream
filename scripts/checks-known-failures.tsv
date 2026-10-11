@@ -4,8 +4,6 @@
 # still fails. Anything else, a new FAIL in the same file, a crash, a failed compile, is FAIL.
 # Labels: "FAIL ..." / "FAIL: ..." lines, unittest "FAIL: test_name", "Precondition failed: ..." / "Fatal error: ...".
 step	exit	fail
-store-perf	1	FAIL: the heartbeat waited
-owner-store-perf	1	FAIL: the heartbeat waited
 native-intake-boundary	1	FAIL production sealed A boundary case-2
 native-intake-boundary	1	FAIL production sealed A boundary case-3
 native-intake-boundary	1	FAIL production sealed A boundary case-13

@@ -1,0 +1,74 @@
+{
+  "schema": "daydream-timeline/1",
+  "synthetic": true,
+  "name": "fresh-install-messages",
+  "about": "Bug 13: a fresh install with setup's defaults; a Messages draft to a made-up contact is saved with its words (never sent). Every word and name made up.",
+  "start": "2026-10-06T09:00:00-05:00",
+  "timeZone": "America/Chicago",
+  "install": {
+    "kind": "fresh"
+  },
+  "events": [
+    {
+      "at": 0,
+      "op": "launch",
+      "how": "opened"
+    },
+    {
+      "at": 0.5,
+      "op": "record",
+      "on": true
+    },
+    {
+      "at": 1,
+      "op": "front",
+      "app": "Messages",
+      "bundle": "com.apple.MobileSMS",
+      "window": "m-1",
+      "title": "Messages",
+      "place": "Sam Rivera"
+    },
+    {
+      "at": 2,
+      "op": "type",
+      "text": "running ten minutes late"
+    },
+    {
+      "at": 20,
+      "op": "focus",
+      "field": "m-search"
+    },
+    {
+      "at": 30,
+      "op": "front",
+      "app": "TextEdit",
+      "bundle": "com.apple.TextEdit",
+      "window": "te-1",
+      "title": "plan.txt"
+    },
+    {
+      "at": 31,
+      "op": "type",
+      "text": "buy stain"
+    },
+    {
+      "at": 45,
+      "op": "window",
+      "window": "te-2",
+      "title": "Untitled"
+    }
+  ],
+  "expect": {
+    "recordingAtEnd": true,
+    "typed": [
+      {
+        "bundle": "com.apple.MobileSMS",
+        "words": "running ten minutes late"
+      },
+      {
+        "bundle": "com.apple.TextEdit",
+        "words": "buy stain"
+      }
+    ]
+  }
+}

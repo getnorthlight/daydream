@@ -1,0 +1,76 @@
+{
+  "schema": "daydream-timeline/1",
+  "synthetic": true,
+  "name": "login-launch-after-restart",
+  "about": "Bug 9: the Mac restarts and DayDream opens as a login item (never counted as app_opened), later quit and opened by the person from the Dock (counted). Same version: no app_updated. Every word made up.",
+  "start": "2026-10-06T09:00:00-05:00",
+  "timeZone": "America/Chicago",
+  "install": {
+    "kind": "upgrade",
+    "from": "0.1.8 Beta (20261008120000)"
+  },
+  "events": [
+    {
+      "at": 0,
+      "op": "launch",
+      "how": "login",
+      "version": "0.1.8 Beta (20261008120000)"
+    },
+    {
+      "at": 0.5,
+      "op": "record",
+      "on": true
+    },
+    {
+      "at": 1,
+      "op": "front",
+      "app": "TextEdit",
+      "bundle": "com.apple.TextEdit",
+      "window": "te-1",
+      "title": "morning.txt"
+    },
+    {
+      "at": 2,
+      "op": "type",
+      "text": "good morning list"
+    },
+    {
+      "at": 20,
+      "op": "quit"
+    },
+    {
+      "at": 40,
+      "op": "launch",
+      "how": "opened",
+      "version": "0.1.8 Beta (20261008120000)"
+    },
+    {
+      "at": 42,
+      "op": "type",
+      "text": "second try"
+    },
+    {
+      "at": 60,
+      "op": "window",
+      "window": "te-2",
+      "title": "Untitled"
+    }
+  ],
+  "expect": {
+    "opened": [
+      "other"
+    ],
+    "updated": [],
+    "recordingAtEnd": true,
+    "typed": [
+      {
+        "bundle": "com.apple.TextEdit",
+        "words": "good morning list"
+      },
+      {
+        "bundle": "com.apple.TextEdit",
+        "words": "second try"
+      }
+    ]
+  }
+}

@@ -1,0 +1,9 @@
+# Realism (test-suite phase 2): the owner's own bugs replayed where DayDream meets macOS (runner-1001/steps.d/realism.sh).
+# The known failures are real bugs in the frozen 0.1.8 RC found by these checks; they are not fixed here (RC frozen).
+step	exit	fail
+realism-adhoc-identity	1	FAIL bug3 developer-id-release.py sign --identity -
+realism-staging	1	FAIL bug11 developer-id-release.py stage --scratch <an earlier stage's scratch> (the 10/07 command)
+realism-staging	1	FAIL bug11 package.sh: the next package run (a new commit) builds in a fresh SwiftPM scratch or refuses the reused one; its staged MacMem carries the newest commit marker
+realism-staging	1	FAIL bug11 stage-local-ui-update.py: a MacMem built from an older commit (no string from HEAD) is refused
+realism-setup-poll	1	FAIL bug5 setup card in a parent that redraws every second
+realism-setup-poll	1	FAIL bug5 setup window: Accessibility allowed in System Settings shows Allowed on setup's card within 3 s

@@ -1,0 +1,4 @@
+# rel-019: the recording-off reminder. Steps: runner-1001/steps.d/recording-reminder.sh. Mutations:
+# scripts/mutations.d/recording-reminder.tsv.
+step	lane	config	file	needs	min_pass	status	reason	since	review_by	tier
+owner-recording-reminder	capture	owner	scripts/recording-reminder-checks.swift	headless	102	required				change

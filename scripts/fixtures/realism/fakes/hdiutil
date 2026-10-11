@@ -1,0 +1,4 @@
+#!/bin/bash
+# Realism fake hdiutil: makes no disk image and mounts nothing; `create` leaves an empty file at the image path.
+[ "$1" = create ] && : > "${!#}"
+exit 0
